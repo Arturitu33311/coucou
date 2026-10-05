@@ -5,7 +5,8 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask } from "../core/state";
+import { Bridge } from "../core/bridge";
+import { State, type AgentTask, type QuestionItem } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -21,6 +22,10 @@ export interface ViewActions {
   openTarget(): void;
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
+  /** Every question of the pending AskUserQuestion has an answer: hand them over. */
+  submitQuestion(): void;
+  /** "Reply in terminal": no answer from here, Claude Code asks in its own prompt. */
+  questionToTerminal(): void;
   toggleSound(): void;
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
@@ -319,20 +324,145 @@ function buildApproval(actions: ViewActions): ViewHost {
 
 // ── Question ──────────────────────────────────────────────────────────────────
 
-function buildQuestion(): ViewHost {
-  const who = h("div");
-  const title = h("div", { class: "title" });
-  const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("cyan", stack(116, 16, who, title, row)));
+/**
+ * An AskUserQuestion call: one question at a time, its options as chips. A click
+ * on a single-select option answers it; a multi-select one toggles, and Send /
+ * Next moves on. "Other…" takes a typed answer, "Reply in terminal" gives the
+ * question back to Claude Code's own prompt.
+ *
+ * The chips are built once per question and never rebuilt while it is on screen:
+ * replacing a button between a mouse-down and a mouse-up swallows the click.
+ */
+function buildQuestion(actions: ViewActions): ViewHost {
+  const whoSlot = h("div", { class: "q-who" });
+  const count = h("span", { class: "q-count" });
+  const terminal = h(
+    "button",
+    { class: "link-btn q-terminal", title: "Let Claude Code ask in the terminal", onclick: () => actions.questionToTerminal() },
+    "Reply in terminal",
+  );
+  const top = h("div", { class: "q-top" }, whoSlot, count, terminal);
+  const kicker = h("div", { class: "q-kicker" });
+  const title = h("div", { class: "title q-title" });
+  const opts = h("div", { class: "q-opts" });
+  const other = h("input", {
+    class: "q-other-input",
+    type: "text",
+    maxlength: 400,
+    placeholder: "Type your own answer…",
+  });
+  const otherRow = h("div", { class: "q-other-row" }, other);
+  const footer = h("div", { class: "actions q-footer" });
+  const el = h(
+    "div",
+    { class: "view" },
+    card("cyan", stack(116, 16, top, kicker, title, opts, otherRow, footer)),
+  );
+
+  let builtKey = "";
+  let picked: string[] = [];
+  let send: HTMLButtonElement | null = null;
+
+  const current = () => {
+    const req = State.pendingQuestion;
+    return req ? { req, q: req.questions[req.index] } : null;
+  };
+
+  /** Records this question's answer and moves on, or hands everything over. */
+  function answer(labels: string[]) {
+    const cur = current();
+    if (!cur || labels.length === 0) return;
+    const { req } = cur;
+    req.answers[req.index] = labels;
+    void Bridge.focusWindow(false);
+    if (req.index + 1 < req.questions.length) {
+      req.index += 1;
+      actions.blip();
+      State.notify();
+    } else {
+      actions.submitQuestion();
+    }
+  }
+
+  function refreshSend() {
+    if (!send) return;
+    send.disabled = picked.length === 0 && other.value.trim() === "";
+  }
+
+  function toggleOther(open: boolean) {
+    otherRow.classList.toggle("on", open);
+    void Bridge.focusWindow(open);
+    if (open) window.setTimeout(() => other.focus(), 80);
+  }
+
+  other.addEventListener("input", refreshSend);
+  other.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const typed = other.value.trim();
+      const cur = current();
+      if (typed && cur) answer(cur.q.multiSelect ? [...picked, typed] : [typed]);
+    } else if (e.key === "Escape") {
+      toggleOther(false);
+    }
+    e.stopPropagation(); // Escape closes the field, not the island
+  });
+
+  function build(q: QuestionItem, last: boolean) {
+    picked = [];
+    other.value = "";
+    toggleOther(false);
+    clear(opts);
+    clear(footer);
+    send = null;
+
+    for (const o of q.options) {
+      const chip = h(
+        "button",
+        { class: "q-opt", title: o.description || o.label },
+        h("span", { text: o.label }),
+        o.description ? h("small", { text: o.description }) : null,
+      );
+      chip.addEventListener("click", () => {
+        if (!q.multiSelect) return answer([o.label]);
+        const at = picked.indexOf(o.label);
+        if (at >= 0) picked.splice(at, 1);
+        else picked.push(o.label);
+        chip.classList.toggle("picked", at < 0);
+        refreshSend();
+      });
+      opts.append(chip);
+    }
+
+    footer.append(btn("Other…", "secondary", () => toggleOther(!otherRow.classList.contains("on"))));
+    if (q.multiSelect) {
+      send = btn(last ? "Send" : "Next", "primary", () => {
+        const typed = other.value.trim();
+        answer(typed ? [...picked, typed] : [...picked]);
+      }) as HTMLButtonElement;
+      send.disabled = true;
+      footer.append(send);
+    }
+  }
+
   return {
     el,
     sync() {
-      clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
-      const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
-      clear(row);
-      row.append(h("div", { class: "sub", text: "Answer in your terminal — Coucou can't reply for you yet." }));
+      const cur = current();
+      if (!cur) return;
+      const { req, q } = cur;
+      clear(whoSlot);
+      whoSlot.append(agentWho(State.focusTask, "has a question"));
+      count.textContent = req.questions.length > 1 ? `${req.index + 1}/${req.questions.length}` : "";
+      kicker.textContent = q.header;
+      kicker.style.display = q.header ? "" : "none";
+      title.textContent = q.question;
+      title.title = q.question;
+      const key = `${req.requestId}:${req.index}`;
+      if (key !== builtKey) {
+        builtKey = key;
+        build(q, req.index === req.questions.length - 1);
+      }
     },
   };
 }
@@ -491,7 +621,7 @@ export function buildViews(
   map.set("overview", buildOverview(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
-  map.set("question", buildQuestion());
+  map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());

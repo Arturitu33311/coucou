@@ -68,6 +68,21 @@ in time, Coucou stays quiet and Claude Code asks in the terminal as usual.
 
 It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
 
+### Answering Claude's questions
+
+When Claude Code asks a multiple-choice question (`AskUserQuestion`), the island
+shows it: one question at a time, its options as buttons. A click answers a
+single-choice question; for a multiple-choice one you pick any number and press
+**Next** / **Send**. **Other…** takes a typed answer, and **Reply in terminal**
+hands the question back to Claude Code's own prompt.
+
+This uses a second hook, `coucou-hook --ask`, scoped to the `AskUserQuestion`
+tool (Claude Code 2.1.85+). Hooks installed by an earlier version don't have it:
+Settings shows **Update hooks…** — until you run it, questions still appear in
+the terminal as before. While the card is up Claude Code waits for it, so the
+terminal shows nothing to answer; after two minutes without an answer, or if
+Coucou is closed or paused, the terminal asks as usual.
+
 ## Chat and keys
 
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows

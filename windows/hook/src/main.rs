@@ -10,11 +10,15 @@
 //! * Every step runs under a deadline enforced by the main thread, so a pipe that
 //!   accepts the connection and then stops reading cannot wedge the session
 //!   either: we abandon the worker and exit.
-//! * Only `PermissionRequest` waits for an answer, because approving from the
-//!   island is the whole point. No answer means empty stdout, and Claude Code
-//!   asks in the terminal exactly as if Coucou were not installed.
+//! * Only `PermissionRequest` and the dedicated `--ask` hook wait for an answer,
+//!   because answering from the island is the whole point. No answer means empty
+//!   stdout, and Claude Code asks in the terminal exactly as if Coucou were not
+//!   installed.
 //!
-//! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
+//! Usage: `coucou-hook [--agent <name>] [--ask] <EventName>` (the name is also
+//! read from the JSON). `--ask` is the PreToolUse hook scoped to
+//! `AskUserQuestion`: Coucou shows the options and the relay hands the chosen
+//! answers back to Claude Code through `updatedInput`.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -26,6 +30,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_secs(2);
 /// How long a permission prompt may stay on screen before the terminal takes over.
 const DECISION_BUDGET: Duration = Duration::from_secs(110);
+/// Same for an AskUserQuestion card. Under the 130 s timeout written to
+/// settings.json, over the app's own 120 s, so the app always answers first.
+const ASK_BUDGET: Duration = Duration::from_secs(125);
 
 /// Fields that are pointless to forward and can be enormous (a whole file read,
 /// a full command output). The island never shows them.
@@ -45,10 +52,16 @@ mod unix;
 use unix::connect;
 
 fn main() {
-    let Some((payload, event)) = read_event() else { std::process::exit(0) };
+    let Some(Event { payload, name: event, ask }) = read_event() else { std::process::exit(0) };
 
-    let waits_for_answer = event == "PermissionRequest";
-    let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
+    let waits_for_answer = event == "PermissionRequest" || ask.is_some();
+    let budget = if ask.is_some() {
+        ASK_BUDGET
+    } else if waits_for_answer {
+        DECISION_BUDGET
+    } else {
+        FIRE_AND_FORGET_BUDGET
+    };
 
     // The worker owns every blocking call. If it overruns the budget we simply
     // stop listening and exit: the process dying takes the pipe handle with it.
@@ -60,7 +73,11 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision) {
+        let output = match &ask {
+            Some(questions) => answer_json(&decision, questions),
+            None => decision_json(&decision),
+        };
+        if let Some(json) = output {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -86,8 +103,50 @@ fn decision_json(decision: &str) -> Option<String> {
     ))
 }
 
+/// The output of the `--ask` hook: the answers the island collected, handed to
+/// Claude Code as the tool's own input so the question never reaches the
+/// terminal. `response` is the app's one-line JSON,
+/// `{"permissionDecision":"answer","answers":{"<question>":"<label>" | ["<label>", …]}}`.
+/// Anything else — `ask`, garbage, an answer of the wrong shape — prints nothing
+/// and Claude Code asks in the terminal.
+fn answer_json(response: &str, questions: &serde_json::Value) -> Option<String> {
+    let reply: serde_json::Value = serde_json::from_str(response.trim()).ok()?;
+    if reply.get("permissionDecision")?.as_str()? != "answer" {
+        return None;
+    }
+    let answers = reply.get("answers")?.as_object()?;
+    // A string for a single-select question, a list of strings for a multi-select
+    // one. Nothing else is something Claude Code knows what to do with.
+    let well_formed = answers.values().all(|v| {
+        v.is_string() || v.as_array().is_some_and(|a| a.iter().all(serde_json::Value::is_string))
+    });
+    if answers.is_empty() || !well_formed || !questions.is_array() {
+        return None;
+    }
+    Some(
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "updatedInput": { "questions": questions, "answers": answers },
+            }
+        })
+        .to_string(),
+    )
+}
+
+/// What the relay read from stdin and argv.
+struct Event {
+    /// The JSON line to forward to the app.
+    payload: String,
+    name: String,
+    /// `Some(questions)` for the `--ask` hook on an `AskUserQuestion` call: the
+    /// original, untruncated list, to be echoed back next to the answers.
+    ask: Option<serde_json::Value>,
+}
+
 /// Reads stdin and returns the payload to forward plus the event name.
-fn read_event() -> Option<(String, String)> {
+fn read_event() -> Option<Event> {
     let mut raw = Vec::new();
     if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
         return None;
@@ -105,11 +164,14 @@ fn read_event() -> Option<(String, String)> {
     // Absent or invalid names are validated and discarded by the app, not here.
     let mut agent = String::new();
     let mut arg_event = String::new();
+    let mut ask_mode = false;
     {
         let mut it = std::env::args().skip(1);
         while let Some(arg) = it.next() {
             if arg == "--agent" {
                 agent = it.next().unwrap_or_default();
+            } else if arg == "--ask" {
+                ask_mode = true;
             } else if arg_event.is_empty() {
                 arg_event = arg;
             }
@@ -127,6 +189,23 @@ fn read_event() -> Option<(String, String)> {
         .filter(|s| !s.is_empty())
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
+
+    // `--ask` is registered with the matcher "AskUserQuestion", but a hook that
+    // fires for anything else must leave no trace: nothing forwarded, nothing
+    // printed.
+    let mut ask = None;
+    if ask_mode {
+        if map.get("tool_name").and_then(|v| v.as_str()) != Some("AskUserQuestion") {
+            return None;
+        }
+        // No question list, nothing to answer: the terminal gets it.
+        let questions = map.get("tool_input").and_then(|i| i.get("questions")).cloned()?;
+        if !questions.is_array() {
+            return None;
+        }
+        ask = Some(questions);
+        map.insert("coucou_kind".into(), serde_json::Value::String("ask_user_question".into()));
+    }
 
     for field in DROPPED_FIELDS {
         map.remove(*field);
@@ -161,11 +240,15 @@ fn read_event() -> Option<(String, String)> {
         }
     }
 
-    truncate_strings(&mut payload);
+    // A question is the key of its answer, so it must reach the app whole. An
+    // AskUserQuestion payload is a few hundred bytes; there is nothing to trim.
+    if ask.is_none() {
+        truncate_strings(&mut payload);
+    }
 
     let mut line = payload.to_string();
     line.push('\n');
-    Some((line, event))
+    Some(Event { payload: line, name: event, ask })
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -243,6 +326,52 @@ mod tests {
         assert!(decision_json("maybe").is_none());
         // The shape the app used to send must not be mistaken for a decision.
         assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+    }
+
+    fn questions() -> serde_json::Value {
+        serde_json::json!([{
+            "question": "Which framework?", "header": "Stack", "multiSelect": false,
+            "options": [{ "label": "React", "description": "" }, { "label": "Vue", "description": "" }]
+        }])
+    }
+
+    #[test]
+    fn answers_come_back_as_the_tools_updated_input() {
+        let out = answer_json(
+            r#"{"permissionDecision":"answer","answers":{"Which framework?":"Vue"}}"#,
+            &questions(),
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let o = &v["hookSpecificOutput"];
+        assert_eq!(o["hookEventName"], "PreToolUse");
+        assert_eq!(o["permissionDecision"], "allow");
+        assert_eq!(o["updatedInput"]["answers"]["Which framework?"], "Vue");
+        assert_eq!(o["updatedInput"]["questions"], questions());
+    }
+
+    #[test]
+    fn a_multi_select_answer_is_a_list() {
+        let out = answer_json(
+            r#"{"permissionDecision":"answer","answers":{"Which framework?":["React","Vue"]}}"#,
+            &questions(),
+        )
+        .unwrap();
+        assert!(out.contains(r#"["React","Vue"]"#));
+    }
+
+    #[test]
+    fn anything_but_a_clean_answer_prints_nothing() {
+        let q = questions();
+        // "Reply in terminal" and every malformed reply fall through to the terminal.
+        assert!(answer_json(r#"{"permissionDecision":"ask"}"#, &q).is_none());
+        assert!(answer_json("", &q).is_none());
+        assert!(answer_json("allow", &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer"}"#, &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{}}"#, &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":3}}"#, &q).is_none());
+        let not_a_list = serde_json::json!({});
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":"a"}}"#, &not_a_list).is_none());
     }
 
     #[test]

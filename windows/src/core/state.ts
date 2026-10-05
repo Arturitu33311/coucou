@@ -28,6 +28,27 @@ export interface ApprovalInfo {
   command: string;
 }
 
+/** One multiple-choice question of an AskUserQuestion call. */
+export interface QuestionItem {
+  /** The full text. Also the key of its answer, so it is never altered. */
+  question: string;
+  /** ≤ 12 characters; a small label above the question. */
+  header: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+
+/** An AskUserQuestion call waiting on the island, one question at a time. */
+export interface QuestionInfo {
+  requestId: string;
+  sessionId: string;
+  questions: QuestionItem[];
+  /** The question on screen. */
+  index: number;
+  /** Answers given so far, one list of labels per question already answered. */
+  answers: string[][];
+}
+
 export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -137,6 +158,7 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
+  pendingQuestion: QuestionInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
 

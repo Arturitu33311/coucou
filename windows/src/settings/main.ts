@@ -81,6 +81,16 @@ function claudeSection(status: HookStatus): HTMLElement {
       ),
     );
 
+    // Hooks written by an earlier Coucou have no AskUserQuestion entry: the
+    // island can show Claude's questions but cannot answer them until they are
+    // installed again.
+    if (status.installed && !status.askInstalled) {
+      body.append(h("div", {
+        class: "notice warn",
+        text: "Update the hooks to answer Claude's multiple-choice questions from the island: they were installed before that existed.",
+      }));
+    }
+
     if (!status.hookReady) {
       body.append(h("div", {
         class: "notice warn",
@@ -91,7 +101,7 @@ function claudeSection(status: HookStatus): HTMLElement {
     const actions = h("div", { class: "row" });
     const install = h("button", {
       class: "primary",
-      text: status.installed ? "Reinstall hooks…" : "Install hooks…",
+      text: !status.installed ? "Install hooks…" : status.askInstalled ? "Reinstall hooks…" : "Update hooks…",
       onclick: () => showPreview(true),
     });
     // Writing hook commands that point at a relay which isn't there would give
@@ -426,7 +436,7 @@ async function main() {
     version = boot.version;
   }
   const status = (await Bridge.hooksStatus()) ?? {
-    installed: false, settingsPath: "", hookPath: "", hookReady: false,
+    installed: false, askInstalled: false, settingsPath: "", hookPath: "", hookReady: false,
   };
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;

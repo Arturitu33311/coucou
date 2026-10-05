@@ -5,7 +5,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, type QuestionItem } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -25,6 +25,41 @@ interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
+  /** Set by `coucou-hook --ask`: this event is an AskUserQuestion waiting for answers. */
+  coucou_kind?: string;
+}
+
+/** How long a question card may stay up — a little under the relay's 125 s. */
+const QUESTION_CARD_MS = 122_000;
+
+/**
+ * `tool_input` of an AskUserQuestion call → the questions to show, or null when
+ * it is not what Claude Code documents (1–4 questions, each with 2–4 options).
+ * Null means the card is declined and the terminal asks as usual.
+ */
+export function parseQuestions(toolInput: Record<string, unknown> | undefined): QuestionItem[] | null {
+  const raw = toolInput?.questions;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 4) return null;
+  const out: QuestionItem[] = [];
+  for (const q of raw) {
+    if (typeof q !== "object" || q === null) return null;
+    const { question, header, options, multiSelect } = q as Record<string, unknown>;
+    if (typeof question !== "string" || !question) return null;
+    if (!Array.isArray(options) || options.length < 2 || options.length > 4) return null;
+    const parsed: QuestionItem["options"] = [];
+    for (const o of options) {
+      const { label, description } = (o ?? {}) as Record<string, unknown>;
+      if (typeof label !== "string" || !label) return null;
+      parsed.push({ label, description: typeof description === "string" ? description : "" });
+    }
+    out.push({
+      question,
+      header: typeof header === "string" ? header.slice(0, 12) : "",
+      options: parsed,
+      multiSelect: multiSelect === true,
+    });
+  }
+  return out;
 }
 
 /** Same rule as HookServer.validateAgent on macOS. "claude" is reserved. */
@@ -182,6 +217,50 @@ function handleHook(island: Island, payload: HookPayload) {
     }
   };
 
+  // `coucou-hook --ask`: an AskUserQuestion, and the relay is holding Claude Code
+  // until we answer. Every path out of here is an answer, a decline or the timeout.
+  if (payload.coucou_kind === "ask_user_question") {
+    const requestId = payload.request_id ?? "";
+    const questions = isExternalAgent ? null : parseQuestions(payload.tool_input);
+    // One card at a time, and only one we know how to draw. Anything else goes
+    // straight back to the terminal.
+    const busy =
+      State.pendingApproval !== null ||
+      (State.pendingQuestion !== null && State.pendingQuestion.requestId !== requestId);
+    if (!questions || busy) {
+      if (requestId) void Bridge.approvalDecline(requestId);
+      return;
+    }
+    upsert(projectName, cwd);
+    State.pendingQuestion = {
+      requestId,
+      sessionId: payload.session_id ?? "",
+      questions,
+      index: 0,
+      answers: [],
+    };
+    if (requestId) void Bridge.approvalAck(requestId);
+    State.updateTask(CLAUDE_ID, "question");
+    State.isPinned = true;
+    Sound.play("question");
+    // Unlike a permission, a question holds the whole turn: the terminal shows
+    // nothing until we answer. So it always takes the view, whoever had it.
+    State.setFocus(CLAUDE_ID);
+    island.alert("question");
+    window.setTimeout(() => {
+      // Only this card: a later question must not be cleared by an earlier timer.
+      if (State.pendingQuestion?.requestId !== requestId) return;
+      State.pendingQuestion = null;
+      State.isPinned = false;
+      island.dropPin();
+      State.updateTask(CLAUDE_ID, "working");
+      if (State.view === "question") island.setView(State.defaultView());
+      State.notify();
+    }, QUESTION_CARD_MS);
+    State.notify();
+    return;
+  }
+
   switch (name) {
     case "SessionStart":
       ensurePill();
@@ -201,8 +280,15 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PreToolUse": {
       ensurePill();
-      State.updateTask(agentId, "working");
       const tool = payload.tool_name ?? "Tool";
+      // The question itself arrives through the dedicated `--ask` hook, above. This
+      // is the general hook seeing the same call: it is not "work", so no step.
+      if (tool === "AskUserQuestion") {
+        State.updateTask(agentId, "question");
+        surface("overview", false);
+        break;
+      }
+      State.updateTask(agentId, "working");
       State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
@@ -271,6 +357,16 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "PermissionRequest": {
+      // Claude Code raises a PermissionRequest for the AskUserQuestion tool itself
+      // once the `--ask` hook has given the question back ("Reply in terminal", a
+      // timeout, a card already up). An Allow button here would approve the tool
+      // with no answer attached and hold the terminal, so hand it straight back:
+      // the terminal's own picker takes the question, as on macOS.
+      if (payload.tool_name === "AskUserQuestion") {
+        if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+        break;
+      }
+
       // External agents do not get an approval card — showing one would look like
       // a Claude Code request. Decline immediately so the agent re-asks in its
       // terminal. Approval support for other agents will come with Codex support.
@@ -283,7 +379,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingApproval && State.pendingApproval.requestId !== requestId) {
+      if (State.pendingQuestion || (State.pendingApproval && State.pendingApproval.requestId !== requestId)) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }

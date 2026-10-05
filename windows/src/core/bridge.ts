@@ -79,6 +79,12 @@ export const Bridge = {
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */
   approvalDecline: (requestId: string) => call<void>("approval_decline", { requestId }),
+  /**
+   * The answers to an AskUserQuestion card: each question's text → the chosen
+   * label, or the list of labels for a multi-select question.
+   */
+  questionAnswer: (requestId: string, answers: Record<string, string | string[]>) =>
+    call<void>("question_answer", { requestId, answers }),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
@@ -120,6 +126,8 @@ export interface DroppedFile {
 
 export interface HookStatus {
   installed: boolean;
+  /** False when the hooks predate AskUserQuestion support: install again. */
+  askInstalled: boolean;
   settingsPath: string;
   hookPath: string;
   hookReady: boolean;

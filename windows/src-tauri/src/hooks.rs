@@ -36,10 +36,20 @@ pub const HOOK_EVENTS: &[(&str, u64)] = &[
 /// Marker that identifies a Coucou entry inside settings.json.
 const MARKER: &str = "coucou-hook";
 
+/// The dedicated PreToolUse hook for AskUserQuestion (Claude Code 2.1.85+, where
+/// the question no longer arrives as a PermissionRequest). It waits for a human,
+/// so it gets the question wait (125 s) + 5 s.
+const ASK_MATCHER: &str = "AskUserQuestion";
+const ASK_FLAG: &str = "--ask";
+const ASK_TIMEOUT: u64 = 130;
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookStatus {
     pub installed: bool,
+    /// False when Coucou's hooks are in but the AskUserQuestion one is not —
+    /// installed by an older version. Installing again adds it.
+    pub ask_installed: bool,
     pub settings_path: String,
     pub hook_path: String,
     pub hook_ready: bool,
@@ -139,6 +149,21 @@ fn entry_is_ours(entry: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// Coucou's own entry for AskUserQuestion, as opposed to its general PreToolUse one.
+fn entry_is_ours_ask(entry: &Value) -> bool {
+    entry_is_ours(entry)
+        && entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|hooks| {
+                hooks.iter().any(|h| {
+                    h.get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|c| c.split_whitespace().any(|w| w == ASK_FLAG))
+                })
+            })
+}
+
 /// Settings with Coucou's hooks added; everything else is left untouched.
 fn merged(existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
@@ -162,6 +187,16 @@ fn merged(existing: &Value) -> Value {
                 "timeout": timeout,
             }]
         }));
+        if *event == "PreToolUse" {
+            list.push(json!({
+                "matcher": ASK_MATCHER,
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("{} {ASK_FLAG}", hook_command(event)),
+                    "timeout": ASK_TIMEOUT,
+                }]
+            }));
+        }
         hooks.insert((*event).to_string(), Value::Array(list));
     }
 
@@ -250,9 +285,15 @@ pub fn status() -> HookStatus {
                 .any(entry_is_ours)
         })
         .unwrap_or(false);
+    let ask_installed = current
+        .get("hooks")
+        .and_then(|h| h.get("PreToolUse"))
+        .and_then(Value::as_array)
+        .is_some_and(|list| list.iter().any(entry_is_ours_ask));
     let hook_path = settings::hook_exe_path();
     HookStatus {
         installed,
+        ask_installed,
         settings_path: settings_path().to_string_lossy().to_string(),
         hook_ready: hook_path.exists(),
         hook_path: hook_path.to_string_lossy().to_string(),
@@ -572,6 +613,60 @@ mod tests {
         // And removing ours puts it back exactly as it was.
         let cleaned = without_ours(&after);
         assert_eq!(cleaned, existing);
+    }
+
+    #[test]
+    fn the_ask_hook_is_a_matcher_scoped_pretooluse_entry() {
+        let after = merged(&serde_json::json!({}));
+        let pre = after["hooks"]["PreToolUse"].as_array().unwrap();
+        assert_eq!(pre.len(), 2, "one general PreToolUse hook and one for AskUserQuestion");
+
+        let general = pre.iter().find(|e| e.get("matcher").is_none()).unwrap();
+        assert!(!entry_is_ours_ask(general));
+
+        let ask = pre.iter().find(|e| e["matcher"] == "AskUserQuestion").unwrap();
+        assert!(entry_is_ours_ask(ask));
+        let command = ask["hooks"][0]["command"].as_str().unwrap();
+        assert!(command.ends_with(" --ask"), "got: {command}");
+        // The wait for a human is 125 s; Claude Code must not give up before it.
+        assert_eq!(ask["hooks"][0]["timeout"], 130);
+
+        // Installing twice never stacks a second copy.
+        let again = merged(&after);
+        assert_eq!(again["hooks"]["PreToolUse"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn hooks_installed_before_ask_support_are_noticed_and_upgraded() {
+        // What an older Coucou wrote: our PreToolUse hook, no AskUserQuestion one.
+        let mut old = merged(&serde_json::json!({}));
+        old["hooks"]["PreToolUse"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|e| e.get("matcher").is_none());
+        let pre = old["hooks"]["PreToolUse"].as_array().unwrap();
+        assert!(pre.iter().any(entry_is_ours));
+        assert!(!pre.iter().any(entry_is_ours_ask));
+
+        let upgraded = merged(&old);
+        assert!(upgraded["hooks"]["PreToolUse"].as_array().unwrap().iter().any(entry_is_ours_ask));
+        // Removing still takes both away and leaves nothing of ours behind.
+        assert_eq!(without_ours(&upgraded), serde_json::json!({}));
+    }
+
+    #[test]
+    fn a_foreign_ask_hook_is_not_ours() {
+        let theirs = serde_json::json!({
+            "matcher": "AskUserQuestion",
+            "hooks": [{ "type": "command", "command": "their-tool --ask" }]
+        });
+        assert!(!entry_is_ours_ask(&theirs));
+        let after = merged(&serde_json::json!({ "hooks": { "PreToolUse": [theirs.clone()] } }));
+        assert!(after["hooks"]["PreToolUse"].as_array().unwrap().contains(&theirs));
+        assert_eq!(
+            without_ours(&after),
+            serde_json::json!({ "hooks": { "PreToolUse": [theirs] } })
+        );
     }
 
     #[test]

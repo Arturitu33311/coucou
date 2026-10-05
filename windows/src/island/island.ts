@@ -147,6 +147,29 @@ export class Island {
         State.setPillBadge("integration_claude", null);
         this.setView(State.defaultView());
       },
+      submitQuestion: () => {
+        const req = State.pendingQuestion;
+        if (!req) return;
+        // Each question's text is the key of its answer: a label for a single-select
+        // question, the list of labels for a multi-select one.
+        const answers: Record<string, string | string[]> = {};
+        req.questions.forEach((q, i) => {
+          const picked = req.answers[i];
+          if (picked && picked.length > 0) answers[q.question] = q.multiSelect ? picked : picked[0];
+        });
+        void Bridge.log(`question answered req=${req.requestId}`);
+        Sound.play("approve");
+        void Bridge.questionAnswer(req.requestId, answers);
+        this.closeQuestion();
+      },
+      questionToTerminal: () => {
+        const req = State.pendingQuestion;
+        if (!req) return;
+        void Bridge.log(`question → terminal req=${req.requestId}`);
+        Sound.play("blip");
+        void Bridge.approvalDecline(req.requestId);
+        this.closeQuestion();
+      },
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
         Sound.setEnabled(State.settings.soundEnabled);
@@ -312,6 +335,17 @@ export class Island {
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
     State.notify();
+  }
+
+  /** The question card is done, whichever way: back to work, keyboard given back. */
+  private closeQuestion() {
+    State.pendingQuestion = null;
+    State.isPinned = false;
+    this.fsm.pinned = false;
+    void Bridge.focusWindow(false);
+    State.updateTask("integration_claude", "working");
+    State.setPillBadge("integration_claude", null);
+    this.setView(State.defaultView());
   }
 
   collapse() {

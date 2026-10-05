@@ -17,6 +17,11 @@
 // What we write back is the bare word `allow` or `deny`. Turning that into the
 // documented hookSpecificOutput JSON is coucou-hook's job, so the wire format
 // Claude Code expects lives in exactly one place.
+//
+// An AskUserQuestion card (`coucou_kind: "ask_user_question"`, sent by
+// `coucou-hook --ask`) works the same way, with one line of JSON as the answer:
+// `{"permissionDecision":"answer","answers":{…}}`. Declining it writes nothing,
+// which is "Reply in terminal".
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,6 +40,8 @@ use crate::log;
 
 /// Slightly under coucou-hook's own 110 s wait, so we always answer first.
 const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
+/// Same for a question card: under coucou-hook's 125 s `--ask` wait.
+const QUESTION_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the island gets to say "the card is up". This is the whole of B4:
 /// without it, an island that is paused, hidden behind a crashed webview or
 /// simply not listening would leave Claude Code staring at a prompt nobody can
@@ -195,7 +202,9 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         .unwrap_or_default()
         .to_string();
 
-    if event != "PermissionRequest" {
+    let is_question = event == "PreToolUse" && is_question_payload(&payload);
+
+    if event != "PermissionRequest" && !is_question {
         log::line(format!("hook {event}"));
         let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
         pipe.finish();
@@ -209,10 +218,15 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         pending.0.lock().unwrap().insert(id.clone(), tx);
     }
     payload["request_id"] = json!(id);
-    log::line(format!("hook PermissionRequest id={id}"));
+    let (label, limit) = if is_question {
+        ("AskUserQuestion", QUESTION_TIMEOUT)
+    } else {
+        ("PermissionRequest", DECISION_TIMEOUT)
+    };
+    log::line(format!("hook {label} id={id}"));
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
 
-    let decision = wait_for_decision(&id, &mut rx).await;
+    let decision = wait_for_decision(&id, &mut rx, limit).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
 
     // No decision: say nothing at all. coucou-hook then writes nothing to stdout
@@ -224,13 +238,29 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     pipe.finish();
 }
 
-/// Two waits: a short one for "the card is up", then the long one for a human.
-async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<String> {
+/// `coucou-hook --ask` tags the one call it forwards, so a plain PreToolUse for
+/// the same tool (the general hook) stays fire-and-forget.
+fn is_question_payload(payload: &Value) -> bool {
+    payload.get("coucou_kind").and_then(Value::as_str) == Some("ask_user_question")
+}
+
+/// What goes in the log for a reply: `allow` / `deny` as they are, but never the
+/// text of a question's answer — it can be whatever the human typed.
+fn describe(reply: &str) -> &str {
+    if reply.starts_with('{') { "(answers)" } else { reply }
+}
+
+/// Two waits: a short one for "the card is up", then `limit` for a human.
+async fn wait_for_decision(
+    id: &str,
+    rx: &mut mpsc::Receiver<Reply>,
+    limit: Duration,
+) -> Option<String> {
     match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
         Ok(Some(Reply::Ack)) => {}
         // A click that beats the ack is still a click.
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
+            log::line(format!("hook id={id} answered {}", describe(&d)));
             return Some(d);
         }
         Ok(Some(Reply::Decline)) => {
@@ -244,9 +274,9 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
         }
     }
 
-    match tokio::time::timeout(DECISION_TIMEOUT, rx.recv()).await {
+    match tokio::time::timeout(limit, rx.recv()).await {
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
+            log::line(format!("hook id={id} answered {}", describe(&d)));
             Some(d)
         }
         Ok(Some(Reply::Decline)) => {
@@ -283,6 +313,19 @@ pub fn acknowledge(app: &AppHandle, request_id: &str) {
 pub fn decline(app: &AppHandle, request_id: &str) {
     log::line(format!("decline id={request_id}"));
     send(app, request_id, Reply::Decline, false);
+}
+
+/// Called when the human has answered an AskUserQuestion card. `answers` maps
+/// each question's text to the chosen label (a list of labels for a multi-select
+/// question); coucou-hook turns it into Claude Code's `updatedInput`.
+pub fn answer_question(app: &AppHandle, request_id: &str, answers: Value) {
+    if !answers.is_object() {
+        log::line(format!("question id={request_id} answer is not an object — dropped"));
+        return;
+    }
+    log::line(format!("question id={request_id} answered"));
+    let line = json!({ "permissionDecision": "answer", "answers": answers }).to_string();
+    send(app, request_id, Reply::Decision(line), false);
 }
 
 /// Called by the island's Allow / Deny buttons. Only ever a bare word: turning
