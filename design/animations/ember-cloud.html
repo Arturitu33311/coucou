@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ember Cloud</title>
+<style>
+  :root { --bg:#050404; --fg:#e9e2df; --muted:#8a7f7b; --panel:rgba(20,16,15,.72); --line:rgba(255,255,255,.08); --accent:#ff3b1f; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#050404; } }
+  :root[data-theme="dark"] { --bg:#050404; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); overflow:hidden;
+    font:13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; cursor:grab; touch-action:none; }
+  canvas:active { cursor:grabbing; }
+  #ui { position:fixed; left:16px; bottom:16px; right:16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+    pointer-events:none; transition:opacity .4s; }
+  #ui > * { pointer-events:auto; }
+  .chip { background:var(--panel); border:1px solid var(--line); border-radius:999px; padding:7px 12px; color:var(--fg);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); font:inherit; cursor:pointer; }
+  .chip:hover { border-color:rgba(255,255,255,.2); }
+  .chip.rec { color:#fff; background:rgba(255,59,31,.22); border-color:rgba(255,59,31,.45); }
+  select.chip { appearance:none; -webkit-appearance:none; }
+  #stat { color:var(--muted); font-variant-numeric:tabular-nums; }
+  #err { position:fixed; inset:0; display:none; place-items:center; text-align:center; padding:16px; color:var(--muted); }
+  body.hide-ui #ui { opacity:0; }
+  body.capturing #ui .chip:not(#stat) { display:none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <select class="chip" id="count" title="Nombre de particules">
+    <option value="1024x1024">1 M particules</option>
+    <option value="2048x1024" selected>2 M particules</option>
+    <option value="2048x2048">4 M particules</option>
+  </select>
+  <button class="chip" id="pause">Pause</button>
+  <button class="chip rec" id="exp169">Exporter MP4 4K 16:9 · 60 fps</button>
+  <button class="chip rec" id="exp916">Exporter MP4 4K 9:16 · 60 fps</button>
+  <button class="chip" id="hide" title="Touche H">Masquer (H)</button>
+  <span class="chip" id="stat">—</span>
+</div>
+<div id="err"></div>
+
+<script>
+"use strict";
+// ─────────────────────────────────────────────────────────────────────────────
+// Ember Cloud — GPU particle cloud (curl-noise flow in a soft sphere) with a
+// red incandescent core glowing through grey ash. WebGL2, no dependencies
+// (mp4-muxer is lazy-loaded only for the offline 4K export).
+// ─────────────────────────────────────────────────────────────────────────────
+const params = new URLSearchParams(location.search);
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { antialias:false, alpha:false, depth:false, preserveDrawingBuffer:false, powerPreference:'high-performance' });
+const fail = (m) => { const e = document.getElementById('err'); e.style.display = 'grid'; e.textContent = m; throw new Error(m); };
+if (!gl) fail('WebGL2 indisponible sur ce navigateur.');
+if (!gl.getExtension('EXT_color_buffer_float')) fail('EXT_color_buffer_float indisponible.');
+gl.getExtension('EXT_color_buffer_half_float');
+
+// ── GLSL ────────────────────────────────────────────────────────────────────
+const NOISE = `
+vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;}
+vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
+vec4 permute(vec4 x){return mod289(((x*34.)+10.)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}
+// Simplex noise with analytic gradient (Gustavson / McEwan).
+float snoise(vec3 v, out vec3 gradient){
+  const vec2 C=vec2(1./6.,1./3.); const vec4 D=vec4(0.,.5,1.,2.);
+  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+C.yyy; vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(i.z+vec4(0.,i1.z,i2.z,1.))+i.y+vec4(0.,i1.y,i2.y,1.))+i.x+vec4(0.,i1.x,i2.x,1.));
+  float n_=.142857142857; vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.*x_);
+  vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.+1.; vec4 s1=floor(b1)*2.+1.; vec4 sh=-step(h,vec4(0.));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x; p1*=norm.y; p2*=norm.z; p3*=norm.w;
+  vec4 m=max(.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
+  vec4 m2=m*m; vec4 m4=m2*m2;
+  vec4 pdotx=vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3));
+  vec4 temp=m2*m*pdotx;
+  gradient=-8.*(temp.x*x0+temp.y*x1+temp.z*x2+temp.w*x3);
+  gradient+=m4.x*p0+m4.y*p1+m4.z*p2+m4.w*p3;
+  gradient*=42.;
+  return 42.*dot(m4,pdotx);
+}
+float snoise(vec3 v){ vec3 g; return snoise(v,g); }
+// Curl of a 3-component noise potential: divergence-free, so the flow swirls without collapsing.
+vec3 curl(vec3 p){
+  vec3 gx,gy,gz;
+  snoise(p,gx); snoise(p+vec3(31.416,-47.853,12.793),gy); snoise(p+vec3(-233.145,-113.408,-185.31),gz);
+  return vec3(gz.y-gy.z, gx.z-gz.x, gy.x-gx.y);
+}
+float hash(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+`;
+
+// Heat field shared by both particle passes: where the cloud burns red.
+const HEAT = `
+uniform float uTime;
+float heatAt(vec3 p){
+  float r=length(p);
+  float n=snoise(p*1.15+vec3(0.,-uTime*.09,uTime*.05))*.6+snoise(p*2.6-vec3(uTime*.12,0.,0.))*.25;
+  float core=1.-smoothstep(.15,.95,r);                       // interior glows
+  float belly=smoothstep(.25,-.8,p.y)*smoothstep(1.35,.6,r); // lower hemisphere burns harder
+  float h=smoothstep(-.05,.55,n)*(core*.8+belly*1.5);
+  return min(h*h*1.6,1.6);
+}`;
+
+const FS_QUAD_VS = `#version 300 es
+in vec2 aPos; out vec2 vUv;
+void main(){ vUv=aPos*.5+.5; gl_Position=vec4(aPos,0.,1.); }`;
+
+const SIM_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uPos; uniform float uTime, uDt, uInit; uniform vec2 uRes;
+in vec2 vUv; out vec4 o;
+${NOISE}
+vec3 spawn(vec2 s){
+  // Uniform point in the unit ball, slightly squashed so it starts as a soft blob.
+  float u=hash(s*1.31+uTime), v=hash(s*2.17+uTime*1.7), w=hash(s*3.73+uTime*.3);
+  float th=6.2831853*u, ph=acos(2.*v-1.), r=pow(w,1./3.)*.92;
+  return r*vec3(sin(ph)*cos(th), cos(ph), sin(ph)*sin(th));
+}
+void main(){
+  vec2 id=gl_FragCoord.xy;
+  vec4 s=texture(uPos,vUv);
+  float lifeSpan=4.5+hash(id*.73)*7.;
+  if(uInit>.5){ o=vec4(spawn(id),hash(id*1.9)); return; }
+  vec3 p=s.xyz; float life=s.w+uDt/lifeSpan;
+  if(life>=1.){ o=vec4(spawn(id+fract(uTime)*97.),0.); return; }
+  float t=uTime;
+  // Two octaves of curl noise drifting through time + a slow global roll.
+  vec3 v=curl(p*.85+vec3(0.,t*.06,0.))*.32
+        +curl(p*2.3+vec3(t*.11,0.,-t*.07))*.11
+        +curl(p*5.2-vec3(0.,t*.16,0.))*.045;
+  v+=cross(vec3(.15,1.,.05),p)*.08;           // gentle rotation of the whole mass
+  v.y+=.06*(1.-smoothstep(0.,.8,length(p)));  // hot core rises a little
+  // Soft spherical container: particles beyond the surface are pulled back, which piles them
+  // into the billowing outer shell seen in the reference.
+  float r=length(p);
+  float R=1.+.18*snoise(normalize(p)*1.6+t*.07);
+  v-=normalize(p+1e-5)*max(r-R,0.)*2.2;
+  v-=p*.035;
+  p+=v*uDt;
+  o=vec4(p,life);
+}`;
+
+const PART_VS = `#version 300 es
+precision highp float;
+uniform sampler2D uPos; uniform ivec2 uTexSize; uniform mat4 uView, uProj;
+uniform float uPx, uMode;  // uMode 0 = ash (main pass), 1 = heat (glow pass)
+out vec4 vCol;
+${NOISE}
+${HEAT}
+void main(){
+  int id=gl_VertexID;
+  ivec2 tc=ivec2(id%uTexSize.x, id/uTexSize.x);
+  vec4 s=texelFetch(uPos,tc,0);
+  vec3 p=s.xyz;
+  // Static per-particle jitter thickens the thin curl-noise sheets into fluffy smoke.
+  p+=(vec3(hash(vec2(tc)*1.7),hash(vec2(tc)*2.3+7.),hash(vec2(tc)*3.1+3.))-.5)*.03;
+  float fade=smoothstep(0.,.12,s.w)*smoothstep(1.,.8,s.w);
+  vec4 vp=uView*vec4(p,1.);
+  gl_Position=uProj*vp;
+  float rnd=hash(vec2(tc)+.5);
+  float depth=-vp.z;
+  float heat=heatAt(p);
+  if(uMode>.5){
+    gl_PointSize=max(1.,uPx*2.2/depth);
+    vCol=vec4(vec3(1.,.07,.02)*heat*fade*.05,0.);
+    return;
+  }
+  gl_PointSize=max(1.,uPx*(.9+rnd*.9)/depth);
+  // Ash shading: lit from above-front, darker in the back and underneath, tinted by heat.
+  // Fake billow lighting: a noise gradient bent into the sphere normal gives cauliflower shading.
+  vec3 bg; float bn=snoise(p*2.4+vec3(0.,-uTime*.05,0.),bg);
+  vec3 n=normalize(normalize(p+1e-5)*1.2+normalize(bg+1e-5)*.8);
+  vec3 L=normalize(vec3(-.35,.85,.45));
+  float lit=(.25+.75*smoothstep(-.7,1.,dot(n,L)))*(.65+.35*smoothstep(-.6,.6,bn));
+  float back=smoothstep(5.,3.4,depth);
+  float g=(.075+rnd*.10)*lit*mix(.4,1.,back);
+  vec3 ash=vec3(g*1.06,g*.95,g*.92);
+  vec3 ember=vec3(1.,.085,.025)*heat*(.3+rnd*.9);
+  float a=.36*fade;
+  // Premultiplied: ash occludes (alpha), ember emits (adds to rgb only).
+  vCol=vec4(ash*a+ember*a*.9, a*(1.-.3*clamp(heat,0.,1.)));
+  // Sub-pixel points: keep energy constant when they are smaller than 1px.
+  float sz=uPx*(.9+rnd*.9)/depth;
+  if(sz<1.) vCol*=sz;
+}`;
+
+const PART_FS = `#version 300 es
+precision highp float;
+in vec4 vCol; out vec4 o;
+void main(){
+  vec2 d=gl_PointCoord-.5; float m=smoothstep(.5,.2,length(d));
+  o=vCol*m;
+}`;
+
+const BLUR_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex; uniform vec2 uTexel; uniform float uOff;
+in vec2 vUv; out vec4 o;
+void main(){ // Dual-Kawase style 5-tap
+  vec2 t=uTexel*uOff;
+  o=texture(uTex,vUv)*.2
+   +(texture(uTex,vUv+vec2(t.x,t.y))+texture(uTex,vUv+vec2(-t.x,t.y))
+    +texture(uTex,vUv+vec2(t.x,-t.y))+texture(uTex,vUv+vec2(-t.x,-t.y)))*.2;
+}`;
+
+const COPY_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex; uniform float uGain;
+in vec2 vUv; out vec4 o;
+void main(){ o=vec4(texture(uTex,vUv).rgb*uGain,1.); }`;
+
+const FINAL_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uScene, uBloom; uniform vec2 uRes; uniform float uTime;
+in vec2 vUv; out vec4 o;
+float h(vec2 p){ vec3 p3=fract(vec3(p.xyx)*.1031); p3+=dot(p3,p3.yzx+33.33); return fract((p3.x+p3.y)*p3.z); }
+vec3 aces(vec3 x){ return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.); }
+void main(){
+  vec3 c=texture(uScene,vUv).rgb + texture(uBloom,vUv).rgb*.18;
+  c=aces(c*1.1);
+  vec2 q=vUv-.5; q.x*=uRes.x/uRes.y;
+  c*=mix(1.,smoothstep(1.15,.25,length(q)),.55);       // vignette
+  c+=vec3(.0016,.0011,.001);                               // lifted blacks like the reference
+  c=pow(c,vec3(1./2.2));
+  c+=(h(gl_FragCoord.xy+fract(uTime*61.)*917.)-.5)/255.*2.; // dither / grain, no banding
+  o=vec4(c,1.);
+}`;
+
+// ── GL helpers ──────────────────────────────────────────────────────────────
+function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) fail(gl.getShaderInfoLog(s)); return s; }
+function prog(vs, fs){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,vs)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));
+  gl.bindAttribLocation(p,0,'aPos'); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) fail(gl.getProgramInfoLog(p));
+  const u={}; const n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);
+  for(let i=0;i<n;i++){ const a=gl.getActiveUniform(p,i); u[a.name]=gl.getUniformLocation(p,a.name); }
+  return {p,u}; }
+function tex(w,h,internal,format,type,filter,data=null){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,internal,w,h,0,format,type,data);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,filter); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,filter);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; }
+function target(w,h,kind){ const t = kind==='f32' ? tex(w,h,gl.RGBA32F,gl.RGBA,gl.FLOAT,gl.NEAREST) : tex(w,h,gl.RGBA16F,gl.RGBA,gl.HALF_FLOAT,gl.LINEAR);
+  const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0);
+  return {t,f,w,h}; }
+function free(rt){ if(!rt) return; gl.deleteTexture(rt.t); gl.deleteFramebuffer(rt.f); }
+
+const quad=gl.createVertexArray(); gl.bindVertexArray(quad);
+const qb=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,qb);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+const emptyVao=gl.createVertexArray();
+function drawQuad(){ gl.bindVertexArray(quad); gl.drawArrays(gl.TRIANGLE_STRIP,0,4); }
+
+const P = {
+  sim: prog(FS_QUAD_VS, SIM_FS), part: prog(PART_VS, PART_FS),
+  blur: prog(FS_QUAD_VS, BLUR_FS), copy: prog(FS_QUAD_VS, COPY_FS), fin: prog(FS_QUAD_VS, FINAL_FS),
+};
+
+// ── State ───────────────────────────────────────────────────────────────────
+let simW, simH, sims=[], simIdx=0;
+let W=0, H=0, scene, heatRTs=[], bloomRTs=[];
+let simTime=0, paused=false;
+let yaw=0, pitch=.12, dragYaw=0, dragPitch=0, userYaw=0;
+
+function initSim(spec){
+  [simW,simH]=spec.split('x').map(Number);
+  sims.forEach(free); sims=[target(simW,simH,'f32'), target(simW,simH,'f32')];
+  simIdx=0; step(0, true);
+  for(let i=0;i<90;i++) step(1/60); // pre-roll so the first frame is already a cloud
+}
+
+function resize(w,h){
+  if(w===W && h===H) return; W=w; H=h; canvas.width=W; canvas.height=H;
+  free(scene); heatRTs.forEach(free); bloomRTs.forEach(free);
+  scene=target(W,H,'f16');
+  // Heat glow at 1/4 res, blurred through a small mip chain.
+  heatRTs=[]; let hw=Math.max(2,W>>2), hh=Math.max(2,H>>2);
+  for(let i=0;i<4;i++){ heatRTs.push(target(hw,hh,'f16')); hw=Math.max(2,hw>>1); hh=Math.max(2,hh>>1); }
+  heatRTs.push(target(Math.max(2,W>>2),Math.max(2,H>>2),'f16'));
+  bloomRTs=[]; let bw=Math.max(2,W>>1), bh=Math.max(2,H>>1);
+  for(let i=0;i<5;i++){ bloomRTs.push(target(bw,bh,'f16')); bw=Math.max(2,bw>>1); bh=Math.max(2,bh>>1); }
+}
+
+function step(dt, init=false){
+  const src=sims[simIdx], dst=sims[1-simIdx];
+  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.f); gl.viewport(0,0,simW,simH); gl.disable(gl.BLEND);
+  gl.useProgram(P.sim.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,src.t); gl.uniform1i(P.sim.u.uPos,0);
+  gl.uniform1f(P.sim.u.uTime,simTime); gl.uniform1f(P.sim.u.uDt,dt); gl.uniform1f(P.sim.u.uInit,init?1:0);
+  drawQuad(); simIdx=1-simIdx; simTime+=dt;
+}
+
+// Column-major mat4 helpers.
+function persp(fov,a,n,f){ const t=1/Math.tan(fov/2); return [t/a,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0]; }
+function view(yaw,pitch,dist){
+  const cy=Math.cos(yaw), sy=Math.sin(yaw), cp=Math.cos(pitch), sp=Math.sin(pitch);
+  // R = Rx(pitch) * Ry(yaw), then translate -dist on z
+  return [cy, sp*sy, -cp*sy, 0,  0, cp, sp, 0,  sy, -sp*cy, cp*cy, 0,  0, 0, -dist, 1];
+}
+
+function blurChain(rts, srcTex, srcW, srcH){
+  gl.disable(gl.BLEND);
+  gl.useProgram(P.blur.p); gl.uniform1i(P.blur.u.uTex,0); gl.activeTexture(gl.TEXTURE0);
+  let tw=srcW, th=srcH, t=srcTex;
+  for(const rt of rts){ // down
+    gl.bindFramebuffer(gl.FRAMEBUFFER,rt.f); gl.viewport(0,0,rt.w,rt.h);
+    gl.bindTexture(gl.TEXTURE_2D,t); gl.uniform2f(P.blur.u.uTexel,1/tw,1/th); gl.uniform1f(P.blur.u.uOff,1.);
+    drawQuad(); t=rt.t; tw=rt.w; th=rt.h;
+  }
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
+  for(let i=rts.length-2;i>=0;i--){ // up, accumulating
+    const rt=rts[i], s=rts[i+1];
+    gl.bindFramebuffer(gl.FRAMEBUFFER,rt.f); gl.viewport(0,0,rt.w,rt.h);
+    gl.bindTexture(gl.TEXTURE_2D,s.t); gl.uniform2f(P.blur.u.uTexel,1/s.w,1/s.h); gl.uniform1f(P.blur.u.uOff,1.);
+    drawQuad();
+  }
+  gl.disable(gl.BLEND);
+  return rts[0];
+}
+
+function render(time){
+  const a=W/H;
+  // Fit the cloud in the smaller dimension.
+  const fov = a>=1 ? 0.62 : 2*Math.atan(Math.tan(.31)/a);
+  const proj=persp(fov,a,.1,20);
+  const camYaw=yaw+userYaw+dragYaw, camPitch=Math.max(-1.2,Math.min(1.2,pitch+dragPitch+.07*Math.sin(simTime*.21)));
+  const v=view(camYaw,camPitch,4.3);
+  const px=Math.min(W,H)/1080*3.2; // point size scale: identical look at any resolution
+  const nPart=simW*simH;
+  const pp=P.part;
+  gl.useProgram(pp.p); gl.bindVertexArray(emptyVao);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sims[simIdx].t); gl.uniform1i(pp.u.uPos,0);
+  gl.uniform2i(pp.u.uTexSize,simW,simH); gl.uniformMatrix4fv(pp.u.uView,false,v); gl.uniformMatrix4fv(pp.u.uProj,false,proj);
+  gl.uniform1f(pp.u.uTime,simTime);
+
+  // 1. Heat glow pass (additive, low res)
+  const h0=heatRTs[heatRTs.length-1];
+  gl.bindFramebuffer(gl.FRAMEBUFFER,h0.f); gl.viewport(0,0,h0.w,h0.h); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
+  gl.uniform1f(pp.u.uPx,px*h0.h/H); gl.uniform1f(pp.u.uMode,1);
+  gl.drawArrays(gl.POINTS,0,nPart);
+  const glow=blurChain(heatRTs.slice(0,-1), h0.t, h0.w, h0.h);
+
+  // 2. Scene: glow underneath, then ash particles over it
+  gl.bindFramebuffer(gl.FRAMEBUFFER,scene.f); gl.viewport(0,0,W,H); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.disable(gl.BLEND);
+  gl.useProgram(P.copy.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glow.t);
+  gl.uniform1i(P.copy.u.uTex,0); gl.uniform1f(P.copy.u.uGain,.3*(1e6/nPart)); drawQuad();
+  gl.useProgram(pp.p); gl.bindVertexArray(emptyVao);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sims[simIdx].t);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+  gl.uniform1f(pp.u.uPx,px); gl.uniform1f(pp.u.uMode,0);
+  gl.drawArrays(gl.POINTS,0,nPart);
+  gl.disable(gl.BLEND);
+
+  // 3. Bloom + grade
+  const bloom=blurChain(bloomRTs, scene.t, W, H);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,W,H);
+  gl.useProgram(P.fin.p);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,scene.t); gl.uniform1i(P.fin.u.uScene,0);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,bloom.t); gl.uniform1i(P.fin.u.uBloom,1);
+  gl.uniform2f(P.fin.u.uRes,W,H); gl.uniform1f(P.fin.u.uTime,time);
+  drawQuad(); gl.activeTexture(gl.TEXTURE0);
+}
+
+// ── Live loop ───────────────────────────────────────────────────────────────
+let last=performance.now(), frames=0, fpsT=last, capturing=false, rafId=0;
+const stat=document.getElementById('stat');
+function fit(){ const dpr=Math.min(window.devicePixelRatio||1, 3);
+  resize(Math.round(innerWidth*dpr), Math.round(innerHeight*dpr)); }
+function frame(now){
+  rafId=requestAnimationFrame(frame);
+  if(capturing) return;
+  let dt=Math.min((now-last)/1000, 1/30); last=now;
+  fit();
+  if(!paused){ step(dt); yaw+=dt*.07; }
+  render(now/1000);
+  frames++; if(now-fpsT>500){ stat.textContent=`${(frames*1000/(now-fpsT)).toFixed(0)} fps · ${W}×${H} · ${(simW*simH/1e6).toFixed(0)} M`; frames=0; fpsT=now; }
+}
+
+// ── Interaction ─────────────────────────────────────────────────────────────
+let drag=null;
+canvas.addEventListener('pointerdown',e=>{ drag={x:e.clientX,y:e.clientY}; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointermove',e=>{ if(!drag) return; dragYaw=(e.clientX-drag.x)*.005; dragPitch=(e.clientY-drag.y)*.005; });
+canvas.addEventListener('pointerup',()=>{ userYaw+=dragYaw; pitch=Math.max(-1.2,Math.min(1.2,pitch+dragPitch)); dragYaw=dragPitch=0; drag=null; });
+document.getElementById('count').onchange=e=>initSim(e.target.value);
+document.getElementById('pause').onclick=e=>{ paused=!paused; e.target.textContent=paused?'Lecture':'Pause'; };
+const toggleUI=()=>document.body.classList.toggle('hide-ui');
+document.getElementById('hide').onclick=toggleUI;
+addEventListener('keydown',e=>{ if(e.key==='h'||e.key==='H') toggleUI(); if(e.key===' ') document.getElementById('pause').click(); });
+
+// ── Offline 4K60 export: fixed 1/60 s steps, encoded frame by frame (never drops a frame) ──
+async function exportMp4(w,h,seconds=10){
+  if(!('VideoEncoder' in window)) { alert('WebCodecs indisponible : utilise Chrome, Edge ou Safari 17+.'); return; }
+  const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm');
+  const fps=60, bitrate=80e6;
+  const candidates=[
+    {codec:'avc1.640034', mux:'avc'},
+    {codec:'hvc1.1.6.L153.B0', mux:'hevc'},
+    {codec:'avc1.640033', mux:'avc'},
+  ];
+  let pick=null;
+  for(const c of candidates){
+    try{ const s=await VideoEncoder.isConfigSupported({codec:c.codec,width:w,height:h,bitrate,framerate:fps});
+      if(s.supported){ pick=c; break; } }catch{}
+  }
+  if(!pick){ alert('Aucun encodeur 4K disponible dans ce navigateur.'); return; }
+  capturing=true; document.body.classList.add('capturing');
+  const prev=[W,H]; resize(w,h);
+  const muxer=new Muxer({ target:new ArrayBufferTarget(), video:{codec:pick.mux,width:w,height:h,frameRate:fps}, fastStart:'in-memory' });
+  let encErr=null;
+  const enc=new VideoEncoder({ output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta), error:e=>encErr=e });
+  enc.configure({ codec:pick.codec, width:w, height:h, bitrate, framerate:fps, latencyMode:'quality' });
+  const total=seconds*fps;
+  for(let i=0;i<total && !encErr;i++){
+    step(1/fps); yaw+=.07/fps;
+    render(i/fps); gl.finish();
+    const vf=new VideoFrame(canvas,{timestamp:Math.round(i*1e6/fps), duration:Math.round(1e6/fps)});
+    enc.encode(vf,{keyFrame:i%fps===0}); vf.close();
+    while(enc.encodeQueueSize>4) await new Promise(r=>setTimeout(r,1));
+    if(i%10===0){ stat.textContent=`Export ${w}×${h} 60 fps · ${Math.round(i/total*100)} %`; await new Promise(r=>setTimeout(r,0)); }
+  }
+  await enc.flush(); enc.close();
+  capturing=false; document.body.classList.remove('capturing');
+  resize(...prev); last=performance.now();
+  if(encErr){ alert('Échec de l’encodage : '+encErr.message); return; }
+  muxer.finalize();
+  const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`ember-cloud-${w}x${h}-60fps.mp4`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+}
+document.getElementById('exp169').onclick=()=>exportMp4(3840,2160);
+document.getElementById('exp916').onclick=()=>exportMp4(2160,3840);
+
+// ── Boot ────────────────────────────────────────────────────────────────────
+const countSel=document.getElementById('count');
+if(params.get('n')) countSel.value=params.get('n');
+fit(); initSim(countSel.value);
+if(params.has('ui') && params.get('ui')==='0') document.body.classList.add('hide-ui');
+// Offline rendering hooks (headless capture): fixed size, then fixed 1/60 s steps.
+window.renderFixed=(w,h)=>{ capturing=true; resize(w,h); };
+window.stepRender=(n)=>{ for(let i=0;i<n;i++){ step(1/60); yaw+=.07/60; } render(simTime); gl.finish(); };
+rafId=requestAnimationFrame(frame);
+</script>
+</body>
+</html>
