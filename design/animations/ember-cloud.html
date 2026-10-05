@@ -35,8 +35,17 @@
     <option value="2048x2048">4 M particules</option>
   </select>
   <button class="chip" id="pause">Pause</button>
-  <button class="chip rec" id="exp169">Exporter MP4 4K 16:9 · 60 fps</button>
-  <button class="chip rec" id="exp916">Exporter MP4 4K 9:16 · 60 fps</button>
+  <select class="chip" id="format" title="Format de la vidéo">
+    <option value="1080x1920" selected>Reel 1080×1920</option>
+    <option value="2160x3840">Reel 4K 2160×3840</option>
+    <option value="3840x2160">Paysage 4K 3840×2160</option>
+  </select>
+  <select class="chip" id="duration" title="Durée de la boucle">
+    <option value="10">10 s</option>
+    <option value="15" selected>15 s</option>
+    <option value="30">30 s</option>
+  </select>
+  <button class="chip rec" id="export">Exporter MP4 en boucle · 60 fps</button>
   <button class="chip" id="hide" title="Touche H">Masquer (H)</button>
   <span class="chip" id="stat">—</span>
 </div>
@@ -47,7 +56,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Ember Cloud — GPU particle cloud (curl-noise flow in a soft sphere) with a
 // red incandescent core glowing through grey ash. WebGL2, no dependencies
-// (mp4-muxer is lazy-loaded only for the offline 4K export).
+// (mp4-muxer is lazy-loaded only for the offline MP4 export).
 // ─────────────────────────────────────────────────────────────────────────────
 const params = new URLSearchParams(location.search);
 const canvas = document.getElementById('c');
@@ -153,7 +162,7 @@ void main(){
 const PART_VS = `#version 300 es
 precision highp float;
 uniform sampler2D uPos; uniform ivec2 uTexSize; uniform mat4 uView, uProj;
-uniform float uPx, uMode;  // uMode 0 = ash (main pass), 1 = heat (glow pass)
+uniform float uPx, uMode, uWeight, uOffsetY;  // uMode 0 = ash (main pass), 1 = heat (glow pass)
 out vec4 vCol;
 ${NOISE}
 ${HEAT}
@@ -167,12 +176,13 @@ void main(){
   float fade=smoothstep(0.,.12,s.w)*smoothstep(1.,.8,s.w);
   vec4 vp=uView*vec4(p,1.);
   gl_Position=uProj*vp;
+  gl_Position.y+=uOffsetY*gl_Position.w;
   float rnd=hash(vec2(tc)+.5);
   float depth=-vp.z;
   float heat=heatAt(p);
   if(uMode>.5){
     gl_PointSize=max(1.,uPx*2.2/depth);
-    vCol=vec4(vec3(1.,.07,.02)*heat*fade*.05,0.);
+    vCol=vec4(vec3(1.,.07,.02)*heat*fade*.05*uWeight,0.);
     return;
   }
   gl_PointSize=max(1.,uPx*(.9+rnd*.9)/depth);
@@ -192,6 +202,7 @@ void main(){
   // Sub-pixel points: keep energy constant when they are smaller than 1px.
   float sz=uPx*(.9+rnd*.9)/depth;
   if(sz<1.) vCol*=sz;
+  vCol*=uWeight;
 }`;
 
 const PART_FS = `#version 300 es
@@ -266,16 +277,28 @@ const P = {
 };
 
 // ── State ───────────────────────────────────────────────────────────────────
-let simW, simH, sims=[], simIdx=0;
+// A Sim is one particle state (ping-pong textures) with its own clock and camera yaw, so the
+// export can run a second copy of the cloud and crossfade into it for a seamless loop.
+let simW, simH, live=null;
 let W=0, H=0, scene, heatRTs=[], bloomRTs=[];
-let simTime=0, paused=false;
-let yaw=0, pitch=.12, dragYaw=0, dragPitch=0, userYaw=0;
+let paused=false, offsetY=0;
+let pitch=.12, dragYaw=0, dragPitch=0, userYaw=0;
+const YAW_SPEED=.07;
+
+function newSim(){ return { rts:[target(simW,simH,'f32'), target(simW,simH,'f32')], idx:0, time:0, yaw:0 }; }
+function freeSim(sim){ if(sim) sim.rts.forEach(free); }
+function copySim(src,dst){
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER,src.rts[src.idx].f); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,dst.rts[dst.idx].f);
+  gl.blitFramebuffer(0,0,simW,simH,0,0,simW,simH,gl.COLOR_BUFFER_BIT,gl.NEAREST);
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER,null); gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER,null);
+  dst.time=src.time; dst.yaw=src.yaw;
+}
 
 function initSim(spec){
   [simW,simH]=spec.split('x').map(Number);
-  sims.forEach(free); sims=[target(simW,simH,'f32'), target(simW,simH,'f32')];
-  simIdx=0; step(0, true);
-  for(let i=0;i<90;i++) step(1/60); // pre-roll so the first frame is already a cloud
+  freeSim(live); live=newSim();
+  step(live, 0, true);
+  for(let i=0;i<90;i++) step(live, 1/60); // pre-roll so the first frame is already a cloud
 }
 
 function resize(w,h){
@@ -290,13 +313,13 @@ function resize(w,h){
   for(let i=0;i<5;i++){ bloomRTs.push(target(bw,bh,'f16')); bw=Math.max(2,bw>>1); bh=Math.max(2,bh>>1); }
 }
 
-function step(dt, init=false){
-  const src=sims[simIdx], dst=sims[1-simIdx];
+function step(sim, dt, init=false){
+  const src=sim.rts[sim.idx], dst=sim.rts[1-sim.idx];
   gl.bindFramebuffer(gl.FRAMEBUFFER,dst.f); gl.viewport(0,0,simW,simH); gl.disable(gl.BLEND);
   gl.useProgram(P.sim.p);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,src.t); gl.uniform1i(P.sim.u.uPos,0);
-  gl.uniform1f(P.sim.u.uTime,simTime); gl.uniform1f(P.sim.u.uDt,dt); gl.uniform1f(P.sim.u.uInit,init?1:0);
-  drawQuad(); simIdx=1-simIdx; simTime+=dt;
+  gl.uniform1f(P.sim.u.uTime,sim.time); gl.uniform1f(P.sim.u.uDt,dt); gl.uniform1f(P.sim.u.uInit,init?1:0);
+  drawQuad(); sim.idx=1-sim.idx; sim.time+=dt; sim.yaw+=dt*YAW_SPEED;
 }
 
 // Column-major mat4 helpers.
@@ -327,27 +350,33 @@ function blurChain(rts, srcTex, srcW, srcH){
   return rts[0];
 }
 
-function render(time){
-  const a=W/H;
-  // Fit the cloud in the smaller dimension.
-  const fov = a>=1 ? 0.62 : 2*Math.atan(Math.tan(.31)/a);
+// Draws every layer = {sim, w} with weight w; two layers with w and 1-w crossfade.
+function drawParticles(layers, mode, px){
+  const pp=P.part, a=W/H;
+  const fov = a>=1 ? 0.62 : 2*Math.atan(Math.tan(.31)/a); // fit the cloud in the smaller dimension
   const proj=persp(fov,a,.1,20);
-  const camYaw=yaw+userYaw+dragYaw, camPitch=Math.max(-1.2,Math.min(1.2,pitch+dragPitch+.07*Math.sin(simTime*.21)));
-  const v=view(camYaw,camPitch,4.3);
+  gl.useProgram(pp.p); gl.bindVertexArray(emptyVao); gl.activeTexture(gl.TEXTURE0); gl.uniform1i(pp.u.uPos,0);
+  gl.uniform2i(pp.u.uTexSize,simW,simH); gl.uniformMatrix4fv(pp.u.uProj,false,proj);
+  gl.uniform1f(pp.u.uPx,px); gl.uniform1f(pp.u.uMode,mode); gl.uniform1f(pp.u.uOffsetY,offsetY);
+  for(const {sim,w} of layers){
+    if(w<=0) continue;
+    const camPitch=Math.max(-1.2,Math.min(1.2,pitch+dragPitch+.07*Math.sin(sim.time*.21)));
+    gl.uniformMatrix4fv(pp.u.uView,false,view(sim.yaw+userYaw+dragYaw,camPitch,4.3));
+    gl.uniform1f(pp.u.uTime,sim.time); gl.uniform1f(pp.u.uWeight,w);
+    gl.bindTexture(gl.TEXTURE_2D,sim.rts[sim.idx].t);
+    gl.drawArrays(gl.POINTS,0,simW*simH);
+  }
+}
+
+function render(layers, time){
   const px=Math.min(W,H)/1080*3.2; // point size scale: identical look at any resolution
   const nPart=simW*simH;
-  const pp=P.part;
-  gl.useProgram(pp.p); gl.bindVertexArray(emptyVao);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sims[simIdx].t); gl.uniform1i(pp.u.uPos,0);
-  gl.uniform2i(pp.u.uTexSize,simW,simH); gl.uniformMatrix4fv(pp.u.uView,false,v); gl.uniformMatrix4fv(pp.u.uProj,false,proj);
-  gl.uniform1f(pp.u.uTime,simTime);
 
   // 1. Heat glow pass (additive, low res)
   const h0=heatRTs[heatRTs.length-1];
   gl.bindFramebuffer(gl.FRAMEBUFFER,h0.f); gl.viewport(0,0,h0.w,h0.h); gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
-  gl.uniform1f(pp.u.uPx,px*h0.h/H); gl.uniform1f(pp.u.uMode,1);
-  gl.drawArrays(gl.POINTS,0,nPart);
+  drawParticles(layers, 1, px*h0.h/H);
   const glow=blurChain(heatRTs.slice(0,-1), h0.t, h0.w, h0.h);
 
   // 2. Scene: glow underneath, then ash particles over it
@@ -355,11 +384,8 @@ function render(time){
   gl.disable(gl.BLEND);
   gl.useProgram(P.copy.p); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,glow.t);
   gl.uniform1i(P.copy.u.uTex,0); gl.uniform1f(P.copy.u.uGain,.3*(1e6/nPart)); drawQuad();
-  gl.useProgram(pp.p); gl.bindVertexArray(emptyVao);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,sims[simIdx].t);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
-  gl.uniform1f(pp.u.uPx,px); gl.uniform1f(pp.u.uMode,0);
-  gl.drawArrays(gl.POINTS,0,nPart);
+  drawParticles(layers, 0, px);
   gl.disable(gl.BLEND);
 
   // 3. Bloom + grade
@@ -382,8 +408,8 @@ function frame(now){
   if(capturing) return;
   let dt=Math.min((now-last)/1000, 1/30); last=now;
   fit();
-  if(!paused){ step(dt); yaw+=dt*.07; }
-  render(now/1000);
+  if(!paused) step(live, dt);
+  render([{sim:live,w:1}], now/1000);
   frames++; if(now-fpsT>500){ stat.textContent=`${(frames*1000/(now-fpsT)).toFixed(0)} fps · ${W}×${H} · ${(simW*simH/1e6).toFixed(0)} M`; frames=0; fpsT=now; }
 }
 
@@ -398,57 +424,88 @@ const toggleUI=()=>document.body.classList.toggle('hide-ui');
 document.getElementById('hide').onclick=toggleUI;
 addEventListener('keydown',e=>{ if(e.key==='h'||e.key==='H') toggleUI(); if(e.key===' ') document.getElementById('pause').click(); });
 
-// ── Offline 4K60 export: fixed 1/60 s steps, encoded frame by frame (never drops a frame) ──
-async function exportMp4(w,h,seconds=10){
-  if(!('VideoEncoder' in window)) { alert('WebCodecs indisponible : utilise Chrome, Edge ou Safari 17+.'); return; }
-  const { Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm');
-  const fps=60, bitrate=80e6;
-  const candidates=[
-    {codec:'avc1.640034', mux:'avc'},
-    {codec:'hvc1.1.6.L153.B0', mux:'hevc'},
-    {codec:'avc1.640033', mux:'avc'},
-  ];
+// ── Seamless loop timeline ──────────────────────────────────────────────────
+// Instagram replays a Reel forever, so the last frame must flow into the first.
+// A second cloud B is snapshotted `fade` seconds before the recording starts; during the last
+// `fade` seconds B is stepped alongside A and crossfaded in. On the final frame B sits exactly
+// one step before A's first frame, so the loop point is invisible.
+function makeTimeline(w,h,seconds,fps,fade,offset){
+  capturing=true; resize(w,h); offsetY=offset;
+  const A=newSim(), B=newSim();
+  copySim(live,A); A.time=live.time; A.yaw=live.yaw;
+  copySim(A,B);
+  const total=Math.round(seconds*fps), F=Math.round(fade*fps), dt=1/fps;
+  for(let i=0;i<F;i++) step(A,dt);
+  return {
+    total,
+    frame(i){
+      step(A,dt);
+      let layers=[{sim:A,w:1}];
+      if(i>=total-F){ step(B,dt); const k=(i-(total-F)+1)/F, e=k*k*(3-2*k); layers=[{sim:A,w:1-e},{sim:B,w:e}]; }
+      render(layers, i/fps);
+    },
+    dispose(){ freeSim(A); freeSim(B); offsetY=0; capturing=false; },
+  };
+}
+
+// ── Offline export: fixed 1/60 s steps, encoded frame by frame (never drops a frame) ──
+const say=(m)=>{ stat.textContent=m; };
+async function exportMp4(w,h,seconds){
+  if(!('VideoEncoder' in window)) { say('Export impossible : ouvre la page dans Chrome, Edge ou Safari 17+.'); return; }
+  say('Préparation de l’export…');
+  let Muxer, ArrayBufferTarget;
+  try { ({ Muxer, ArrayBufferTarget } = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/+esm')); }
+  catch { say('Export impossible : le module MP4 n’a pas pu être chargé (connexion ?).'); return; }
+  const fps=60, big=w*h>2.2e6, bitrate=big?90e6:35e6;
+  // H.264 first: it's what Instagram ingests most reliably.
+  const candidates = big
+    ? [{codec:'avc1.640034',mux:'avc'},{codec:'avc1.640033',mux:'avc'},{codec:'hvc1.1.6.L153.B0',mux:'hevc'}]
+    : [{codec:'avc1.64002A',mux:'avc'},{codec:'avc1.640028',mux:'avc'},{codec:'hvc1.1.6.L123.B0',mux:'hevc'}];
   let pick=null;
   for(const c of candidates){
     try{ const s=await VideoEncoder.isConfigSupported({codec:c.codec,width:w,height:h,bitrate,framerate:fps});
       if(s.supported){ pick=c; break; } }catch{}
   }
-  if(!pick){ alert('Aucun encodeur 4K disponible dans ce navigateur.'); return; }
-  capturing=true; document.body.classList.add('capturing');
-  const prev=[W,H]; resize(w,h);
+  if(!pick){ say(`Export impossible : aucun encodeur vidéo ${w}×${h} dans ce navigateur.`); return; }
+  document.body.classList.add('capturing');
+  const prev=[W,H];
+  const portrait=h>w;
+  // Reels: lift the cloud a little so the caption and buttons at the bottom don't cover it.
+  const tl=makeTimeline(w,h,seconds,fps,1.5,portrait?.1:0);
   const muxer=new Muxer({ target:new ArrayBufferTarget(), video:{codec:pick.mux,width:w,height:h,frameRate:fps}, fastStart:'in-memory' });
   let encErr=null;
   const enc=new VideoEncoder({ output:(chunk,meta)=>muxer.addVideoChunk(chunk,meta), error:e=>encErr=e });
   enc.configure({ codec:pick.codec, width:w, height:h, bitrate, framerate:fps, latencyMode:'quality' });
-  const total=seconds*fps;
-  for(let i=0;i<total && !encErr;i++){
-    step(1/fps); yaw+=.07/fps;
-    render(i/fps); gl.finish();
+  for(let i=0;i<tl.total && !encErr;i++){
+    tl.frame(i); gl.finish();
     const vf=new VideoFrame(canvas,{timestamp:Math.round(i*1e6/fps), duration:Math.round(1e6/fps)});
     enc.encode(vf,{keyFrame:i%fps===0}); vf.close();
     while(enc.encodeQueueSize>4) await new Promise(r=>setTimeout(r,1));
-    if(i%10===0){ stat.textContent=`Export ${w}×${h} 60 fps · ${Math.round(i/total*100)} %`; await new Promise(r=>setTimeout(r,0)); }
+    if(i%10===0){ say(`Export ${w}×${h} · 60 fps · ${Math.round(i/tl.total*100)} %`); await new Promise(r=>setTimeout(r,0)); }
   }
-  await enc.flush(); enc.close();
-  capturing=false; document.body.classList.remove('capturing');
+  if(!encErr) await enc.flush(); enc.close();
+  tl.dispose(); document.body.classList.remove('capturing');
   resize(...prev); last=performance.now();
-  if(encErr){ alert('Échec de l’encodage : '+encErr.message); return; }
+  if(encErr){ say('Échec de l’encodage : '+encErr.message); return; }
   muxer.finalize();
   const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`ember-cloud-${w}x${h}-60fps.mp4`; a.click();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`ember-cloud-${w}x${h}-60fps-${seconds}s.mp4`; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),60000);
+  say(`MP4 enregistré · ${w}×${h} · 60 fps · ${seconds} s en boucle`);
 }
-document.getElementById('exp169').onclick=()=>exportMp4(3840,2160);
-document.getElementById('exp916').onclick=()=>exportMp4(2160,3840);
+document.getElementById('export').onclick=()=>{
+  const [w,h]=document.getElementById('format').value.split('x').map(Number);
+  exportMp4(w,h,Number(document.getElementById('duration').value));
+};
 
 // ── Boot ────────────────────────────────────────────────────────────────────
 const countSel=document.getElementById('count');
 if(params.get('n')) countSel.value=params.get('n');
 fit(); initSim(countSel.value);
 if(params.has('ui') && params.get('ui')==='0') document.body.classList.add('hide-ui');
-// Offline rendering hooks (headless capture): fixed size, then fixed 1/60 s steps.
-window.renderFixed=(w,h)=>{ capturing=true; resize(w,h); };
-window.stepRender=(n)=>{ for(let i=0;i<n;i++){ step(1/60); yaw+=.07/60; } render(simTime); gl.finish(); };
+// Offline rendering hook (headless capture): same timeline as the export button.
+window.makeTimeline=makeTimeline;
+window.preroll=(n)=>{ for(let i=0;i<n;i++) step(live,1/60); };
 rafId=requestAnimationFrame(frame);
 </script>
 </body>
