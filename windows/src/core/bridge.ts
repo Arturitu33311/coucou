@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Settings } from "./state";
+import type { LyricLine, MusicTrack, Settings } from "./state";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -86,6 +86,24 @@ export const Bridge = {
   questionAnswer: (requestId: string, answers: Record<string, string | string[]>) =>
     call<void>("question_answer", { requestId, answers }),
 
+  // ── Music (MPRIS) ─────────────────────────────────────────────────────────
+  /** What the last `music` event said, for a page that has just loaded. */
+  musicState: () => call<MusicTrack | null>("music_state"),
+  /** playpause / next / previous, or seek to `valueMs` from the start of the track. */
+  musicControl: (action: "playpause" | "next" | "previous" | "seek" | "raise" | "volume", valueMs?: number) =>
+    call<void>("music_control", { action, valueMs: valueMs ?? null }),
+  /** The art as a data: URL. Rejects when it is a web URL and online fetching is off. */
+  musicArt: (url: string) => callOrThrow<string>("music_art", { url }),
+  /** Synchronised lyrics, or null when there are none. Rejects while online fetching is off. */
+  musicLyrics: (title: string, artist: string, album: string, durationMs: number) =>
+    callOrThrow<LyricLine[] | null>("music_lyrics", { title, artist, album, durationMs }),
+
+  /**
+   * Starts or stops `cava` (the real-time visualizer). Resolves to whether it is
+   * running: false when it is not installed.
+   */
+  musicBars: (on: boolean) => call<boolean>("music_bars", { on }),
+
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
   chatSend: (query: string, context: ChatContext | null) =>
@@ -149,6 +167,7 @@ async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Prom
 
 export type BridgeEvent =
   | { name: "cursor"; payload: { x: number; y: number } }
+  | { name: "gaze"; payload: { x: number; y: number } }
   | { name: "tray"; payload: string }
   | { name: "hook"; payload: Record<string, unknown> }
   | { name: "screen-changed"; payload: null };

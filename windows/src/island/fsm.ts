@@ -18,10 +18,21 @@ export class IslandStateMachine {
   greetHoverCollapseDelay = 10;
   /** An alert waiting for an answer stays open, even when the mouse leaves. */
   pinned = false;
+  /**
+   * True while something wants the compact island to stay up (the Music pill is
+   * showing a track): it then never retracts to hidden on its own.
+   */
+  keepCompact: (() => boolean) | null = null;
+  /**
+   * Seconds the pointer must rest on the minimised island before it opens by
+   * itself; null keeps the click-to-open behaviour.
+   */
+  hoverOpenDelay: number | null = null;
 
   private petitHide: number | null = null;
   private homeCollapse: number | null = null;
   private greetCollapse: number | null = null;
+  private hoverOpen: number | null = null;
 
   // ── Inputs ──────────────────────────────────────────────────────────────────
 
@@ -35,9 +46,11 @@ export class IslandStateMachine {
       case "hidden":
         this.cancelTimers();
         this.transition("petit");
+        this.scheduleHoverOpen();
         break;
       case "petit":
         this.clear("petitHide");
+        this.scheduleHoverOpen();
         break;
       case "home":
         this.clear("homeCollapse");
@@ -53,6 +66,7 @@ export class IslandStateMachine {
       case "hidden":
         break;
       case "petit":
+        this.clear("hoverOpen");
         this.schedulePetitHide();
         break;
       case "home":
@@ -108,8 +122,30 @@ export class IslandStateMachine {
     this.clear("petitHide");
     this.petitHide = window.setTimeout(() => {
       this.petitHide = null;
-      if (this.state === "petit") this.transition("hidden");
+      if (this.state === "petit" && !this.keepCompact?.()) this.transition("hidden");
     }, this.petitToHiddenDelay * 1000);
+  }
+
+  /**
+   * Whatever kept the compact island up has gone (the music pill was switched
+   * off): let it retract after the usual delay instead of staying for good.
+   */
+  settle() {
+    if (this.state === "petit" && this.petitHide == null) this.schedulePetitHide();
+  }
+
+  private scheduleHoverOpen() {
+    this.clear("hoverOpen");
+    if (this.hoverOpenDelay == null) return;
+    this.hoverOpen = window.setTimeout(() => {
+      this.hoverOpen = null;
+      this.click();
+    }, this.hoverOpenDelay * 1000);
+  }
+
+  /** The pointer is being used on the minimised island (wheel, click): do not open under it. */
+  cancelHoverOpen() {
+    this.clear("hoverOpen");
   }
 
   private scheduleHomeCollapse() {
@@ -129,7 +165,7 @@ export class IslandStateMachine {
     }, delay * 1000);
   }
 
-  private clear(which: "petitHide" | "homeCollapse" | "greetCollapse") {
+  private clear(which: "petitHide" | "homeCollapse" | "greetCollapse" | "hoverOpen") {
     const id = this[which];
     if (id != null) window.clearTimeout(id);
     this[which] = null;
@@ -139,6 +175,7 @@ export class IslandStateMachine {
     this.clear("petitHide");
     this.clear("homeCollapse");
     this.clear("greetCollapse");
+    this.clear("hoverOpen");
   }
 
   private transition(next: FsmState) {

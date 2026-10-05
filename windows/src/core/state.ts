@@ -87,12 +87,56 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_notion", "Notion", "#8C8C8C", "n8n"),
   task("integration_calcom", "Cal.com", "#C9956A", "n8n"),
   task("integration_stripe", "Stripe", "#0570DE", "n8n"),
+  // Same id and colour as the macOS "Apple Music" pill; here it follows whatever
+  // MPRIS player is running (Linux).
+  task("integration_music", "Music", "#FA2D48", "n8n"),
 ];
 
 export const TOGGLEABLE_INTEGRATION_IDS = [
   "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
-  "integration_notion", "integration_calcom", "integration_stripe",
+  "integration_notion", "integration_calcom", "integration_stripe", "integration_music",
 ];
+
+export const MUSIC_ID = "integration_music";
+
+/** What the player reports (see music.rs). */
+export interface MusicTrack {
+  player: string;
+  identity: string;
+  status: "Playing" | "Paused" | "Stopped" | string;
+  title: string;
+  artists: string[];
+  album: string;
+  lengthMs: number;
+  artUrl: string;
+  /** Where the track was at `positionAt` (epoch ms); the island extrapolates. */
+  positionMs: number;
+  positionAt: number;
+  canSeek: boolean;
+  canNext: boolean;
+  canPrevious: boolean;
+  /** The player's own volume, 0–1, or -1 when it has none. */
+  volume: number;
+}
+
+export interface LyricLine {
+  t: number;
+  text: string;
+}
+
+/** The track on screen plus everything the island derived from it. */
+export interface MusicInfo extends MusicTrack {
+  /** Same song ⇔ same key; position and play/pause don't change it. */
+  key: string;
+  /** Album art as a data: URL, once fetched. */
+  art: string | null;
+  /** Average colour of the art, and a lighter shade of it readable on dark. */
+  rgb: [number, number, number] | null;
+  accent: string;
+  lyrics: LyricLine[] | null;
+  /** off = online fetching is switched off in Settings. */
+  lyricsState: "off" | "loading" | "none" | "ready";
+}
 
 /** What an integration poller last reported. */
 export interface IntegrationInfo {
@@ -113,6 +157,17 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** Music pill: fetch lyrics (lrclib.net) and album art given as a web URL. */
+  musicOnline: boolean;
+  musicVisualizer: "off" | "wave" | "beat" | "realtime";
+  /** Script to prefer when lrclib has several versions of a song. */
+  musicLyricsLanguage: "any" | "original" | "latin";
+  /** Keep the pill (and the minimised island) on the last track after the player closes. */
+  musicKeep: boolean;
+  /** What the wheel does over the minimised pill. */
+  musicScroll: "track" | "volume";
+  /** The minimised island opens when the pointer rests on it (no click) and folds back fast. */
+  openOnHover: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -127,6 +182,12 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  musicOnline: false,
+  musicVisualizer: "realtime",
+  musicLyricsLanguage: "any",
+  musicKeep: true,
+  musicScroll: "track",
+  openOnHover: false,
 };
 
 type Listener = () => void;
@@ -159,6 +220,8 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
+  /** What the Music pill is showing; null when no player has a track. */
+  music: MusicInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
 
@@ -283,6 +346,19 @@ class AppState {
       this.settings.activeIntegrations = [...active, id];
     }
     this.loadIntegrationTasks();
+  }
+
+  /**
+   * True when the minimised island carries the Music pill: the pill is switched
+   * on and a track is known (the last one stays after the player closes, like the
+   * GNOME extension's "Always ON"). Paused from the tray means nothing is shown.
+   */
+  musicStrip(): boolean {
+    return (
+      !this.paused &&
+      this.music !== null &&
+      this.tasks.some((t) => t.id === MUSIC_ID)
+    );
   }
 
   defaultView(): IslandViewName {

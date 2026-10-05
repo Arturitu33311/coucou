@@ -83,6 +83,49 @@ the terminal as before. While the card is up Claude Code waits for it, so the
 terminal shows nothing to answer; after two minutes without an answer, or if
 Coucou is closed or paused, the terminal asks as usual.
 
+## Music (Linux)
+
+Turn on **Music** in Settings → Integrations (it takes one of the four pill slots).
+It follows whichever MPRIS player is playing — Spotify, a browser tab, VLC, mpv… —
+the same source GNOME's media widgets use.
+
+- **Minimised island.** The island widens a little and carries a pill filled with the
+  cover's colour: the cover, four bars, and the lyric being sung as the main line — it
+  takes the title's place, as in the GNOME extension — with "Title • Artist" in small
+  type under it (without lyrics, the title is the main line). Long lines slide.
+  Mochi takes the cover's colour too.
+  The pill stays up as long as a track is known — the last one stays when the player
+  closes — so the island does not hide itself while you listen. (Settings → Music →
+  *Keep after the player closes* turns that off: the pill then goes with the player.)
+- **Inputs on the pill.** Click: play/pause. Double-click or right-click: open the full
+  view. Middle-click: bring the player's window forward. Wheel: up = next, down =
+  previous (or louder / quieter, ±5 %, with *Wheel on the pill* in Settings); a wheel
+  click acts at once, a touchpad adds up to one click, 500 ms apart at most, and the
+  pill slides 12 px with a bounce — all as in the extension. The open island folds back
+  a moment (0.3 s) after the pointer leaves it.
+- **Full view** (from the pill, or the ↗ button on the card): the cover, album, three
+  lyric lines with the current one highlighted, a seek bar with times, the controls, and
+  the bars along the bottom. The overview's Music card is the compact version of it.
+- **Settings → Music.** *Lyrics and web covers* is **off by default**: synchronised
+  lyrics come from [lrclib.net](https://lrclib.net) and a cover is fetched when the
+  player gives a web address (a local file is always used). Both are network requests,
+  so nothing leaves your machine until you switch it on; tray → Pause stops them again.
+  You can also pick the visualizer and which script to prefer when a song has several
+  lyric versions (original or Latin letters).
+- **Real-time bars.** The default visualizer follows the sound with
+  [`cava`](https://github.com/karlstav/cava), configured as the extension does (64 bands,
+  grouped into the bars shown, eased and mirrored about the middle). Only its levels are
+  used — nothing is recorded or stored — and cava runs only while a track plays and the
+  bars are on screen; tray → Pause stops it. Without `cava` installed, the animated bars
+  (Wave) are used instead. Wave and Beat are always animations.
+
+Not in this version: syncing GNOME's accent colour, placing the pill in the top panel or a
+dock, and configurable click actions. On GNOME the island is a plain window, and the top
+panel is drawn above every window and keeps the pointer in its strip: the island can hang
+just under it, or sit on the screen edge if the panel is hidden (e.g. with the Just
+Perfection extension). So if you also run a music extension that lives in the panel, use
+one of the two.
+
 ## Chat and keys
 
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
@@ -182,7 +225,10 @@ What changes on Linux:
 - **The island** is a gtk-layer-shell overlay anchored to the top edge, over any
   top panel, on compositors that support it: COSMIC, KDE Plasma, Hyprland, Sway
   and other wlroots compositors. GNOME has no layer-shell, so there the island
-  is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere.
+  is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere. On GNOME
+  (X11) mutter places that window where it likes: `COUCOU_X11_MODE=utility` keeps it
+  centred under the panel, and `COUCOU_X11_MODE=or` maps it as an override-redirect
+  window (drawn over the panel, but the panel keeps the mouse in its strip).
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath.
 - **Mochi's eyes** follow the pointer only while it is over the island: Wayland

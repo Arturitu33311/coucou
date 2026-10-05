@@ -1,0 +1,382 @@
+/* ── Music pill ─────────────────────────────────────────────────────────── */
+
+/* Looping animations stop while the island is shut: nothing is visible and the
+   hidden island must cost nothing. */
+#content.idle * {
+  animation-play-state: paused !important;
+}
+
+.mq {
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mq > span {
+  display: inline-block;
+}
+
+.mq.scroll > span {
+  animation: mq-slide var(--dur, 8s) ease-in-out infinite alternate;
+}
+
+@keyframes mq-slide {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--dx, 0));
+  }
+}
+
+.m-compact-wrap {
+  position: relative;
+  height: 100%;
+}
+
+.m-compact {
+  position: relative;
+  z-index: 1;
+  gap: 4px;
+  padding: 9px 12px 0 108px;
+}
+
+.m-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 20px;
+  cursor: default;
+}
+
+.m-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.m-title {
+  font: 600 12px var(--font);
+  color: var(--ink);
+}
+
+.m-artist {
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.m-art {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--acc, #fa2d48);
+}
+
+.m-art.small {
+  width: 30px;
+  height: 30px;
+}
+
+.m-art.big {
+  width: 96px;
+  height: 96px;
+  border-radius: 16px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+}
+
+.m-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.m-lyrics {
+  min-height: 16px;
+}
+
+.m-ly {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 500 11.5px var(--font);
+  color: var(--acc, #fa2d48);
+}
+
+.m-ly.dim {
+  font: 400 12px var(--font);
+  color: var(--dim-3);
+}
+
+.m-ly.cur.fx {
+  animation: m-fade 0.35s ease-out;
+}
+
+@keyframes m-fade {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.m-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.m-row.off {
+  visibility: hidden;
+}
+
+.m-ctl {
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: default;
+}
+
+.m-ctl:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.m-ctl:disabled {
+  opacity: 0.3;
+}
+
+.m-ctl.main {
+  background: var(--ink);
+  color: #0b0c0e;
+}
+
+.m-ctl.main:hover {
+  background: #fff;
+}
+
+.m-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  margin: 0 7px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+}
+
+/* A taller invisible target: 4 px is hard to hit. */
+.m-bar::before {
+  content: "";
+  position: absolute;
+  inset: -8px 0;
+}
+
+.m-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--acc, #fa2d48);
+}
+
+.m-bar.locked {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.m-time {
+  flex: 0 0 auto;
+  min-width: 28px;
+  text-align: right;
+  font: 500 10px var(--font);
+  font-variant-numeric: tabular-nums;
+  color: var(--dim-3);
+}
+
+.m-viz {
+  position: absolute;
+  left: 108px;
+  right: 8px;
+  bottom: 0;
+  z-index: 0;
+  width: calc(100% - 116px);
+  height: 26px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.m-card.full {
+  position: relative;
+}
+
+.m-full {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 100%;
+  padding: 4px 18px 4px 104px;
+}
+
+.m-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.m-card.full .m-title {
+  font: 700 17px var(--font);
+}
+
+.m-card.full .m-artist {
+  font: 400 12px var(--font);
+}
+
+.m-card.full .m-lyrics {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 58px;
+  padding: 6px 0 4px;
+}
+
+.m-card.full .m-ly {
+  font-size: 12.5px;
+}
+
+.m-card.full .m-ly.cur {
+  font: 700 15px var(--font);
+}
+
+.m-card.full .m-viz {
+  left: 0;
+  right: 0;
+  width: 100%;
+  height: 42px;
+  opacity: 0.35;
+}
+
+/* On the cover's colour: white text and controls, whatever the cover is (the fill
+   is darkened until white reads on it). */
+.tinted .m-artist,
+.tinted .m-time {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.tinted .m-ly {
+  color: #fff;
+}
+
+.tinted .m-ly.dim {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.tinted .m-bar {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.tinted .m-bar i {
+  background: #fff;
+}
+
+.tinted .m-art {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.tinted .m-ctl:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ── The Music pill on the minimised island ─────────────────────────────── */
+
+#compact-music {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  padding: 0 9px 0 4px;
+  overflow: hidden;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.07);
+  opacity: 0;
+  pointer-events: none;
+  cursor: default;
+  transition: opacity 0.25s ease-in-out;
+}
+
+#compact-music.gone {
+  filter: saturate(0.4) brightness(0.8);
+}
+
+.m-art.strip {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+}
+
+.cm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.cm-title {
+  font: 600 10.5px/13px var(--font);
+  color: var(--ink);
+}
+
+/* The small line under the main one: "Title • Artist" while a lyric is being sung
+   (the lyric takes the main line from the title, as in the extension). */
+.cm-lyric {
+  min-height: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: 500 9px/12px var(--font);
+  color: var(--dim-2);
+}
+
+#compact-music.tinted .cm-lyric {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* No lyric: the title is the main line and takes the middle of the pill by itself. */
+#compact-music.nolyric .cm-lyric {
+  display: none;
+}
+
+.cm-title.fx {
+  animation: m-fade 0.35s ease-out;
+}
+
+/* Four bars, 2 px wide with 2 px between, like the extension's pill. */
+.cm-viz {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 20px;
+  opacity: 0.95;
+  pointer-events: none;
+}

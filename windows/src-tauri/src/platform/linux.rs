@@ -160,6 +160,26 @@ pub fn left_button_down() -> bool {
     false
 }
 
+/// Whether the pointer can be read anywhere on screen: only on a real X11 session.
+pub fn gaze_supported() -> bool {
+    if std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false) {
+        return false;
+    }
+    gtk::gdk::Display::default()
+        .map(|d| d.type_().name().contains("X11"))
+        .unwrap_or(false)
+}
+
+/// The pointer in window-logical coordinates, wherever it is on screen.
+/// Must run on the main thread (GDK).
+pub fn pointer_in_window(win: &WebviewWindow) -> Option<(f64, f64)> {
+    let gw = win.gtk_window().ok()?;
+    let origin = gw.window()?.origin();
+    let pointer = gtk::gdk::Display::default()?.default_seat()?.pointer()?;
+    let (_, px, py) = pointer.position();
+    Some(((px - origin.1) as f64, (py - origin.2) as f64))
+}
+
 // ── Island window ─────────────────────────────────────────────────────────────
 
 /// The few gtk-layer-shell calls we need, straight from the C library.
@@ -223,6 +243,7 @@ pub fn make_non_activating(win: &WebviewWindow) {
         };
         crate::log::line(format!("island is a regular window ({why})"));
         gw.set_accept_focus(false);
+        place_without_layer_shell(&gw);
         return;
     }
     // tao gives undecorated Wayland windows an empty titlebar to force
@@ -261,6 +282,37 @@ pub fn make_non_activating(win: &WebviewWindow) {
     });
     LAYER_SURFACE.store(true, Ordering::Relaxed);
     crate::log::line("island is a layer-shell overlay");
+}
+
+/// GNOME (X11) has no layer-shell, and its top panel is drawn above every normal
+/// window — "always on top" included — while mutter places a normal window where it
+/// likes (seen on Zorin 18 / Pop Shell: 36 px down and off-centre). So how the
+/// island is mapped is chosen with `COUCOU_X11_MODE`:
+///   * unset / `normal`: an ordinary window (what upstream does);
+///   * `utility`: the same, typed as a utility window — mutter keeps it centred,
+///     directly under the panel;
+///   * `or`: an override-redirect window. mutter never manages it (no placement,
+///     no tiling, no focus handling) and draws it in the group above the Shell's
+///     own UI, so it can sit on the very edge of the screen over the panel.
+fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
+    // The island is an overlay, not a window to switch to: keep it out of the
+    // overview (Super), Alt+Tab and the dock whatever the window type ends up being.
+    gw.set_skip_taskbar_hint(true);
+    gw.set_skip_pager_hint(true);
+    let mode = std::env::var("COUCOU_X11_MODE").unwrap_or_default();
+    match mode.as_str() {
+        "utility" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Utility),
+        "or" => {
+            gw.realize();
+            if let Some(window) = gw.window() {
+                window.set_override_redirect(true);
+            }
+        }
+        _ => {}
+    }
+    if !mode.is_empty() {
+        crate::log::line(format!("X11 window mode: {mode}"));
+    }
 }
 
 /// Temporarily allow keyboard focus so a text field inside the island can be

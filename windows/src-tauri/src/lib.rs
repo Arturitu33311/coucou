@@ -1,11 +1,13 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod bars;
 mod claude;
 mod files;
 mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod music;
 mod pipe;
 mod platform;
 mod secrets;
@@ -71,6 +73,8 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
     }
+    // The Music pill's switch decides whether the players are watched at all.
+    music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
     if autostart_changed {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
@@ -173,8 +177,9 @@ fn quit_app(app: AppHandle) {
 /// Tray → Pause. Paused means paused: the pollers stop talking to the network,
 /// not just the island stopping showing things.
 #[tauri::command]
-fn set_paused(paused: bool) {
+fn set_paused(app: AppHandle, paused: bool) {
     integrations::set_paused(paused);
+    music::set_paused(&app, paused);
 }
 
 // ── Claude Code hooks ─────────────────────────────────────────────────────────
@@ -399,6 +404,11 @@ pub fn run() {
             approval_ack,
             approval_decline,
             question_answer,
+            music::music_state,
+            music::music_control,
+            music::music_art,
+            music::music_lyrics,
+            bars::music_bars,
             log_line,
             chat_send,
             chat_reset,
@@ -430,11 +440,17 @@ pub fn run() {
             }
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
+            #[cfg(target_os = "linux")]
+            island::spawn_gaze_poll(handle.clone(), gate.clone());
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());
+            music::sync_enabled(
+                &handle,
+                loaded.active_integrations.iter().any(|x| x == "integration_music"),
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

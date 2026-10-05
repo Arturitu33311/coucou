@@ -12,6 +12,8 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
+import { buildMusicCompact, buildMusicView } from "./music";
+import { musicTint } from "../island/music";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -143,8 +145,11 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | null = null;
+  let mode: "ticker" | "card" | "music" | null = null;
   let cardKey = "";
+  // The Music card keeps its own DOM (its controls and bars update every frame),
+  // so it is built once here and mounted into the left card when it is in focus.
+  const music = buildMusicCompact(actions);
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -167,6 +172,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
+      else if (mode === "music") music.tick(nowMs);
     },
     sync() {
       const task = State.focusTask;
@@ -202,6 +208,14 @@ function buildOverview(actions: ViewActions): ViewHost {
           }));
         }
         ticker.sync(task);
+      } else if (task?.id === "integration_music") {
+        if (mode !== "music") {
+          clear(leftBody);
+          leftBody.append(music.el);
+          mode = "music";
+          cardKey = "";
+        }
+        music.sync();
       } else if (task) {
         const info = State.integrations[task.id];
         const key = [
@@ -218,9 +232,13 @@ function buildOverview(actions: ViewActions): ViewHost {
       }
 
       jump.style.display = detailOpen ? "none" : "";
+      // The Music card fills the shared left card with the cover's colour; any
+      // other pill gets the plain card back.
+      if (mode !== "music") left.style.background = "";
 
       const others = State.otherTasks.slice(0, 4);
-      const pillKey = others.map((t) => `${t.id}:${t.pillBadge ?? ""}`).join("|");
+      // The colour is in the key: the Music pill is tinted with the cover's.
+      const pillKey = others.map((t) => `${t.id}:${t.pillBadge ?? ""}:${t.color}`).join("|");
       if (pillKey !== pillIds) {
         pillIds = pillKey;
         clear(pills);
@@ -240,7 +258,12 @@ function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
     canvas,
     h("span", { class: "lbl", text: label }),
   );
-  pill.style.borderColor = `${task.color}24`;
+  // The Music pill rests in the cover's colour (the fill the GNOME extension
+  // gives its pill); every other pill rests plain.
+  const tint = task.id === "integration_music" ? musicTint(State.music)?.soft ?? "" : "";
+  const restBorder = tint ? `${task.color}8c` : `${task.color}24`;
+  pill.style.background = tint;
+  pill.style.borderColor = restBorder;
   pill.addEventListener("mouseenter", () => {
     pill.style.background = `${task.color}2e`;
     pill.style.borderColor = `${task.color}8c`;
@@ -248,8 +271,8 @@ function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
     (pill.querySelector(".lbl") as HTMLElement).style.color = lighten(task.color, 0.3);
   });
   pill.addEventListener("mouseleave", () => {
-    pill.style.background = "";
-    pill.style.borderColor = `${task.color}24`;
+    pill.style.background = tint;
+    pill.style.borderColor = restBorder;
     pill.style.boxShadow = "";
     (pill.querySelector(".lbl") as HTMLElement).style.color = "";
   });
@@ -622,6 +645,7 @@ export function buildViews(
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
   map.set("question", buildQuestion(actions));
+  map.set("music", buildMusicView(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());

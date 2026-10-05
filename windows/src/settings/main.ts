@@ -272,6 +272,8 @@ interface IntegrationDef {
   color: string;
   /** Credential Manager keys, in the order they are shown. */
   fields: { key: string; label: string; placeholder: string; secret: boolean }[];
+  /** Shown instead of key fields for a pill that needs none. */
+  note?: string;
 }
 
 const INTEGRATIONS: IntegrationDef[] = [
@@ -292,6 +294,8 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
+  { id: "integration_music", name: "Music", color: "#FA2D48", fields: [],
+    note: "What is playing — Spotify, a browser tab, VLC… No key needed. Options are under Music below." },
 ];
 
 const MAX_ACTIVE = 4;
@@ -322,6 +326,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
     });
 
     const rows = h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-width:0" });
+    if (def.note) rows.append(h("div", { class: "hint", style: "padding-top:4px", text: def.note }));
     for (const field of def.fields) {
       const input = h("input", {
         type: field.secret ? "password" : "text",
@@ -366,6 +371,92 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
   updateNote();
   return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
+}
+
+// ── Music section ─────────────────────────────────────────────────────────────
+
+function musicSection(): HTMLElement {
+  const visualizer = h("select", {}) as HTMLSelectElement;
+  visualizer.append(
+    h("option", { value: "realtime", text: "Real-time (cava)" }),
+    h("option", { value: "wave", text: "Wave" }),
+    h("option", { value: "beat", text: "Beat" }),
+    h("option", { value: "off", text: "Off" }),
+  );
+  visualizer.value = settings.musicVisualizer;
+  visualizer.addEventListener("change", () => {
+    settings.musicVisualizer = visualizer.value as Settings["musicVisualizer"];
+    void save();
+  });
+
+  const scroll = h("select", {}) as HTMLSelectElement;
+  scroll.append(
+    h("option", { value: "track", text: "Change track" }),
+    h("option", { value: "volume", text: "Change volume" }),
+  );
+  scroll.value = settings.musicScroll;
+  scroll.addEventListener("change", () => {
+    settings.musicScroll = scroll.value as Settings["musicScroll"];
+    void save();
+  });
+
+  const language = h("select", {}) as HTMLSelectElement;
+  language.append(
+    h("option", { value: "any", text: "Closest in length" }),
+    h("option", { value: "latin", text: "Latin letters" }),
+    h("option", { value: "original", text: "Original script" }),
+  );
+  language.value = settings.musicLyricsLanguage;
+  language.addEventListener("change", () => {
+    settings.musicLyricsLanguage = language.value as Settings["musicLyricsLanguage"];
+    void save();
+  });
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Music" })),
+    h("div", { class: "hint", text:
+      "Turn on the Music pill above (it takes one of the four slots). It follows whichever player is playing, " +
+      "tints the island with the cover's colour and lets you play, skip and seek from it." }),
+    h("div", { class: "row" },
+      h("label", { text: "Lyrics and web covers" }),
+      toggle(settings.musicOnline, (v) => { settings.musicOnline = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Fetch synchronised lyrics from lrclib.net and covers the player gives as a web address. " +
+        "Off by default: both are network requests. A cover that is a local file is always used." }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Keep after the player closes" }),
+      toggle(settings.musicKeep, (v) => { settings.musicKeep = v; void save(); }),
+      h("span", { class: "hint", text:
+        "The pill stays on the last track, so the minimised island does not hide. Off: it goes with the player." }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Open on hover" }),
+      toggle(settings.openOnHover, (v) => { settings.openOnHover = v; void save(); }),
+      h("span", { class: "hint", text:
+        "The minimised island opens when the pointer rests on it and folds back right after it leaves, " +
+        "from any view. Right-click and double-click no longer open it." }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Wheel on the pill" }),
+      scroll,
+      h("span", { class: "hint", text: "over the minimised island (needs a player with a volume control for Volume)" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Lyrics script" }),
+      language,
+      h("span", { class: "hint", text: "when a song has several versions (original, romanised…)" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Visualizer" }),
+      visualizer,
+      h("span", { class: "hint", text:
+        "Real-time follows the sound with cava (only its levels, only while you can see the bars; " +
+        "animated bars are used if cava is not installed). Wave and Beat are animations." }),
+    ),
+  );
 }
 
 // ── General section ───────────────────────────────────────────────────────────
@@ -454,6 +545,7 @@ async function main() {
     claudeSection(status),
     apiSection(hasKey),
     integrationsSection(present),
+    musicSection(),
     generalSection(),
     h("div", {
       class: "hint",

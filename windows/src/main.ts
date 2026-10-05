@@ -1,12 +1,14 @@
 // Entry point: boot the bridge, wire the island, start the greeting.
 
 import "./style.css";
+import "./music.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
+import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 
 async function main() {
   const root = document.getElementById("root");
@@ -25,6 +27,8 @@ async function main() {
   if (boot && !boot.cursorPoll) island.followPageCursor();
 
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
+  // Linux/X11: the pointer anywhere on screen, for Mochi's eyes only.
+  await onEvent<{ x: number; y: number }>("gaze", ({ x, y }) => island.onGaze(x, y));
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {
@@ -59,10 +63,12 @@ async function main() {
     island.applySettings();
     State.loadIntegrationTasks();
     void refreshConfigured();
+    musicSettingsChanged(island);
   });
 
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
+  registerMusicHandlers(island);
 
   island.launch();
 

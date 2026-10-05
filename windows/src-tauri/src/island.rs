@@ -285,6 +285,42 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
     });
 }
 
+/// Mochi's eyes across the whole screen on X11. Linux reads no global cursor for
+/// click-through (the input region does that), but an X11 session can still say
+/// where the pointer is, so while the island is visible it is sampled ~20 times a
+/// second and sent as `gaze`: it only turns Mochi's head, nothing opens or closes.
+/// Wayland (and Xwayland over it) has no such position, so there the eyes keep
+/// following the pointer over the island only.
+#[cfg(target_os = "linux")]
+pub fn spawn_gaze_poll(app: AppHandle, gate: Arc<PollGate>) {
+    if !platform::gaze_supported() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let last = Arc::new(Mutex::new((i32::MIN, i32::MIN)));
+        loop {
+            gate.wait_until_active();
+            while gate.is_active() {
+                std::thread::sleep(Duration::from_millis(50));
+                // GDK is single-threaded: the read happens on the main thread.
+                let handle = app.clone();
+                let last = last.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let Some(win) = window(&handle) else { return };
+                    let Some((x, y)) = platform::pointer_in_window(&win) else { return };
+                    let key = (x as i32, y as i32);
+                    let mut last = last.lock().unwrap();
+                    if key == *last {
+                        return;
+                    }
+                    *last = key;
+                    let _ = win.emit("gaze", CursorPayload { x, y });
+                });
+            }
+        }
+    });
+}
+
 /// Re-applies click-through after the window or the island changed shape.
 ///
 /// With the cursor poll (Windows) the window takes the mouse again and the next

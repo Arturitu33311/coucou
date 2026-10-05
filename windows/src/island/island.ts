@@ -17,10 +17,20 @@ import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from ".
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
+import { buildMusicStrip, type MusicHost } from "../views/music";
+import { setBarsWanted } from "./music";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 
 const BOT_OVERHANG = 40;
+/** Seconds the island stays open after the pointer leaves it, with the Music pill. */
+const MUSIC_LEAVE_S = 0.3;
+/** With "open on hover": how long the pointer rests on the minimised island before it opens. */
+const HOVER_OPEN_S = 0.45;
+/** Frame interval while only the minimised Music pill animates (≈ 12 fps)… */
+const STRIP_FRAME_MS = 80;
+/** …and with the real-time bars, which need to keep up with the music (≈ 30 fps). */
+const STRIP_FRAME_LIVE_MS = 33;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 
@@ -44,6 +54,8 @@ export class Island {
   private botGlow!: HTMLElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
+  /** The Music pill shown on the minimised island. */
+  private strip!: MusicHost;
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -128,6 +140,7 @@ export class Island {
           integration_calcom: "https://app.cal.com/bookings",
         };
         if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
+        else if (task.id === "integration_music") this.setView("music");
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
@@ -224,12 +237,23 @@ export class Island {
       this.uploadCanvas.el,
       this.contentEl,
     );
+    // Same inputs as the GNOME extension's pill (its defaults): click plays or
+    // pauses, double-click / right-click open the full view, middle-click raises
+    // the player, the wheel changes track.
+    this.strip = buildMusicStrip({
+      toggle: () => void Bridge.musicControl("playpause"),
+      next: () => void Bridge.musicControl("next"),
+      previous: () => void Bridge.musicControl("previous"),
+      raise: () => void Bridge.musicControl("raise"),
+      open: () => this.alert("music"),
+    });
     this.islandEl = h(
       "div",
       { id: "island" },
       this.clipEl,
       this.botGlow,
       this.botCanvas,
+      this.strip.el,
       this.miniGrid,
       this.countdown,
     );
@@ -248,6 +272,8 @@ export class Island {
 
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    // With the Music pill showing a track, the minimised island stays up.
+    this.fsm.keepCompact = () => State.musicStrip();
     this.fsm.onTransition = (from, to) => {
       switch (to) {
         case "hidden":
@@ -262,7 +288,10 @@ export class Island {
           break;
         case "home":
           this.expand(State.defaultView());
-          if (!this.wasInIsland) this.fsm.mouseLeft();
+          if (!this.wasInIsland) {
+            this.applyLeaveDelay();
+            this.fsm.mouseLeft();
+          }
           break;
         case "coucou":
           this.expand("greeting");
@@ -366,6 +395,22 @@ export class Island {
 
   reveal() {
     this.fsm.reveal();
+  }
+
+  /**
+   * The Music pill gained or lost a track, or was switched on or off: resize the
+   * minimised island to carry it (or to drop it), bring it up if it was hidden,
+   * and let it retract again once nothing keeps it there.
+   */
+  refreshMusicStrip() {
+    if (State.mode === "compact") this.animateGeometry(false);
+    if (State.musicStrip()) {
+      if (State.mode === "hidden") this.fsm.reveal();
+    } else {
+      this.fsm.settle();
+    }
+    this.ensureRunning();
+    State.notify();
   }
 
   /** An alert stopped waiting for an answer: let the island auto-close again. */
@@ -484,7 +529,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.musicStrip());
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -515,6 +560,12 @@ export class Island {
     // the state-driven DOM sync.
     this.miniGrid.style.left = `${w - 40 - 14.5}px`;
     this.miniGrid.style.top = `${hh / 2 - 14.5}px`;
+    // The Music pill sits between Mochi (left) and the mini grid (right).
+    const stripH = Math.max(0, Math.min(30, hh - 8));
+    this.strip.el.style.left = "58px";
+    this.strip.el.style.width = `${Math.max(0, w - 58 - 68)}px`;
+    this.strip.el.style.height = `${stripH}px`;
+    this.strip.el.style.top = `${(hh - stripH) / 2}px`;
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
@@ -562,8 +613,13 @@ export class Island {
     // The wake strip is the only thing the OS can hit while the island is hidden.
     this.wakeStrip.addEventListener("mouseenter", () => {
       Sound.resume();
+      this.applyLeaveDelay();
       if (State.mode === "hidden") this.fsm.mouseEntered();
     });
+
+    // Using the minimised pill (wheel, click) must not open the menu under the pointer.
+    this.islandEl.addEventListener("wheel", () => this.fsm.cancelHoverOpen(), { capture: true, passive: true });
+    this.islandEl.addEventListener("mousedown", () => this.fsm.cancelHoverOpen(), { capture: true });
 
     this.islandEl.addEventListener("mousedown", (e) => {
       Sound.resume();
@@ -601,6 +657,32 @@ export class Island {
     window.addEventListener("mouseout", (e) => {
       if (e.relatedTarget == null) this.onCursor(-10_000, -10_000);
     });
+    // Some window managers (GNOME's, over its own panel) report the pointer
+    // leaving the window as this instead of a mouseout with no target.
+    document.documentElement.addEventListener("mouseleave", () => this.onCursor(-10_000, -10_000));
+  }
+
+  /**
+   * How long the open island waits after the pointer leaves before it folds back.
+   * With the Music pill it is something you glance at and leave, so it folds back
+   * almost at once — from its own view and from the overview; the chat, Settings
+   * and the drop views keep the user's auto-close time.
+   */
+  private applyLeaveDelay() {
+    const hover = State.settings.openOnHover;
+    const glance = hover || (State.musicStrip() && (State.view === "music" || State.view === "overview"));
+    this.fsm.homeToPetitDelay = glance ? MUSIC_LEAVE_S : State.settings.autoCloseInterval;
+    this.fsm.hoverOpenDelay = hover ? HOVER_OPEN_S : null;
+  }
+
+  /**
+   * The pointer elsewhere on screen (X11 only): turns Mochi's head, nothing more.
+   * While the pointer is over the island the page's own events are the source.
+   */
+  onGaze(x: number, y: number) {
+    if (this.wasInIsland || State.mode === "hidden") return;
+    State.mouse = { x, y };
+    this.ensureRunning();
   }
 
   /** Cursor in window-logical coordinates. */
@@ -621,13 +703,15 @@ export class Island {
 
     if (inIsland && !this.wasInIsland) {
       if (this.fsm.state === "coucou") this.greeting.hover();
+      this.applyLeaveDelay();
       this.fsm.mouseEntered();
       this.homeCollapseAt = null;
     }
     if (!inIsland && this.wasInIsland) {
+      this.applyLeaveDelay();
       this.fsm.mouseLeft();
       if (this.fsm.state === "home" && !State.isPinned) {
-        this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
+        this.homeCollapseAt = performance.now() + this.fsm.homeToPetitDelay * 1000;
       }
     }
     this.wasInIsland = inIsland;
@@ -752,6 +836,8 @@ export class Island {
 
     tickMiniBots(dt);
     this.views.get(State.view)?.tick?.(nowMs);
+    const stripShown = State.mode === "compact" && State.musicStrip();
+    if (stripShown) this.strip.tick(nowMs);
     if (UploadSeq.isActive) this.stepSequence();
     this.updateCountdown(nowMs);
 
@@ -771,6 +857,12 @@ export class Island {
 
     if (busy) {
       requestAnimationFrame(this.frame);
+    } else if ((stripShown || State.mode === "expanded") && State.music?.status === "Playing") {
+      // Only the Music pill's bars and its lyric line are moving (the minimised strip,
+      // or the music card inside the open menu): that does not need 60 frames a second,
+      // and without this the loop stopped and the open menu froze while the mouse rested.
+      const live = State.settings.musicVisualizer === "realtime";
+      window.setTimeout(() => requestAnimationFrame(this.frame), live ? STRIP_FRAME_LIVE_MS : STRIP_FRAME_MS);
     } else {
       this.running = false;
       Sound.idle();
@@ -790,7 +882,9 @@ export class Island {
 
     if (State.mode === "expanded" && State.view !== "uploading" && !greetingActive && !this.uploadActive) {
       const d = p.diameter;
-      const color = botGlowColor(State.effectiveState);
+      // In the Music view Mochi glows in the cover's colour.
+      const color =
+        State.view === "music" && State.music ? State.music.accent : botGlowColor(State.effectiveState);
       this.botGlow.style.display = "block";
       this.botGlow.style.width = `${d * 2.2}px`;
       this.botGlow.style.height = `${d * 2.2}px`;
@@ -822,7 +916,16 @@ export class Island {
     if (!ctx) return;
 
     const focus = State.focusTask;
-    this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
+    // Mochi takes the colour of the pill in focus. The Music pill's colour is the
+    // cover's: it also tints him in its full view, and on the minimised island
+    // while a track plays and he has nothing else to say (an alert keeps its own).
+    let body = focus?.isIntegration ? hexToRGB(focus.color) : null;
+    if (State.music && State.tasks.some((t) => t.id === "integration_music")) {
+      const quiet = State.effectiveState === "idle" || State.effectiveState === "sleeping";
+      if (State.mode === "expanded" && State.view === "music") body = hexToRGB(State.music.accent);
+      else if (State.mode === "compact" && State.musicStrip() && quiet) body = hexToRGB(State.music.accent);
+    }
+    this.engine.bodyColor = body;
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();
@@ -871,6 +974,9 @@ export class Island {
     const greetingActive = expanded && State.view === "greeting";
 
     this.contentEl.style.opacity = expanded && !greetingActive ? "1" : "0";
+    // Looping CSS animations (the Music title's marquee) must not run while the
+    // island is shut: nothing is visible, and the hidden island costs nothing.
+    this.contentEl.classList.toggle("idle", !expanded);
     this.contentEl.style.pointerEvents = expanded && !greetingActive ? "auto" : "none";
     this.greetingCanvas.style.display = greetingActive ? "block" : "none";
 
@@ -894,11 +1000,30 @@ export class Island {
       }
     }
 
+    // cava (the real-time bars) runs only while they can be seen and music plays.
+    const musicOnScreen =
+      (State.mode === "compact" && State.musicStrip()) ||
+      (State.mode === "expanded" &&
+        (State.view === "music" || (State.view === "overview" && State.focusId === "integration_music")));
+    setBarsWanted(
+      State.settings.musicVisualizer === "realtime" &&
+        State.music?.status === "Playing" &&
+        !State.paused &&
+        musicOnScreen,
+    );
+
+    // The Music pill on the minimised island
+    const showStrip = State.mode === "compact" && State.musicStrip();
+    this.strip.el.style.opacity = showStrip ? "1" : "0";
+    this.strip.el.style.pointerEvents = showStrip ? "auto" : "none";
+    if (State.musicStrip()) this.strip.sync();
+
     // Compact mini grid
     const showGrid = State.mode === "compact";
     this.miniGrid.style.opacity = showGrid ? "1" : "0";
     if (showGrid) {
-      const others = State.otherTasks.slice(0, 4);
+      // The pill on show is not repeated as a mini Mochi next to it.
+      const others = State.otherTasks.filter((t) => !(showStrip && t.id === "integration_music")).slice(0, 4);
       const key = others.map((t) => t.id).join("|");
       if (this.miniGrid.dataset.key !== key) {
         this.miniGrid.dataset.key = key;

@@ -9,6 +9,7 @@ export type IslandViewName =
   | "empty"
   | "approval"
   | "question"
+  | "music"
   | "error"
   | "finished"
   | "confused"
@@ -72,6 +73,8 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   approval: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   // Taller than the other cards: a question, up to four options and a footer.
   question: { height: 240, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
+  // The full Music view: Mochi on the left, the art next to it, then the lyrics.
+  music: { height: 200, botX: 62, botY: null, botDiameter: 56, agentMode: "none" },
   error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   finished: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   confused: { height: 160, botX: 76, botY: null, botDiameter: 66, agentMode: "column" },
@@ -98,10 +101,19 @@ export function chatPromptHeight(messageCount: number): number {
   return Math.min(300, 240 + messageCount * 40);
 }
 
+/**
+ * With the Music pill showing, the compact island is wider and a little taller:
+ * room for the cover, "Title • Artist", the current lyric line and the bars,
+ * between Mochi on the left and the mini pills on the right.
+ */
+export const COMPACT_MUSIC_W = 392;
+export const COMPACT_MUSIC_H = 42;
+
 export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  musicStrip = false,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
@@ -109,7 +121,7 @@ export function islandSize(
       // slides into the top edge of the screen instead of sitting there as a bar.
       return { w: NOTCH_W, h: 0 };
     case "compact":
-      return { w: COMPACT_W, h: NOTCH_H };
+      return musicStrip ? { w: COMPACT_MUSIC_W, h: COMPACT_MUSIC_H } : { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
       const h = view === "prompt" ? chatPromptHeight(chatCount) : VIEW_LAYOUTS[view].height;
       return { w: EXPANDED_W, h };
@@ -135,7 +147,10 @@ export function botPosition(
     case "hidden":
       return { cx: 46, cy: 16, diameter: 6, opacity: 0 };
     case "compact":
-      return { cx: 40, cy: 16, diameter: 20, opacity: 1 };
+      // 16 as shipped for the plain 32 px strip, whatever its height is while it
+      // opens; only the taller strip that carries the music pill centres him on
+      // its own height.
+      return { cx: 40, cy: islandH > NOTCH_H ? islandH / 2 : 16, diameter: 20, opacity: 1 };
     case "expanded": {
       const layout = VIEW_LAYOUTS[view];
       if (view === "uploading") {

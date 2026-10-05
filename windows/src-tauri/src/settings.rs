@@ -20,10 +20,50 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Music pill: fetch synchronised lyrics (lrclib.net) and album art given as
+    /// an http(s) URL. Off until the user says so: both are network calls to
+    /// services they did not configure otherwise.
+    #[serde(default)]
+    pub music_online: bool,
+    /// Music pill visualizer: "off", "wave" or "beat".
+    #[serde(default = "default_visualizer")]
+    pub music_visualizer: String,
+    /// Which script to prefer when lrclib has several versions of a song:
+    /// "any", "original" or "latin".
+    #[serde(default = "default_lyrics_language")]
+    pub music_lyrics_language: String,
+    /// Keep the Music pill on the last track after the player closes (the GNOME
+    /// extension's "Always ON"). Off: the pill goes, and the minimised island with it.
+    #[serde(default = "default_true")]
+    pub music_keep: bool,
+    /// What the wheel does over the minimised pill: "track" or "volume".
+    #[serde(default = "default_scroll")]
+    pub music_scroll: String,
+    /// The minimised island opens when the pointer rests on it, and folds back quickly.
+    #[serde(default)]
+    pub open_on_hover: bool,
+}
+
+fn default_scroll() -> String {
+    "track".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_lyrics_language() -> String {
+    "any".to_string()
 }
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_visualizer() -> String {
+    // Real-time (cava) when it is installed; the island falls back to the animated
+    // bars when it is not.
+    "realtime".to_string()
 }
 
 impl Default for Settings {
@@ -43,6 +83,12 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            music_online: false,
+            music_visualizer: default_visualizer(),
+            music_lyrics_language: default_lyrics_language(),
+            music_keep: true,
+            music_scroll: default_scroll(),
+            open_on_hover: false,
         }
     }
 }
