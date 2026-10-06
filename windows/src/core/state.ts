@@ -205,6 +205,8 @@ export interface Settings {
   /** The Hub's Server tab reads this machine over ssh ("" = none). */
   serverHost: string;
   serverServices: string;
+  /** Keep Jinx in step with the Hub (notes, calendar, timer pushed to the server). */
+  jinxShare: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -232,6 +234,7 @@ export const DEFAULT_SETTINGS: Settings = {
   finishSoundFile: "",
   serverHost: "",
   serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
+  jinxShare: true,
 };
 
 type Listener = () => void;

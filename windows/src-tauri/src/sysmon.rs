@@ -286,7 +286,7 @@ pub fn local() -> Vitals {
 // ── The server ────────────────────────────────────────────────────────────────
 
 /// Names that may go on the remote command line and into `ssh`'s argument list.
-fn safe_word(s: &str) -> bool {
+pub(crate) fn safe_word(s: &str) -> bool {
     !s.is_empty() && !s.starts_with('-') && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._@-:".contains(&b))
 }
 

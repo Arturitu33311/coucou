@@ -65,6 +65,10 @@ pub struct Settings {
     /// The systemd services the Server tab shows, comma separated.
     #[serde(default = "default_server_services")]
     pub server_services: String,
+    /// Keep Jinx in step with the Hub: notes, calendar and timer are pushed to the server's
+    /// ~/.hermes/state/coucou/ so she can read them (needs `server_host`).
+    #[serde(default = "default_true")]
+    pub jinx_share: bool,
 }
 
 fn default_server_services() -> String {
@@ -131,6 +135,7 @@ impl Default for Settings {
             finish_sound_file: String::new(),
             server_host: String::new(),
             server_services: default_server_services(),
+            jinx_share: true,
         }
     }
 }

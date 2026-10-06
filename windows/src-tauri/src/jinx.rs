@@ -28,6 +28,17 @@ use crate::secrets;
 pub const URL_KEY: &str = "jinx-url";
 pub const API_KEY: &str = "jinx-api-key";
 
+/// Said to Jinx once per run of Coucou when the Hub is shared with her: where to look.
+const HUB_HINT: &str = "[Coucou: las notas y el calendario de Alan están en ~/.hermes/state/coucou/ \
+(notes.md, calendar.json, context.json), puestos al día desde su escritorio. Léelos cuando vengan al caso; \
+son suyos, no los edites.]";
+static HINT_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The input with the hint in front of it the first time (`first` says whether it is).
+pub fn with_hint(input: String, first: bool) -> String {
+    if first { format!("{HUB_HINT}\n\n{input}") } else { input }
+}
+
 /// One stable session so Jinx keeps the thread between island chats.
 const SESSION_ID: &str = "coucou";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -193,8 +204,9 @@ pub async fn test() -> Result<String, String> {
 }
 
 /// Starts a run and follows it in the background.
-pub async fn send(app: AppHandle, jinx: &Jinx, text: String, context: Option<ChatContext>) -> Result<(), String> {
+pub async fn send(app: AppHandle, jinx: &Jinx, text: String, context: Option<ChatContext>, shared: bool) -> Result<(), String> {
     let input = with_context(&text, context.as_ref())?;
+    let input = with_hint(input, shared && !HINT_SENT.load(std::sync::atomic::Ordering::Relaxed));
     let (base, key) = config()?;
     let client = client()?;
     let response = client
@@ -214,6 +226,9 @@ pub async fn send(app: AppHandle, jinx: &Jinx, text: String, context: Option<Cha
         .ok()
         .and_then(|v| v["run_id"].as_str().or_else(|| v["id"].as_str()).map(str::to_string))
         .ok_or("Jinx did not say which run it started")?;
+    if shared {
+        HINT_SENT.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     *jinx.run.lock().unwrap() = Some(run_id.clone());
     log::line("jinx run started".to_string());
     tauri::async_runtime::spawn(follow(app, base, key, run_id));
@@ -417,6 +432,13 @@ mod tests {
         assert!(with_context("hola", Some(&win)).unwrap().starts_with("Context — App: Brave, Window: Docs, URL: https://x.dev"));
         assert_eq!(with_context("hola", None).unwrap(), "hola");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_hint_goes_in_front_once() {
+        let first = with_hint("hola".into(), true);
+        assert!(first.starts_with("[Coucou:") && first.ends_with("\n\nhola"));
+        assert_eq!(with_hint("hola".into(), false), "hola");
     }
 
     #[test]

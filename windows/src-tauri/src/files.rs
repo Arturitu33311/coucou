@@ -68,6 +68,64 @@ pub fn ingest(source: &str) -> Result<DroppedFile, String> {
     })
 }
 
+/// One file on the Hub's shelf: what was dropped (or added) and is still in the inbox.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelfItem {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+    /// Seconds since it was copied in.
+    pub age_secs: u64,
+}
+
+/// The files of `dir`, newest first (at most `limit`).
+pub fn list_dir(dir: &Path, limit: usize) -> Vec<ShelfItem> {
+    let now = SystemTime::now();
+    let mut items: Vec<(SystemTime, ShelfItem)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            let at = meta.modified().ok()?;
+            Some((
+                at,
+                ShelfItem {
+                    name: e.file_name().to_string_lossy().to_string(),
+                    path: e.path().to_string_lossy().to_string(),
+                    size: meta.len(),
+                    age_secs: now.duration_since(at).map(|d| d.as_secs()).unwrap_or(0),
+                },
+            ))
+        })
+        .collect();
+    items.sort_by(|a, b| b.0.cmp(&a.0));
+    items.into_iter().take(limit).map(|(_, i)| i).collect()
+}
+
+pub fn shelf() -> Vec<ShelfItem> {
+    list_dir(&inbox_dir(), 30)
+}
+
+/// `path` as a file directly inside `dir` (nothing else: no folders above it, no links out).
+pub fn inside(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let dir = dir.canonicalize().map_err(|_| "The shelf is empty".to_string())?;
+    let file = Path::new(path).canonicalize().map_err(|_| "That file is gone".to_string())?;
+    if file.parent() != Some(dir.as_path()) || !file.is_file() {
+        return Err("That is not on the shelf".into());
+    }
+    Ok(file)
+}
+
+pub fn remove(path: &str) -> Result<(), String> {
+    let file = inside(&inbox_dir(), path)?;
+    std::fs::remove_file(file).map_err(|e| e.to_string())
+}
+
 /// Drops anything copied here more than a week ago. `ingest` stamps every copy
 /// with the time it landed, so this really is the age of the copy and not the
 /// age of whatever the user happened to drag in.
@@ -86,6 +144,31 @@ fn sweep(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shelf_lists_newest_first_and_only_removes_what_is_on_it() {
+        let dir = std::env::temp_dir().join(format!("coucou-shelf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let old = dir.join("old.txt");
+        let new = dir.join("new.txt");
+        std::fs::write(&old, "a").unwrap();
+        std::fs::write(&new, "bb").unwrap();
+        let past = SystemTime::now() - Duration::from_secs(3600);
+        std::fs::File::options().write(true).open(&old).unwrap().set_modified(past).unwrap();
+
+        let items = list_dir(&dir, 10);
+        assert_eq!(items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), vec!["new.txt", "old.txt"], "no folders, newest first");
+        assert!(items[1].age_secs >= 3590);
+        assert_eq!(list_dir(&dir, 1).len(), 1);
+
+        assert!(inside(&dir, new.to_str().unwrap()).is_ok());
+        assert!(inside(&dir, dir.join("sub").to_str().unwrap()).is_err(), "a folder is not a shelf file");
+        assert!(inside(&dir, "/etc/hostname").is_err(), "nothing outside");
+        let sneaky = format!("{}/sub/../new.txt", dir.display());
+        assert!(inside(&dir, &sneaky).is_ok(), "the same file by another route is still the shelf's");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn ingest_copies_and_never_overwrites() {

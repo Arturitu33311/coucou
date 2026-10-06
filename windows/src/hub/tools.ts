@@ -3,5 +3,7 @@
 import type { HubTool } from "./types";
 import { serverTool, systemTool } from "./system";
 import { pomodoroTool } from "./pomodoro";
+import { shelfTool } from "./shelf";
+import { notesTool } from "./notes";
 
-export const TOOLS: HubTool[] = [systemTool, serverTool, pomodoroTool];
+export const TOOLS: HubTool[] = [systemTool, serverTool, pomodoroTool, notesTool, shelfTool];

@@ -28,7 +28,21 @@
 .pm-phase { font-size: 10.5px; opacity: 0.6; margin: 3px 0 7px; }
 .pm-btns, .pm-presets { display: flex; gap: 6px; flex-wrap: wrap; }
 .pm-presets { margin-top: 7px; }
-.pm-presets .hub-btn { font-size: 10px; padding: 2px 8px; opacity: 0.75; }
+.pm-presets .sh { display: flex; flex-direction: column; gap: 4px; height: 100%; min-height: 0; }
+.sh-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sh-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 3px; }
+.sh-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; background: rgba(255,255,255,0.045); border-radius: 8px; padding: 3px 6px; }
+.sh-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sh-meta { flex: 0 0 auto; font-size: 10px; opacity: 0.5; white-space: nowrap; }
+.sh-foot { flex: 0 0 auto; }
+.sh-add { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; color: inherit; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 3px 8px; }
+.hub-btn.sm { font-size: 10px; padding: 1px 8px; flex: 0 0 auto; }
+.nt { display: flex; flex-direction: column; gap: 4px; height: 100%; }
+.nt-pad { flex: 1 1 auto; min-height: 0; resize: none; font: inherit; font-size: 12px; line-height: 1.4; color: inherit; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; padding: 6px 9px; }
+.nt-pad:focus { outline: none; border-color: rgba(129,140,248,0.6); }
+.nt-status { font-size: 9.5px; opacity: 0.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nt-status.bad { color: #F5A524; opacity: 1; }
+.hub-btn { font-size: 10px; padding: 2px 8px; opacity: 0.75; }
 .pm-presets .hub-btn:disabled { opacity: 0.3; cursor: default; }
 .pm-stat { font-size: 12px; font-variant-numeric: tabular-nums; }
 .pm-stat.dim { opacity: 0.55; font-size: 10.5px; }

@@ -10,11 +10,13 @@ mod island;
 mod jinx;
 mod log;
 mod music;
+mod notes;
 mod pipe;
 mod pomodoro;
 mod platform;
 mod secrets;
 mod settings;
+mod share;
 mod sysmon;
 mod tray;
 
@@ -280,6 +282,68 @@ fn read_sound(path: String) -> Result<String, String> {
     Ok(claude::base64_for(&bytes))
 }
 
+// ── Hub: notes, and what Jinx can see of the Hub (see notes.rs, share.rs) ──────
+
+#[tauri::command]
+fn notes_load() -> String {
+    notes::load()
+}
+
+/// Where the Hub's data goes for Jinx: the server, if one is set and sharing is on.
+fn share_target(shared: &State<Shared>) -> Option<String> {
+    let s = shared.settings.lock().unwrap();
+    (s.jinx_share && !s.server_host.trim().is_empty()).then(|| s.server_host.trim().to_string())
+}
+
+#[tauri::command]
+fn notes_save(shared: State<Shared>, text: String) -> Result<(), String> {
+    notes::save(&text)?;
+    if let Some(host) = share_target(&shared) {
+        share::schedule(&host, "notes.md", text);
+    }
+    Ok(())
+}
+
+/// A snapshot for Jinx (calendar, timer…). Only the files the Hub makes.
+#[tauri::command]
+fn share_push(shared: State<Shared>, name: String, content: String) -> Result<(), String> {
+    if !["calendar.json", "context.json"].contains(&name.as_str()) || content.len() > 200_000 {
+        return Err("not a Hub file".into());
+    }
+    if let Some(host) = share_target(&shared) {
+        share::schedule(&host, &name, content);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn share_status() -> share::Status {
+    share::status()
+}
+
+// ── Hub: the file shelf (the inbox of dropped files; see files.rs) ─────────────
+
+#[tauri::command]
+fn shelf_list() -> Vec<files::ShelfItem> {
+    files::shelf()
+}
+
+#[tauri::command]
+fn shelf_remove(path: String) -> Result<(), String> {
+    files::remove(&path)
+}
+
+/// Opens a shelf file with the default application, or the shelf's folder.
+#[tauri::command]
+fn shelf_open(path: Option<String>) -> Result<(), String> {
+    let target = match path {
+        Some(p) => files::inside(&files::inbox_dir(), &p)?,
+        None => files::inbox_dir(),
+    };
+    platform::reveal_folder(&target.to_string_lossy());
+    Ok(())
+}
+
 // ── Hub: Pomodoro log and statistics (see pomodoro.rs) ─────────────────────────
 
 #[tauri::command]
@@ -320,10 +384,12 @@ async fn server_sample(shared: State<'_, Shared>) -> Result<sysmon::Vitals, Stri
 async fn jinx_send(
     app: AppHandle,
     jinx: State<'_, jinx::Jinx>,
+    shared: State<'_, Shared>,
     text: String,
     context: Option<ChatContext>,
 ) -> Result<(), String> {
-    jinx::send(app, &jinx, text, context).await
+    let hub_shared = share_target(&shared).is_some();
+    jinx::send(app, &jinx, text, context, hub_shared).await
 }
 
 /// `choice`: once | session | always | deny.
@@ -538,6 +604,13 @@ pub fn run() {
             chat_send,
             chat_reset,
             read_sound,
+            notes_load,
+            notes_save,
+            share_push,
+            share_status,
+            shelf_list,
+            shelf_remove,
+            shelf_open,
             pomodoro_log,
             pomodoro_stats,
             sys_sample,

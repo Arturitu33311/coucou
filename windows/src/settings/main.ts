@@ -581,6 +581,11 @@ function hubSection(): HTMLElement {
       "notes, your calendar, the weather, a file shelf and quick switches. It reads nothing while it is closed." }),
     h("div", { class: "row" }, h("label", { text: "Server" }), host,
       h("span", { class: "hint", text: "read over ssh with your key; nothing is installed there" })),
+    h("div", { class: "row" }, h("label", { text: "Share with Jinx" }),
+      toggle(settings.jinxShare !== false, (v) => { settings.jinxShare = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
+        "Nothing else on the server is touched." })),
     h("div", { class: "row" }, h("label", { text: "Services" }), services,
       h("span", { class: "hint", text: "systemd units shown on the Server tab" })),
   );

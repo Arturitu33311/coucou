@@ -15,10 +15,15 @@ export interface HubHost {
   stop?(): void;
 }
 
+/** What the island offers a tool: the view actions (open the chat, go home…). */
+export interface HubContext {
+  actions: import("../views/views").ViewActions;
+}
+
 export interface HubTool {
   id: string;
   label: string;
   /** Does this tool have a text field (and so need the island to take the keyboard)? */
   typing?: boolean;
-  build(): HubHost;
+  build(ctx: HubContext): HubHost;
 }

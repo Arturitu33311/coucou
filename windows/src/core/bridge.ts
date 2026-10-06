@@ -118,6 +118,13 @@ export const Bridge = {
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
   agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
+  notesLoad: () => callOrThrow<string>("notes_load"),
+  notesSave: (text: string) => callOrThrow<void>("notes_save", { text }),
+  shareStatus: () => callOrThrow<{ lastOk: number | null; lastError: string | null }>("share_status"),
+  sharePush: (name: string, content: string) => callOrThrow<void>("share_push", { name, content }),
+  shelfList: () => call<{ name: string; path: string; size: number; ageSecs: number }[]>("shelf_list"),
+  shelfRemove: (path: string) => callOrThrow<void>("shelf_remove", { path }),
+  shelfOpen: (path: string | null) => callOrThrow<void>("shelf_open", { path }),
   pomodoroLog: (kind: "focus" | "break", seconds: number, completed: boolean) =>
     callOrThrow<void>("pomodoro_log", { kind, seconds, completed }),
   pomodoroStats: () => callOrThrow<import("../hub/pomodoro").PomoStats>("pomodoro_stats"),

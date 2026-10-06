@@ -3,7 +3,7 @@
 import { h, clear } from "../views/dom";
 import { State } from "../core/state";
 import type { ViewHost, ViewActions } from "../views/views";
-import type { HubHost, HubTool } from "./types";
+import type { HubContext, HubHost, HubTool } from "./types";
 import { TOOLS } from "./tools";
 
 const built = new Map<string, HubHost>();
@@ -13,12 +13,14 @@ export function toolById(id: string): HubTool | undefined {
   return TOOLS.find((t) => t.id === id);
 }
 
+let context: HubContext | null = null;
+
 function host(id: string): HubHost | null {
   let hst = built.get(id) ?? null;
   if (!hst) {
     const tool = toolById(id);
-    if (!tool) return null;
-    hst = tool.build();
+    if (!tool || !context) return null;
+    hst = tool.build(context);
     built.set(id, hst);
   }
   return hst;
@@ -55,6 +57,7 @@ export function selectTool(id: string) {
 }
 
 export function buildHub(actions: ViewActions): ViewHost {
+  context = { actions };
   const tabs = h("div", { class: "hub-tabs" });
   const body = h("div", { class: "hub-body" });
   const el = h("div", { class: "view hub" }, h("div", { class: "hub-wrap" }, tabs, body));
