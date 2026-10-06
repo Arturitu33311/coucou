@@ -84,6 +84,9 @@ pub struct Settings {
     pub weather_city: String,
     #[serde(default)]
     pub weather_city2: String,
+    /// Show other programs' notifications in the island (reads their content: off until turned on).
+    #[serde(default)]
+    pub notification_peek: bool,
 }
 
 fn default_drive_remote() -> String {
@@ -169,6 +172,7 @@ impl Default for Settings {
             weather_on: false,
             weather_city: String::new(),
             weather_city2: String::new(),
+            notification_peek: false,
         }
     }
 }

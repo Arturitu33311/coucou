@@ -11,6 +11,7 @@ import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerJinxHandlers } from "./island/jinx";
 import { registerPomodoro } from "./hub/pomodoro";
+import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 
@@ -85,6 +86,7 @@ async function main() {
   registerMusicHandlers(island);
   registerJinxHandlers(island);
   registerPomodoro(island);
+  registerNotificationPeek(island);
 
   island.launch();
 

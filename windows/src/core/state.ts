@@ -215,6 +215,8 @@ export interface Settings {
   weatherOn: boolean;
   weatherCity: string;
   weatherCity2: string;
+  /** Show other programs' notifications in the island (reads their content: off until turned on). */
+  notificationPeek: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -249,6 +251,7 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherOn: false,
   weatherCity: "",
   weatherCity2: "",
+  notificationPeek: false,
 };
 
 type Listener = () => void;

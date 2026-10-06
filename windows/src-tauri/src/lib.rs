@@ -13,6 +13,7 @@ mod jinx;
 mod log;
 mod music;
 mod notes;
+mod notifs;
 mod pipe;
 mod pomodoro;
 mod quick;
@@ -85,6 +86,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     }
     // The Music pill's switch decides whether the players are watched at all.
     music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
+    notifs::sync_enabled(&app, settings.notification_peek);
     if autostart_changed {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
@@ -786,6 +788,7 @@ pub fn run() {
                 &handle,
                 loaded.active_integrations.iter().any(|x| x == "integration_music"),
             );
+            notifs::sync_enabled(&handle, loaded.notification_peek);
             Ok(())
         })
         .run(tauri::generate_context!())

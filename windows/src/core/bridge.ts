@@ -209,6 +209,7 @@ export type BridgeEvent =
   | { name: "gaze"; payload: { x: number; y: number } }
   | { name: "obstacles"; payload: number[][] }
   | { name: "jinx"; payload: Record<string, unknown> }
+  | { name: "notification"; payload: { app: string; summary: string; body: string } }
   | { name: "school-login"; payload: { kind: string; text: string; ok?: boolean } }
   | { name: "tray"; payload: string }
   | { name: "hook"; payload: Record<string, unknown> }

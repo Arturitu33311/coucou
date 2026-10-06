@@ -28,6 +28,8 @@ import { hubTyping, syncHubRuntime } from "../hub/hub";
 const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
 const MUSIC_LEAVE_S = 0.3;
+/** How long a note (see above) stays up with the pointer elsewhere. */
+const NOTE_LINGER_S = 6;
 /** With "open on hover": how long the pointer rests on the minimised island before it opens. */
 const HOVER_OPEN_S = 0.9;
 /** Frame interval while only the minimised Music pill animates (≈ 12 fps)… */
@@ -421,6 +423,13 @@ export class Island {
     this.fsm.pinned = State.isPinned;
     this.fsm.forceHome();
     this.expand(view);
+    // A message that arrives while the pointer is elsewhere has no "pointer left" to start its
+    // timer: start it now, so it is read and then folds away.
+    if (view === "note" && !this.wasInIsland && !State.isPinned) {
+      this.fsm.homeToPetitDelay = NOTE_LINGER_S;
+      this.fsm.mouseLeft();
+      this.homeCollapseAt = performance.now() + NOTE_LINGER_S * 1000;
+    }
   }
 
   reveal() {
@@ -757,7 +766,8 @@ export class Island {
   private applyLeaveDelay() {
     const hover = State.settings.openOnHover;
     const glance = hover || (State.musicStrip() && (State.view === "music" || State.view === "overview"));
-    this.fsm.homeToPetitDelay = glance ? MUSIC_LEAVE_S : State.settings.autoCloseInterval;
+    // A short message (a notification, the end of a Pomodoro period) needs time to be read.
+    this.fsm.homeToPetitDelay = State.view === "note" ? NOTE_LINGER_S : glance ? MUSIC_LEAVE_S : State.settings.autoCloseInterval;
     this.fsm.hoverOpenDelay = hover ? State.settings.hoverOpenDelay || HOVER_OPEN_S : null;
   }
 

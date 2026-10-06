@@ -599,6 +599,11 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
         "Nothing else on the server is touched." })),
+    h("div", { class: "row" }, h("label", { text: "Notifications" }),
+      toggle(settings.notificationPeek === true, (v) => { settings.notificationPeek = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Show other programs' notifications in the island. It reads what they say (messages, mail), so it is off by " +
+        "until you turn it on; nothing is stored or logged. It cannot hide the desktop's own banner." })),
     h("div", { class: "row" }, h("label", { text: "Weather" }),
       toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
       h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),
