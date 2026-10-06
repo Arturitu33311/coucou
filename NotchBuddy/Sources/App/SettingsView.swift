@@ -52,6 +52,26 @@ struct SettingsView: View {
     @State private var showCodexDiff: Bool = false
     @State private var pendingCodexJSON: String = ""
     @State private var codexPendingInstall: Bool = true
+
+    @State private var copilotHooksInstalled: Bool = HookServer.copilotHooksInstalled()
+    @State private var showCopilotDiff: Bool = false
+    @State private var pendingCopilotJSON: String = ""
+    @State private var copilotPendingInstall: Bool = true
+
+    @State private var museHooksInstalled: Bool = HookServer.museHooksInstalled()
+    @State private var showMuseDiff: Bool = false
+    @State private var pendingMuseJSON: String = ""
+    @State private var musePendingInstall: Bool = true
+
+    @State private var openCodePluginInstalled: Bool = HookServer.openCodePluginInstalled()
+    @State private var showOpenCodeDiff: Bool = false
+    @State private var pendingOpenCodeContent: String = ""
+    @State private var openCodePendingInstall: Bool = true
+
+    @State private var ampPluginInstalled: Bool = HookServer.ampPluginInstalled()
+    @State private var showAmpDiff: Bool = false
+    @State private var pendingAmpContent: String = ""
+    @State private var ampPendingInstall: Bool = true
     #endif
 
     // Multi-provider chat keys
@@ -525,6 +545,138 @@ struct SettingsView: View {
                         Button("Confirm & write") { confirmCodexOp() }
                             .buttonStyle(.borderedProminent)
                         Button("Cancel") { showCodexDiff = false; pendingCodexJSON = "" }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(6)
+        }
+
+        GroupBox("GitHub Copilot CLI Hooks") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(copilotHooksInstalled
+                     ? "Hooks installed — restart Copilot CLI to activate"
+                     : "~/.copilot/hooks/coucou.json")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install hooks") { triggerCopilotPreview(install: true) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Uninstall") { triggerCopilotPreview(install: false) }
+                        .buttonStyle(.bordered)
+                }
+                if showCopilotDiff {
+                    ScrollView {
+                        Text(pendingCopilotJSON)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 140)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(6)
+                    HStack {
+                        Button("Confirm & write") { confirmCopilotOp() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Cancel") { showCopilotDiff = false; pendingCopilotJSON = "" }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(6)
+        }
+
+        GroupBox("Muse Code Hooks") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(museHooksInstalled
+                     ? "Hooks installed — restart Muse Code to activate"
+                     : "~/.config/muse/settings.json")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install hooks") { triggerMusePreview(install: true) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Uninstall") { triggerMusePreview(install: false) }
+                        .buttonStyle(.bordered)
+                }
+                if showMuseDiff {
+                    ScrollView {
+                        Text(pendingMuseJSON)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 140)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(6)
+                    HStack {
+                        Button("Confirm & write") { confirmMuseOp() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Cancel") { showMuseDiff = false; pendingMuseJSON = "" }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(6)
+        }
+
+        GroupBox("OpenCode Plugin") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(openCodePluginInstalled
+                     ? "Plugin installed — restart OpenCode to activate"
+                     : "~/.config/opencode/plugins/coucou.js")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install plugin") { triggerOpenCodePreview(install: true) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Uninstall") { triggerOpenCodePreview(install: false) }
+                        .buttonStyle(.bordered)
+                }
+                if showOpenCodeDiff {
+                    ScrollView {
+                        Text(pendingOpenCodeContent)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 140)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(6)
+                    HStack {
+                        Button("Confirm & write") { confirmOpenCodeOp() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Cancel") { showOpenCodeDiff = false; pendingOpenCodeContent = "" }
+                            .buttonStyle(.bordered)
+                    }
+                }
+            }
+            .padding(6)
+        }
+
+        GroupBox("Amp Plugin") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(ampPluginInstalled
+                     ? "Plugin installed — restart Amp to activate"
+                     : "~/.config/amp/plugins/coucou.ts")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                HStack(spacing: 10) {
+                    Button("Install plugin") { triggerAmpPreview(install: true) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Uninstall") { triggerAmpPreview(install: false) }
+                        .buttonStyle(.bordered)
+                }
+                if showAmpDiff {
+                    ScrollView {
+                        Text(pendingAmpContent)
+                            .font(.system(size: 10, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(height: 140)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(6)
+                    HStack {
+                        Button("Confirm & write") { confirmAmpOp() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Cancel") { showAmpDiff = false; pendingAmpContent = "" }
                             .buttonStyle(.bordered)
                     }
                 }
@@ -1071,6 +1223,122 @@ struct SettingsView: View {
         }
     }
 
+    private func triggerCopilotPreview(install: Bool) {
+        do {
+            copilotPendingInstall = install
+            pendingCopilotJSON = try HookServer.shared.previewCopilotHooks(install: install)
+            showCopilotDiff = true
+            statusMessage = "Review the JSON below before confirming."
+        } catch let e as NSError where e.domain == "CoucouNoop" {
+            statusMessage = e.localizedDescription
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func confirmCopilotOp() {
+        do {
+            try HookServer.shared.writeCopilotHooks()
+            showCopilotDiff = false
+            pendingCopilotJSON = ""
+            copilotHooksInstalled = copilotPendingInstall
+            statusMessage = copilotPendingInstall
+                ? "✓ Copilot CLI hooks installed in ~/.copilot/hooks/coucou.json"
+                : "✓ Copilot CLI hooks removed."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func triggerMusePreview(install: Bool) {
+        do {
+            musePendingInstall = install
+            pendingMuseJSON = try HookServer.shared.previewMuseHooks(install: install)
+            showMuseDiff = true
+            statusMessage = "Review the JSON below before confirming."
+        } catch let e as NSError where e.domain == "CoucouNoop" {
+            statusMessage = e.localizedDescription
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func confirmMuseOp() {
+        do {
+            try HookServer.shared.writeMuseHooks()
+            showMuseDiff = false
+            pendingMuseJSON = ""
+            museHooksInstalled = musePendingInstall
+            statusMessage = musePendingInstall
+                ? "✓ Muse Code hooks installed in ~/.config/muse/settings.json"
+                : "✓ Muse Code hooks removed."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func triggerOpenCodePreview(install: Bool) {
+        do {
+            openCodePendingInstall = install
+            pendingOpenCodeContent = try HookServer.shared.previewOpenCodePlugin(install: install)
+            showOpenCodeDiff = true
+            statusMessage = "Review the content below before confirming."
+        } catch let e as NSError where e.domain == "CoucouNoop" {
+            statusMessage = e.localizedDescription
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func confirmOpenCodeOp() {
+        do {
+            if openCodePendingInstall {
+                try HookServer.shared.writeOpenCodePlugin()
+            } else {
+                try HookServer.shared.removeOpenCodePlugin()
+            }
+            showOpenCodeDiff = false
+            pendingOpenCodeContent = ""
+            openCodePluginInstalled = openCodePendingInstall
+            statusMessage = openCodePendingInstall
+                ? "✓ OpenCode plugin installed in ~/.config/opencode/plugins/coucou.js"
+                : "✓ OpenCode plugin removed."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func triggerAmpPreview(install: Bool) {
+        do {
+            ampPendingInstall = install
+            pendingAmpContent = try HookServer.shared.previewAmpPlugin(install: install)
+            showAmpDiff = true
+            statusMessage = "Review the content below before confirming."
+        } catch let e as NSError where e.domain == "CoucouNoop" {
+            statusMessage = e.localizedDescription
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
+    private func confirmAmpOp() {
+        do {
+            if ampPendingInstall {
+                try HookServer.shared.writeAmpPlugin()
+            } else {
+                try HookServer.shared.removeAmpPlugin()
+            }
+            showAmpDiff = false
+            pendingAmpContent = ""
+            ampPluginInstalled = ampPendingInstall
+            statusMessage = ampPendingInstall
+                ? "✓ Amp plugin installed in ~/.config/amp/plugins/coucou.ts"
+                : "✓ Amp plugin removed."
+        } catch {
+            statusMessage = "❌ \(error.localizedDescription)"
+        }
+    }
+
     private func installStatusLine() {
         do {
             pendingStatusLineJSON = try HookServer.shared.previewStatusLine(install: true)
@@ -1229,9 +1497,13 @@ struct SettingsView: View {
             if isMain { return nil }
             if def.comingSoon { return "Coming soon" }
             #if !APPSTORE
-            if def.id == "agent_gemini"        && !HookServer.geminiHooksInstalled()  { return "Hooks not installed" }
-            if def.id == "agent_antigravity"   && !HookServer.agyHooksInstalled()    { return "Hooks not installed" }
-            if def.id == "agent_codex"         && !HookServer.codexHooksInstalled()  { return "Hooks not installed" }
+            if def.id == "agent_gemini"        && !HookServer.geminiHooksInstalled()      { return "Hooks not installed" }
+            if def.id == "agent_antigravity"   && !HookServer.agyHooksInstalled()        { return "Hooks not installed" }
+            if def.id == "agent_codex"         && !HookServer.codexHooksInstalled()      { return "Hooks not installed" }
+            if def.id == "agent_copilot"       && !HookServer.copilotHooksInstalled()    { return "Hooks not installed" }
+            if def.id == "agent_muse"          && !HookServer.museHooksInstalled()       { return "Hooks not installed" }
+            if def.id == "agent_opencode"      && !HookServer.openCodePluginInstalled()  { return "Plugin not installed" }
+            if def.id == "agent_amp"           && !HookServer.ampPluginInstalled()       { return "Plugin not installed" }
             #endif
             if def.category == .ai {
                 if let provider = ChatProvider(pillID: def.id), provider.isLocal {

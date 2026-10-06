@@ -1852,6 +1852,375 @@ final class HookServer: @unchecked Sendable {
                                          options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
     }
 
+    // MARK: - GitHub Copilot CLI hook installer
+
+    static var copilotHooksURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".copilot/hooks/coucou.json")
+    }
+
+    /// True when ~/.copilot/hooks/coucou.json already routes Copilot events to Coucou's nb-hook.
+    static func copilotHooksInstalled() -> Bool {
+        guard let data = try? Data(contentsOf: copilotHooksURL),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any] else { return false }
+        for value in hooks.values {
+            guard let entries = value as? [[String: Any]] else { continue }
+            for entry in entries {
+                if let cmd = entry["command"] as? String,
+                   cmd.contains("nb-hook"), cmd.contains("--agent copilot") { return true }
+            }
+        }
+        return false
+    }
+
+    private var _pendingCopilotData: Data?
+    private var _pendingCopilotFingerprint: String?
+
+    func previewCopilotHooks(install: Bool) throws -> String {
+        let url = Self.copilotHooksURL
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        if !install && !exists {
+            throw NSError(domain: "CoucouNoop", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "No Copilot hooks to remove."
+            ])
+        }
+        let current = exists ? try Data(contentsOf: url) : Data()
+        _pendingCopilotFingerprint = sha256Hex(current)
+        let newData = install ? try buildCopilotHooksData() : try withoutCopilotHooks()
+        _pendingCopilotData = newData
+        return String(data: newData, encoding: .utf8) ?? ""
+    }
+
+    func writeCopilotHooks() throws {
+        guard let data = _pendingCopilotData, let fp = _pendingCopilotFingerprint else { return }
+        let url = Self.copilotHooksURL
+        let current = (try? Data(contentsOf: url)) ?? Data()
+        guard sha256Hex(current) == fp else {
+            throw NSError(domain: "Coucou", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "~/.copilot/hooks/coucou.json changed since preview. Refresh and try again."
+            ])
+        }
+        try writeJSONFile(data, to: url, suffix: "coucou.json")
+        _pendingCopilotData = nil
+        _pendingCopilotFingerprint = nil
+    }
+
+    private func buildCopilotHooksData() throws -> Data {
+        var root = try Self.strictReadJSONObject(at: Self.copilotHooksURL,
+                                                  label: "~/.copilot/hooks/coucou.json")
+        if let raw = root["hooks"], !(raw is [String: Any]) {
+            throw NSError(domain: "Coucou", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "~/.copilot/hooks/coucou.json: \"hooks\" has an unexpected type — Coucou has not touched it."
+            ])
+        }
+        let base = hookBase()
+        // Copilot CLI uses camelCase Claude Code events; it is fail-closed on PermissionRequest.
+        let events: [(String, Int)] = [
+            ("SessionStart",      10),
+            ("UserPromptSubmit",  10),
+            ("PreToolUse",        10),
+            ("PermissionRequest", 120),
+            ("PostToolUse",       10),
+            ("Stop",              10),
+            ("SessionEnd",         3),
+        ]
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        for (event, timeout) in events {
+            if let raw = hooks[event], !(raw is [[String: Any]]) {
+                throw NSError(domain: "Coucou", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "~/.copilot/hooks/coucou.json: \"hooks\"[\"\(event)\"] has an unexpected type — Coucou has not touched it."
+                ])
+            }
+            var entries = hooks[event] as? [[String: Any]] ?? []
+            entries.removeAll { ($0["command"] as? String)?.contains("nb-hook") == true }
+            entries.append(["type": "command", "command": "\(base) --agent copilot", "timeout": timeout])
+            hooks[event] = entries
+        }
+        root["hooks"] = hooks
+        return try JSONSerialization.data(withJSONObject: root,
+                                         options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    private func withoutCopilotHooks() throws -> Data {
+        var root = try Self.strictReadJSONObject(at: Self.copilotHooksURL,
+                                                  label: "~/.copilot/hooks/coucou.json")
+        if var hooks = root["hooks"] as? [String: Any] {
+            for key in hooks.keys {
+                if var entries = hooks[key] as? [[String: Any]] {
+                    entries.removeAll { ($0["command"] as? String)?.contains("nb-hook") == true }
+                    if entries.isEmpty { hooks.removeValue(forKey: key) } else { hooks[key] = entries }
+                }
+            }
+            if hooks.isEmpty { root.removeValue(forKey: "hooks") } else { root["hooks"] = hooks }
+        }
+        return try JSONSerialization.data(withJSONObject: root,
+                                         options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    // MARK: - Muse Code hook installer
+
+    static var museSettingsURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/muse/settings.json")
+    }
+
+    /// True when ~/.config/muse/settings.json already routes Muse events to Coucou's nb-hook.
+    static func museHooksInstalled() -> Bool {
+        guard let data = try? Data(contentsOf: museSettingsURL),
+              let settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let hooks = settings["hooks"] as? [String: Any] else { return false }
+        for value in hooks.values {
+            guard let groups = value as? [[String: Any]] else { continue }
+            for group in groups {
+                if let innerHooks = group["hooks"] as? [[String: Any]] {
+                    for h in innerHooks {
+                        if let cmd = h["command"] as? String,
+                           cmd.contains("nb-hook"), cmd.contains("--agent muse") { return true }
+                    }
+                }
+                if let cmd = group["command"] as? String,
+                   cmd.contains("nb-hook"), cmd.contains("--agent muse") { return true }
+            }
+        }
+        return false
+    }
+
+    private var _pendingMuseData: Data?
+    private var _pendingMuseFingerprint: String?
+
+    func previewMuseHooks(install: Bool) throws -> String {
+        let url = Self.museSettingsURL
+        let exists = FileManager.default.fileExists(atPath: url.path)
+        if !install && !exists {
+            throw NSError(domain: "CoucouNoop", code: 0, userInfo: [
+                NSLocalizedDescriptionKey: "No Muse Code hooks to remove."
+            ])
+        }
+        let current = exists ? try Data(contentsOf: url) : Data()
+        _pendingMuseFingerprint = sha256Hex(current)
+        let newData = install ? try buildMuseHooksData() : try withoutMuseHooks()
+        _pendingMuseData = newData
+        return String(data: newData, encoding: .utf8) ?? ""
+    }
+
+    func writeMuseHooks() throws {
+        guard let data = _pendingMuseData, let fp = _pendingMuseFingerprint else { return }
+        let url = Self.museSettingsURL
+        let current = (try? Data(contentsOf: url)) ?? Data()
+        guard sha256Hex(current) == fp else {
+            throw NSError(domain: "Coucou", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "~/.config/muse/settings.json changed since preview. Refresh and try again."
+            ])
+        }
+        try writeJSONFile(data, to: url, suffix: "settings.json")
+        _pendingMuseData = nil
+        _pendingMuseFingerprint = nil
+    }
+
+    private func buildMuseHooksData() throws -> Data {
+        var settings = try Self.strictReadJSONObject(at: Self.museSettingsURL,
+                                                      label: "~/.config/muse/settings.json")
+        if let raw = settings["hooks"], !(raw is [String: Any]) {
+            throw NSError(domain: "Coucou", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "~/.config/muse/settings.json: \"hooks\" has an unexpected type — Coucou has not touched it."
+            ])
+        }
+        let base = hookBase()
+        // Muse uses snake_case events; relay normalises them to canonical names.
+        // Timeouts in seconds × 1000 = milliseconds (Muse format).
+        let events: [(String, Int)] = [
+            ("session_start",      10),
+            ("user_prompt_submit",  5),
+            ("pre_tool_use",        5),
+            ("post_tool_use",       5),
+            ("stop",                5),
+            ("session_end",         3),
+        ]
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        for (event, timeoutSec) in events {
+            if let raw = hooks[event], !(raw is [[String: Any]]) {
+                throw NSError(domain: "Coucou", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "~/.config/muse/settings.json: \"hooks\"[\"\(event)\"] has an unexpected type — Coucou has not touched it."
+                ])
+            }
+            var groups = hooks[event] as? [[String: Any]] ?? []
+            groups = removeNbHookEntries(from: groups)
+            let hookEntry: [String: Any] = [
+                "type": "command",
+                "command": "\(base) --agent muse \(event)",
+                "timeout": timeoutSec * 1000,
+            ]
+            groups.append(["matcher": "*", "hooks": [hookEntry]])
+            hooks[event] = groups
+        }
+        settings["hooks"] = hooks
+        return try JSONSerialization.data(withJSONObject: settings,
+                                         options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    private func withoutMuseHooks() throws -> Data {
+        var settings = try Self.strictReadJSONObject(at: Self.museSettingsURL,
+                                                      label: "~/.config/muse/settings.json")
+        if let raw = settings["hooks"], !(raw is [String: Any]) {
+            throw NSError(domain: "Coucou", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "~/.config/muse/settings.json: \"hooks\" has an unexpected type — Coucou has not touched it."
+            ])
+        }
+        if var hooks = settings["hooks"] as? [String: Any] {
+            for key in hooks.keys {
+                if let groups = hooks[key] as? [[String: Any]] {
+                    let cleaned = removeNbHookEntries(from: groups)
+                    if cleaned.isEmpty { hooks.removeValue(forKey: key) } else { hooks[key] = cleaned }
+                }
+            }
+            if hooks.isEmpty { settings.removeValue(forKey: "hooks") } else { settings["hooks"] = hooks }
+        }
+        return try JSONSerialization.data(withJSONObject: settings,
+                                         options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    }
+
+    // MARK: - OpenCode plugin installer
+
+    static var openCodePluginURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/opencode/plugins/coucou.js")
+    }
+
+    static func openCodePluginInstalled() -> Bool {
+        guard let content = try? String(contentsOf: openCodePluginURL, encoding: .utf8) else { return false }
+        return content.contains("nb-hook") && content.contains("opencode")
+    }
+
+    private func buildOpenCodePluginContent() -> String {
+        let path = Self.hookScriptPath
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        return """
+// Coucou hook plugin for OpenCode — generated by Coucou.app
+// Forwards every event to the Coucou notch (fire-and-forget, never blocks).
+import { spawn } from 'node:child_process';
+const HOOK = '\(path)';
+export default {
+  name: 'coucou',
+  hooks: {
+    '*': (event) => {
+      const p = spawn('/bin/sh', [HOOK, '--agent', 'opencode'],
+                      { stdio: ['pipe', 'ignore', 'ignore'], detached: true });
+      p.stdin.write(JSON.stringify(event) + '\\n');
+      p.stdin.end();
+      p.unref();
+    }
+  }
+};
+"""
+    }
+
+    func previewOpenCodePlugin(install: Bool) throws -> String {
+        let url = Self.openCodePluginURL
+        if !install {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw NSError(domain: "CoucouNoop", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "No OpenCode plugin to remove."
+                ])
+            }
+            return "(will delete \(url.path))"
+        }
+        return buildOpenCodePluginContent()
+    }
+
+    func writeOpenCodePlugin() throws {
+        let url = Self.openCodePluginURL
+        let content = buildOpenCodePluginContent()
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "yyyyMMdd-HHmmss"
+            let backupURL = url.deletingLastPathComponent()
+                .appendingPathComponent("coucou.js.bak-\(fmt.string(from: Date()))")
+            try fm.copyItem(at: url, to: backupURL)
+        }
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func removeOpenCodePlugin() throws {
+        let url = Self.openCodePluginURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    // MARK: - Amp plugin installer
+
+    static var ampPluginURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/amp/plugins/coucou.ts")
+    }
+
+    static func ampPluginInstalled() -> Bool {
+        guard let content = try? String(contentsOf: ampPluginURL, encoding: .utf8) else { return false }
+        return content.contains("nb-hook") && content.contains("'amp'")
+    }
+
+    private func buildAmpPluginContent() -> String {
+        let path = Self.hookScriptPath
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        return """
+// Coucou hook plugin for Amp — generated by Coucou.app
+// Forwards every event to the Coucou notch (display only, never blocks).
+import { spawn } from 'node:child_process';
+const HOOK = '\(path)';
+export default {
+  hooks: {
+    '*': (event: unknown): void => {
+      const p = spawn('/bin/sh', [HOOK, '--agent', 'amp'],
+                      { stdio: ['pipe', 'ignore', 'ignore'], detached: true });
+      (p.stdin as import('node:stream').Writable).write(JSON.stringify(event) + '\\n');
+      (p.stdin as import('node:stream').Writable).end();
+      p.unref();
+    }
+  }
+};
+"""
+    }
+
+    func previewAmpPlugin(install: Bool) throws -> String {
+        let url = Self.ampPluginURL
+        if !install {
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                throw NSError(domain: "CoucouNoop", code: 0, userInfo: [
+                    NSLocalizedDescriptionKey: "No Amp plugin to remove."
+                ])
+            }
+            return "(will delete \(url.path))"
+        }
+        return buildAmpPluginContent()
+    }
+
+    func writeAmpPlugin() throws {
+        let url = Self.ampPluginURL
+        let content = buildAmpPluginContent()
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "yyyyMMdd-HHmmss"
+            let backupURL = url.deletingLastPathComponent()
+                .appendingPathComponent("coucou.ts.bak-\(fmt.string(from: Date()))")
+            try fm.copyItem(at: url, to: backupURL)
+        }
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    func removeAmpPlugin() throws {
+        let url = Self.ampPluginURL
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+    }
+
     // MARK: SHA-256 fingerprint
 
     private func sha256Hex(_ data: Data) -> String {
@@ -1901,6 +2270,9 @@ def normalize_event(name):
         'BeforeAgent': 'UserPromptSubmit', 'AfterAgent': 'Stop',
         'startup': 'SessionStart', 'exit': 'SessionEnd',
         'PreInvocation': 'UserPromptSubmit', 'PostInvocation': 'PostToolUse',
+        'pre_tool_use': 'PreToolUse', 'post_tool_use': 'PostToolUse',
+        'user_prompt_submit': 'UserPromptSubmit', 'session_start': 'SessionStart',
+        'session_end': 'SessionEnd',
     }
     return mapping.get(name, name)
 
@@ -2131,7 +2503,10 @@ def main():
         except Exception:
             pass
         # App unreachable, timed out, or no explicit decision — print nothing
-        # Claude Code / Codex will handle the absence of output (re-ask or default behaviour)
+        # Copilot is fail-closed: must always output valid JSON so it re-asks rather than deny
+        if agent == 'copilot':
+            sys.stdout.write('{"permissionDecision":"ask"}\\n')
+            sys.stdout.flush()
         sys.exit(0)
 
     # All other events: fire-and-forget (0.3s timeout, never blocks)
@@ -2144,8 +2519,8 @@ def main():
     except Exception:
         pass  # Always exit cleanly — never block the agent
 
-    # Gemini CLI and Antigravity expect a JSON response on stdout (empty = no decision)
-    if agent in ('gemini', 'antigravity'):
+    # Gemini CLI, Antigravity and Muse Code expect a JSON response on stdout (empty = no decision)
+    if agent in ('gemini', 'antigravity', 'muse'):
         sys.stdout.write('{}\\n')
         sys.stdout.flush()
 
@@ -2168,6 +2543,9 @@ def normalize_event(name):
         'BeforeAgent': 'UserPromptSubmit', 'AfterAgent': 'Stop',
         'startup': 'SessionStart', 'exit': 'SessionEnd',
         'PreInvocation': 'UserPromptSubmit', 'PostInvocation': 'PostToolUse',
+        'pre_tool_use': 'PreToolUse', 'post_tool_use': 'PostToolUse',
+        'user_prompt_submit': 'UserPromptSubmit', 'session_start': 'SessionStart',
+        'session_end': 'SessionEnd',
     }
     return mapping.get(name, name)
 
@@ -2397,6 +2775,10 @@ def main():
         except Exception:
             pass
         # App unreachable, timed out, or no explicit decision — print nothing
+        # Copilot is fail-closed: must always output valid JSON so it re-asks rather than deny
+        if agent == 'copilot':
+            sys.stdout.write('{"permissionDecision":"ask"}\\n')
+            sys.stdout.flush()
         sys.exit(0)
 
     try:
@@ -2408,8 +2790,8 @@ def main():
     except Exception:
         pass  # Always exit cleanly — never block the agent
 
-    # Gemini CLI and Antigravity expect a JSON response on stdout (empty = no decision)
-    if agent in ('gemini', 'antigravity'):
+    # Gemini CLI, Antigravity and Muse Code expect a JSON response on stdout (empty = no decision)
+    if agent in ('gemini', 'antigravity', 'muse'):
         sys.stdout.write('{}\\n')
         sys.stdout.flush()
 

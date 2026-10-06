@@ -99,7 +99,11 @@ A **declared pill** is a catalog entry (`PillCatalog.swift`) that has been enabl
 
 A catalog pill that is not checked in Settings behaves like any other agent: it gets an automatic pill when a session starts, and that pill is removed when the session ends.
 
-The GitHub build exposes Gemini CLI (`agent_gemini`) and Antigravity (`agent_antigravity`) in Settings → Active pills. Cursor (`agent_cursor`) and Codex (`agent_codex`, GitHub build only) are there too — their pills can be declared and set as the main pill; session support is coming in a future version.
+The GitHub build exposes Gemini CLI (`agent_gemini`), Antigravity (`agent_antigravity`),
+GitHub Copilot CLI (`agent_copilot`), Muse Code (`agent_muse`), OpenCode (`agent_opencode`)
+and Amp (`agent_amp`) in Settings → Active pills. Cursor (`agent_cursor`) and Codex
+(`agent_codex`, GitHub build only) are there too — their pills can be declared and set as
+the main pill; session support is coming in a future version.
 
 ## Real-world examples
 
@@ -133,6 +137,50 @@ island's `tool_name` / `session_id`.
 | `PostToolUse` | `PostToolUse` |
 | `PostInvocation` | `PostToolUse` |
 | `Stop` | `Stop` |
+
+### GitHub Copilot CLI (macOS)
+
+Coucou supports Copilot CLI out of the box via **Settings → GitHub Copilot CLI Hooks → Install hooks**.
+The installer writes to `~/.copilot/hooks/coucou.json` and uses `--agent copilot`.
+Copilot CLI is fail-closed on `PermissionRequest`: the relay always outputs valid JSON
+and returns `{"permissionDecision":"ask"}` on timeout so Copilot re-prompts in the terminal.
+
+| Copilot CLI event | Canonical event |
+|---|---|
+| `PermissionRequest` | `PermissionRequest` |
+| `PreToolUse` | `PreToolUse` |
+| `PostToolUse` | `PostToolUse` |
+| `UserPromptSubmit` | `UserPromptSubmit` |
+| `SessionStart` | `SessionStart` |
+| `Stop` | `Stop` |
+| `SessionEnd` | `SessionEnd` |
+
+### Muse Code (macOS)
+
+Coucou supports Muse Code out of the box via **Settings → Muse Code Hooks → Install hooks**.
+The installer merges into `~/.config/muse/settings.json` and uses `--agent muse`.
+The relay translates Muse's snake_case event names to canonical Coucou events.
+
+| Muse Code event | Canonical event |
+|---|---|
+| `pre_tool_use` | `PreToolUse` |
+| `post_tool_use` | `PostToolUse` |
+| `user_prompt_submit` | `UserPromptSubmit` |
+| `session_start` | `SessionStart` |
+| `session_end` | `SessionEnd` |
+| `stop` | `Stop` |
+
+### OpenCode (macOS)
+
+Coucou supports OpenCode via **Settings → OpenCode Plugin → Install plugin**.
+The installer writes a JS plugin to `~/.config/opencode/plugins/coucou.js`.
+All events are forwarded fire-and-forget; OpenCode is never blocked.
+
+### Amp (macOS)
+
+Coucou supports Amp via **Settings → Amp Plugin → Install plugin**.
+The installer writes a TypeScript plugin to `~/.config/amp/plugins/coucou.ts`.
+All events are forwarded display-only; Amp is never blocked.
 
 ### Any other tool
 
