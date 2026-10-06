@@ -302,6 +302,13 @@ fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
     let mode = std::env::var("COUCOU_X11_MODE").unwrap_or_default();
     match mode.as_str() {
         "utility" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Utility),
+        // GNOME's overview (Super) lists utility windows but none of these: the island
+        // is an overlay, not a window to switch to.
+        "notification" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Notification),
+        "dock" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock),
+        "splash" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Splashscreen),
+        "popup" => gw.set_type_hint(gtk::gdk::WindowTypeHint::PopupMenu),
+        "tooltip" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Tooltip),
         "or" => {
             gw.realize();
             if let Some(window) = gw.window() {

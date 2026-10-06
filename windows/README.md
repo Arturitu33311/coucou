@@ -226,13 +226,15 @@ What changes on Linux:
   top panel, on compositors that support it: COSMIC, KDE Plasma, Hyprland, Sway
   and other wlroots compositors. GNOME has no layer-shell, so there the island
   is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere. On GNOME
-  (X11) mutter places that window where it likes: `COUCOU_X11_MODE=utility` keeps it
+  (X11) mutter places that window where it likes: `COUCOU_X11_MODE=utility` (or `notification`,
+  which GNOME's Super overview does not list) keeps it
   centred under the panel, and `COUCOU_X11_MODE=or` maps it as an override-redirect
   window (drawn over the panel, but the panel keeps the mouse in its strip).
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath.
-- **Mochi's eyes** follow the pointer only while it is over the island: Wayland
-  gives no app the cursor position anywhere else.
+- **Mochi's eyes** follow the pointer across the whole screen on X11; on Wayland
+  they follow it only while it is over the island, because no app is given the
+  cursor position anywhere else.
 - **Claude Code hooks** go through `~/.local/share/coucou/bin/coucou-hook` and a
   Unix socket at `$XDG_RUNTIME_DIR/coucou.sock`. Both ends check that the other
   runs as the same user.

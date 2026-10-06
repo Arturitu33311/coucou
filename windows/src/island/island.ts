@@ -702,7 +702,18 @@ export class Island {
    * While the pointer is over the island the page's own events are the source.
    */
   onGaze(x: number, y: number) {
-    if (this.wasInIsland || State.mode === "hidden") return;
+    if (State.mode === "hidden") return;
+    if (this.wasInIsland) {
+      // The page learns the pointer left from a mouseout, which a quick move off the
+      // window does not always deliver: the island then stayed open until the pointer
+      // came back and left again. The screen-wide position settles it.
+      const rect = this.islandRect();
+      const inside =
+        x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
+        y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
+      if (!inside) this.onCursor(x, y);
+      return;
+    }
     State.mouse = { x, y };
     this.ensureRunning();
   }
