@@ -22,6 +22,7 @@ mod secrets;
 mod settings;
 mod share;
 mod sysmon;
+mod tasks;
 mod tray;
 mod weather;
 
@@ -476,6 +477,60 @@ fn shelf_open(path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
+// ── Hub: tasks and reminders (see tasks.rs) ───────────────────────────────────
+
+/// Jinx reads the list too (read-only), when sharing is on.
+fn tasks_shared(shared: &State<Shared>, list: Vec<tasks::Task>) -> Vec<tasks::Task> {
+    if let Some(host) = share_target(shared) {
+        let body = serde_json::json!({ "updated": tasks::now(), "tasks": &list });
+        share::schedule(&host, "tasks.json", serde_json::to_string_pretty(&body).unwrap_or_default());
+    }
+    list
+}
+
+#[tauri::command]
+fn tasks_list() -> Vec<tasks::Task> {
+    tasks::load()
+}
+
+/// Adds a task; `text` may carry its own time ("llamar a mamá a las 17:30", "stretch in 20 min").
+#[tauri::command]
+fn tasks_add(shared: State<Shared>, text: String) -> Result<Vec<tasks::Task>, String> {
+    let now = tasks::now();
+    let (title, when) = tasks::parse_when(&text, now, &pomodoro::local_offset);
+    tasks::update(|l| tasks::add(l, &title, when, now)).map(|l| tasks_shared(&shared, l))
+}
+
+#[tauri::command]
+fn tasks_done(shared: State<Shared>, id: String, done: bool) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::set_done(l, &id, done, tasks::now())).map(|l| tasks_shared(&shared, l))
+}
+
+/// Moves a reminder to `until` (unix seconds).
+#[tauri::command]
+fn tasks_snooze(shared: State<Shared>, id: String, until: i64) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::snooze(l, &id, until)).map(|l| tasks_shared(&shared, l))
+}
+
+#[tauri::command]
+fn tasks_notified(id: String) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::mark_notified(l, &id))
+}
+
+#[tauri::command]
+fn tasks_delete(shared: State<Shared>, id: String) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::delete(l, &id)).map(|l| tasks_shared(&shared, l))
+}
+
+#[tauri::command]
+fn tasks_clear_done(shared: State<Shared>) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| {
+        tasks::clear_done(l);
+        Ok(())
+    })
+    .map(|l| tasks_shared(&shared, l))
+}
+
 // ── Hub: Pomodoro log and statistics (see pomodoro.rs) ─────────────────────────
 
 #[tauri::command]
@@ -756,6 +811,13 @@ pub fn run() {
             shelf_open,
             pomodoro_log,
             pomodoro_stats,
+            tasks_list,
+            tasks_add,
+            tasks_done,
+            tasks_snooze,
+            tasks_notified,
+            tasks_delete,
+            tasks_clear_done,
             sys_sample,
             server_sample,
             agents_list,

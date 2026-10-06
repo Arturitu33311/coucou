@@ -61,7 +61,7 @@ fn now() -> i64 {
 
 /// Seconds east of UTC at `ts` in this computer's time zone.
 #[cfg(unix)]
-fn local_offset(ts: i64) -> i64 {
+pub(crate) fn local_offset(ts: i64) -> i64 {
     let t = ts as libc::time_t;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&t, &mut tm) };
@@ -69,7 +69,7 @@ fn local_offset(ts: i64) -> i64 {
 }
 
 #[cfg(not(unix))]
-fn local_offset(_ts: i64) -> i64 {
+pub(crate) fn local_offset(_ts: i64) -> i64 {
     0
 }
 

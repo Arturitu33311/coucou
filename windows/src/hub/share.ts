@@ -8,7 +8,8 @@ const README = `# Coucou (the island on Alan's laptop) shares these files with y
 
 - notes.md       Alan's scratch notes, as he typed them
 - calendar.json  his calendar for the next days (title, start, end, all-day)
-- pomodoro.json  his focus timer statistics (today, week, streak)
+- pomodoro.json  his focus timer statistics (today, week, streak, best hours)
+- tasks.json     his to-do list with reminders (title, done, remindAt in unix seconds)
 
 They are rewritten whenever they change, so they are current. Read-only for you: the island overwrites them.
 `;

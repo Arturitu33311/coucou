@@ -104,3 +104,9 @@
 .qk-info { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 10.5px; }
 .qk-warn { color: #F5A524; }
 .qk .dim { opacity: 0.55; }
+
+.tk-foot { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tk-box { flex: 0 0 auto; width: 15px; height: 15px; padding: 0; border-radius: 5px; border: 1.5px solid rgba(255,255,255,0.35); background: transparent; color: #0b0b10; font-size: 10px; line-height: 1; cursor: pointer; }
+.tk-box.on { background: #4ADE80; border-color: #4ADE80; }
+.tk-done { text-decoration: line-through; opacity: 0.45; }
+.tk-late { color: #F5A524; opacity: 1; }
