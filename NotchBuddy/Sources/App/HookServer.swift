@@ -432,12 +432,14 @@ final class HookServer: @unchecked Sendable {
             if let prompt = payload["prompt"] as? String, !prompt.isEmpty {
                 appendStep(id: agentId, step: String(prompt.prefix(60)))
             }
+            RecapStore.shared.userPromptSubmit(pillId: agentId, project: projectName)
             if state.isPresent { expandIfNeeded(to: .overview) }
 
         case "PreToolUse":
             activeSessionId = sessionId
             let tool = payload["tool_name"] as? String ?? "Tool"
             if let idx = state.tasks.firstIndex(where: { $0.id == agentId }) { state.tasks[idx].finalLine = nil }
+            RecapStore.shared.preToolUse(pillId: agentId, tool: tool)
             // AskUserQuestion is handled via the dedicated --ask hook.
             // Skip state/step update here to avoid flickering over the question card.
             guard tool != "AskUserQuestion" else { break }
@@ -457,6 +459,7 @@ final class HookServer: @unchecked Sendable {
                 let idx = state.appendSessionDiff(diff, for: agentId)
                 let step = String.makeDiffStep(filename: diff.name, added: diff.added, removed: diff.removed, diffId: idx)
                 appendStep(id: agentId, step: step)
+                RecapStore.shared.recordFileDiff(pillId: agentId, path: diff.name, added: diff.added, removed: diff.removed)
             }
 
         case "PostToolUseFailure":
@@ -485,6 +488,7 @@ final class HookServer: @unchecked Sendable {
                     state.tasks[idx].finalLine = finalText
                 }
             }
+            RecapStore.shared.stop(pillId: agentId)
             SoundEngine.shared.play("finish")
             if focused {
                 expandIfNeeded(to: .finished)
@@ -520,6 +524,7 @@ final class HookServer: @unchecked Sendable {
             if let idx = state.tasks.firstIndex(where: { $0.id == agentId }) { state.tasks[idx].finalLine = nil }
             state.clearSessionDiffs(for: agentId)
             state.removeTask(id: agentId)
+            RecapStore.shared.sessionEnd(pillId: agentId)
 
         case "SubagentStart":
             appendStep(id: agentId, step: "+ subagent")
@@ -767,6 +772,7 @@ final class HookServer: @unchecked Sendable {
         let pillId = state.pendingApproval?.pillId ?? "integration_claude"
         state.pendingApproval = nil
         state.isPinned = false
+        RecapStore.shared.recordDecision(pillId: pillId, decision: decision)
         state.updateTask(id: pillId, state: .working)
         clearPillBadge(id: pillId)
         // Restore focus to the pill that was focused before the approval card appeared.
