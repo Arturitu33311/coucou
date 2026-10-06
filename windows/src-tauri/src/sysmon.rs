@@ -360,6 +360,27 @@ echo @@bat; cat /sys/class/power_supply/BAT*/capacity /sys/class/power_supply/BA
 echo @@svc; for s in __SERVICES__; do echo "$s $(systemctl is-active $s 2>/dev/null)"; done
 echo @@docker; docker ps --format '{{.Status}}' 2>/dev/null"#;
 
+/// A file of the server's home directory, read over the same shared ssh connection (read-only).
+pub fn remote_cat(host: &str, relative: &str) -> Result<String, String> {
+    if !safe_word(host) || relative.starts_with('/') || relative.contains("..") || !relative.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b)) {
+        return Err("not a plain path".into());
+    }
+    let control = control_path();
+    let out = Command::new("ssh")
+        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "-o", "ControlMaster=auto", "-o", "ControlPersist=120"])
+        .args(["-o", &format!("ControlPath={control}")])
+        .arg(host)
+        .arg(format!("cat ~/{relative}"))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|_| "ssh is not installed".to_string())?;
+    if !out.status.success() {
+        return Err(format!("Cannot read it on {host}"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
 /// One reading of the server over `ssh` (key authentication only, one shared connection).
 pub fn remote(host: &str, services: &str) -> Result<Vitals, String> {
     if !safe_word(host) {

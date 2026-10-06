@@ -207,6 +207,10 @@ export interface Settings {
   serverServices: string;
   /** Keep Jinx in step with the Hub (notes, calendar, timer pushed to the server). */
   jinxShare: boolean;
+  /** Where uploads go: the rclone remote and folder for Google Drive, the school OneDrive folder. */
+  driveRemote: string;
+  driveFolder: string;
+  schoolFolder: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -235,6 +239,9 @@ export const DEFAULT_SETTINGS: Settings = {
   serverHost: "",
   serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
   jinxShare: true,
+  driveRemote: "gdrive",
+  driveFolder: "Coucou",
+  schoolFolder: "Por clasificar",
 };
 
 type Listener = () => void;

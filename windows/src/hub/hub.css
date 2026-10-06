@@ -36,12 +36,37 @@
 .sh-meta { flex: 0 0 auto; font-size: 10px; opacity: 0.5; white-space: nowrap; }
 .sh-foot { flex: 0 0 auto; }
 .sh-add { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; color: inherit; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 3px 8px; }
+.sh-wrap { height: 100%; min-height: 0; }
+.sh-wrap > .sh { height: 100%; }
+.sh-up { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.sh-up-title { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-dest { display: flex; gap: 8px; align-items: center; }
+.sh-dest > .hub-btn { flex: 0 0 168px; }
+.sh-folder { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 11px; color: inherit; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 3px 8px; }
+.sh-up-status { flex: 1 1 auto; font-size: 11px; opacity: 0.8; }
+.sh-up-status.ok { color: #4ADE80; opacity: 1; }
+.sh-up-status.bad { color: #F5A524; opacity: 1; }
+.sh-login { font-size: 10.5px; white-space: pre-wrap; opacity: 0.8; font-family: ui-monospace, monospace; }
+.hub-btn:disabled { opacity: 0.45; cursor: default; }
 .hub-btn.sm { font-size: 10px; padding: 1px 8px; flex: 0 0 auto; }
 .nt { display: flex; flex-direction: column; gap: 4px; height: 100%; }
 .nt-pad { flex: 1 1 auto; min-height: 0; resize: none; font: inherit; font-size: 12px; line-height: 1.4; color: inherit; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); border-radius: 9px; padding: 6px 9px; }
 .nt-pad:focus { outline: none; border-color: rgba(129,140,248,0.6); }
 .nt-status { font-size: 9.5px; opacity: 0.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nt-status.bad { color: #F5A524; opacity: 1; }
+.cal { display: grid; grid-template-columns: 1.5fr 1fr; gap: 12px; height: 100%; min-height: 0; position: relative; }
+.cal-col { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.cal-col.side { border-left: 1px solid rgba(255,255,255,0.08); padding-left: 10px; }
+.cal-day { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.5; margin: 5px 0 2px; }
+.cal-day:first-child { margin-top: 0; }
+.cal-row, .cal-task { display: flex; gap: 8px; font-size: 11.5px; padding: 1.5px 0; align-items: baseline; }
+.cal-when { flex: 0 0 auto; font-size: 10px; opacity: 0.55; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cal-what { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-task { justify-content: space-between; }
+.cal-task .cal-when { order: 2; }
+.cal-row.now .cal-what { color: #4ADE80; font-weight: 600; }
+.cal-row.past { opacity: 0.45; }
+.cal .hub-err { position: absolute; left: 0; bottom: 0; }
 .hub-btn { font-size: 10px; padding: 2px 8px; opacity: 0.75; }
 .pm-presets .hub-btn:disabled { opacity: 0.3; cursor: default; }
 .pm-stat { font-size: 12px; font-variant-numeric: tabular-nums; }

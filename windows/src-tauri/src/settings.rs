@@ -69,6 +69,26 @@ pub struct Settings {
     /// ~/.hermes/state/coucou/ so she can read them (needs `server_host`).
     #[serde(default = "default_true")]
     pub jinx_share: bool,
+    /// The rclone remote used for the personal Google Drive, and the folder files go to there.
+    #[serde(default = "default_drive_remote")]
+    pub drive_remote: String,
+    #[serde(default = "default_drive_folder")]
+    pub drive_folder: String,
+    /// The folder of the school's OneDrive files go to unless another is typed.
+    #[serde(default = "default_school_folder")]
+    pub school_folder: String,
+}
+
+fn default_drive_remote() -> String {
+    "gdrive".into()
+}
+
+fn default_drive_folder() -> String {
+    "Coucou".into()
+}
+
+fn default_school_folder() -> String {
+    "Por clasificar".into()
 }
 
 fn default_server_services() -> String {
@@ -136,6 +156,9 @@ impl Default for Settings {
             server_host: String::new(),
             server_services: default_server_services(),
             jinx_share: true,
+            drive_remote: default_drive_remote(),
+            drive_folder: default_drive_folder(),
+            school_folder: default_school_folder(),
         }
     }
 }

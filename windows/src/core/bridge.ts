@@ -118,10 +118,16 @@ export const Bridge = {
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
   agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
+  calendarEvents: (days: number) => callOrThrow<unknown[]>("calendar_events", { days }),
+  jinxTasks: () => callOrThrow<unknown[]>("jinx_tasks"),
   notesLoad: () => callOrThrow<string>("notes_load"),
   notesSave: (text: string) => callOrThrow<void>("notes_save", { text }),
   shareStatus: () => callOrThrow<{ lastOk: number | null; lastError: string | null }>("share_status"),
   sharePush: (name: string, content: string) => callOrThrow<void>("share_push", { name, content }),
+  shelfUpload: (path: string, dest: "school" | "drive", folder: string) => callOrThrow<{ location: string; url: string | null }>("shelf_upload", { path, dest, folder }),
+  driveState: () => callOrThrow<{ installed: boolean; connected: boolean }>("drive_state"),
+  driveConnect: () => callOrThrow<void>("drive_connect"),
+  schoolLoginStart: () => callOrThrow<void>("school_login_start"),
   shelfList: () => call<{ name: string; path: string; size: number; ageSecs: number }[]>("shelf_list"),
   shelfRemove: (path: string) => callOrThrow<void>("shelf_remove", { path }),
   shelfOpen: (path: string | null) => callOrThrow<void>("shelf_open", { path }),
@@ -200,6 +206,7 @@ export type BridgeEvent =
   | { name: "gaze"; payload: { x: number; y: number } }
   | { name: "obstacles"; payload: number[][] }
   | { name: "jinx"; payload: Record<string, unknown> }
+  | { name: "school-login"; payload: { kind: string; text: string; ok?: boolean } }
   | { name: "tray"; payload: string }
   | { name: "hook"; payload: Record<string, unknown> }
   | { name: "screen-changed"; payload: null };

@@ -2,7 +2,9 @@
 
 mod agents;
 mod bars;
+mod calendar;
 mod claude;
+mod drive;
 mod files;
 mod hooks;
 mod integrations;
@@ -282,6 +284,30 @@ fn read_sound(path: String) -> Result<String, String> {
     Ok(claude::base64_for(&bytes))
 }
 
+// ── Hub: the calendar and Jinx's pending tasks (see calendar.rs) ───────────────
+
+#[tauri::command]
+async fn calendar_events(days: u32) -> Result<Vec<calendar::Event>, String> {
+    tauri::async_runtime::spawn_blocking(move || calendar::events(days.clamp(1, 31)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Jinx's open pending tasks, read from her state file on the server (needs the server set).
+#[tauri::command]
+async fn jinx_tasks(shared: State<'_, Shared>) -> Result<Vec<calendar::Task>, String> {
+    let host = {
+        let s = shared.settings.lock().unwrap();
+        s.server_host.trim().to_string()
+    };
+    if host.is_empty() {
+        return Err("not-configured".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || sysmon::remote_cat(&host, ".hermes/state/pendientes.json").map(|t| calendar::parse_tasks(&t)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ── Hub: notes, and what Jinx can see of the Hub (see notes.rs, share.rs) ──────
 
 #[tauri::command]
@@ -319,6 +345,65 @@ fn share_push(shared: State<Shared>, name: String, content: String) -> Result<()
 #[tauri::command]
 fn share_status() -> share::Status {
     share::status()
+}
+
+// ── Hub: uploading a shelf file (see drive.rs), directly, no model involved ─────
+
+/// `dest`: "school" (the school's OneDrive, through Jinx's upload function on the server) or
+/// "drive" (the personal Google Drive, through rclone).
+#[tauri::command]
+async fn shelf_upload(shared: State<'_, Shared>, path: String, dest: String, folder: String) -> Result<drive::Uploaded, String> {
+    let file = files::inside(&files::inbox_dir(), &path)?;
+    let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+    let (host, remote) = {
+        let s = shared.settings.lock().unwrap();
+        (s.server_host.trim().to_string(), s.drive_remote.trim().to_string())
+    };
+    tauri::async_runtime::spawn_blocking(move || match dest.as_str() {
+        "school" if host.is_empty() => Err("Set the server in Settings → Hub: the school's OneDrive goes through Jinx".to_string()),
+        "school" => drive::school_upload(&host, &file, &name, &folder),
+        "drive" => drive::drive_upload(&remote, &folder, &file, &name, None),
+        _ => Err("unknown destination".to_string()),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn drive_state(shared: State<'_, Shared>) -> Result<drive::DriveState, String> {
+    let remote = shared.settings.lock().unwrap().drive_remote.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || drive::drive_state(&remote, None)).await.map_err(|e| e.to_string())
+}
+
+/// The one-time Google sign-in for Drive: rclone opens the browser and waits.
+#[tauri::command]
+async fn drive_connect(shared: State<'_, Shared>) -> Result<(), String> {
+    let remote = shared.settings.lock().unwrap().drive_remote.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || drive::drive_connect(&remote, None)).await.map_err(|e| e.to_string())?
+}
+
+static SCHOOL_LOGIN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts Jinx's Microsoft sign-in for the school account; what it prints (the page and the code)
+/// arrives as `school-login` events, and a last one says whether it worked.
+#[tauri::command]
+fn school_login_start(app: AppHandle, shared: State<Shared>) -> Result<(), String> {
+    let host = shared.settings.lock().unwrap().server_host.trim().to_string();
+    if host.is_empty() {
+        return Err("Set the server in Settings → Hub first".into());
+    }
+    if SCHOOL_LOGIN.swap(true, Ordering::SeqCst) {
+        return Err("A sign-in is already running".into());
+    }
+    std::thread::spawn(move || {
+        let emit = |payload: serde_json::Value| {
+            let _ = app.emit_to(island::WINDOW_LABEL, "school-login", payload);
+        };
+        let result = drive::school_login(&host, |line| emit(serde_json::json!({ "kind": "line", "text": line })));
+        emit(serde_json::json!({ "kind": "done", "ok": result.is_ok(), "text": result.err().unwrap_or_default() }));
+        SCHOOL_LOGIN.store(false, Ordering::SeqCst);
+    });
+    Ok(())
 }
 
 // ── Hub: the file shelf (the inbox of dropped files; see files.rs) ─────────────
@@ -604,10 +689,16 @@ pub fn run() {
             chat_send,
             chat_reset,
             read_sound,
+            calendar_events,
+            jinx_tasks,
             notes_load,
             notes_save,
             share_push,
             share_status,
+            shelf_upload,
+            drive_state,
+            drive_connect,
+            school_login_start,
             shelf_list,
             shelf_remove,
             shelf_open,

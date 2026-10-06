@@ -572,6 +572,17 @@ function hubSection(): HTMLElement {
     settings.serverServices = services.value.trim();
     void save();
   });
+  const field = (value: string, placeholder: string, apply: (v: string) => void, width = "flex:1 1 auto;min-width:0") => {
+    const input = h("input", { type: "text", placeholder, spellcheck: "false", value, style: width }) as HTMLInputElement;
+    input.addEventListener("change", () => {
+      apply(input.value.trim());
+      void save();
+    });
+    return input;
+  };
+  const driveRemote = field(settings.driveRemote ?? "gdrive", "rclone remote (gdrive)", (v) => (settings.driveRemote = v || "gdrive"), "width:120px");
+  const driveFolder = field(settings.driveFolder ?? "Coucou", "Drive folder (Coucou)", (v) => (settings.driveFolder = v || "Coucou"));
+  const schoolFolder = field(settings.schoolFolder ?? "Por clasificar", "Por clasificar", (v) => (settings.schoolFolder = v || "Por clasificar"));
   return h(
     "section",
     {},
@@ -586,6 +597,10 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
         "Nothing else on the server is touched." })),
+    h("div", { class: "row" }, h("label", { text: "Uploads" }), driveRemote, driveFolder,
+      h("span", { class: "hint", text: "Google Drive: the rclone remote and the folder; connect it from the Shelf. School OneDrive uses Jinx's sign-in." })),
+    h("div", { class: "row" }, h("label", { text: "School folder" }), schoolFolder,
+      h("span", { class: "hint", text: "e.g. Por clasificar, or Materias/BIOLOGIA I/Actividades" })),
     h("div", { class: "row" }, h("label", { text: "Services" }), services,
       h("span", { class: "hint", text: "systemd units shown on the Server tab" })),
   );
