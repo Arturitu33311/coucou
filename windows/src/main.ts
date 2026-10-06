@@ -10,6 +10,7 @@ import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerJinxHandlers } from "./island/jinx";
+import { registerPomodoro } from "./hub/pomodoro";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 
@@ -83,6 +84,7 @@ async function main() {
   registerIntegrationHandlers(island);
   registerMusicHandlers(island);
   registerJinxHandlers(island);
+  registerPomodoro(island);
 
   island.launch();
 

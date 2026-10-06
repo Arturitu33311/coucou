@@ -11,6 +11,7 @@ mod jinx;
 mod log;
 mod music;
 mod pipe;
+mod pomodoro;
 mod platform;
 mod secrets;
 mod settings;
@@ -279,6 +280,18 @@ fn read_sound(path: String) -> Result<String, String> {
     Ok(claude::base64_for(&bytes))
 }
 
+// ── Hub: Pomodoro log and statistics (see pomodoro.rs) ─────────────────────────
+
+#[tauri::command]
+fn pomodoro_log(kind: String, seconds: u32, completed: bool) -> Result<(), String> {
+    pomodoro::log(&kind, seconds, completed)
+}
+
+#[tauri::command]
+fn pomodoro_stats() -> pomodoro::Stats {
+    pomodoro::stats()
+}
+
 // ── Hub: system and server vitals (see sysmon.rs) ─────────────────────────────
 
 #[tauri::command]
@@ -525,6 +538,8 @@ pub fn run() {
             chat_send,
             chat_reset,
             read_sound,
+            pomodoro_log,
+            pomodoro_stats,
             sys_sample,
             server_sample,
             agents_list,

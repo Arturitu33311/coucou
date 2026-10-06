@@ -118,6 +118,9 @@ export const Bridge = {
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
   agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
+  pomodoroLog: (kind: "focus" | "break", seconds: number, completed: boolean) =>
+    callOrThrow<void>("pomodoro_log", { kind, seconds, completed }),
+  pomodoroStats: () => callOrThrow<import("../hub/pomodoro").PomoStats>("pomodoro_stats"),
   // The Hub: vitals of this computer and of the server (over ssh).
   sysSample: () => call<import("../hub/system").Vitals>("sys_sample"),
   serverSample: () => callOrThrow<import("../hub/system").Vitals>("server_sample"),
