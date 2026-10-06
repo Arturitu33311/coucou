@@ -63,6 +63,19 @@ export function buildHub(actions: ViewActions): ViewHost {
   const el = h("div", { class: "view hub" }, h("div", { class: "hub-wrap" }, tabs, body));
   let tabsKey = "";
   let mounted = "";
+  // The strip scrolls sideways and its scrollbar is hidden: the ordinary mouse wheel (up and down)
+  // moves it, as a touchpad's sideways swipe already does.
+  tabs.addEventListener(
+    "wheel",
+    (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        tabs.scrollLeft += e.deltaY;
+        e.preventDefault();
+      }
+      e.stopPropagation();
+    },
+    { passive: false },
+  );
 
   return {
     el,
@@ -70,7 +83,10 @@ export function buildHub(actions: ViewActions): ViewHost {
       const key = `${State.hubTab}`;
       if (key !== tabsKey) {
         tabsKey = key;
+        // Rebuilding the strip would send it back to the left: keep where it was.
+        const kept = tabs.scrollLeft;
         clear(tabs);
+        let active: HTMLElement | null = null;
         for (const t of TOOLS) {
           const b = h("button", { class: t.id === State.hubTab ? "on" : "", text: t.label });
           b.addEventListener("click", () => {
@@ -78,6 +94,14 @@ export function buildHub(actions: ViewActions): ViewHost {
             selectTool(t.id);
           });
           tabs.append(b);
+          if (t.id === State.hubTab) active = b;
+        }
+        tabs.scrollLeft = kept;
+        // With ten tabs the last ones are off to the right: bring the chosen one into view.
+        if (active && tabs.clientWidth > 0) {
+          const a = active as HTMLElement;
+          if (a.offsetLeft < tabs.scrollLeft) tabs.scrollLeft = a.offsetLeft - 8;
+          else if (a.offsetLeft + a.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = a.offsetLeft + a.offsetWidth - tabs.clientWidth + 8;
         }
       }
       if (!toolById(State.hubTab)) State.hubTab = TOOLS[0]?.id ?? "";

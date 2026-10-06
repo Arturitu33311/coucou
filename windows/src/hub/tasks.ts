@@ -200,7 +200,9 @@ function build(): HubHost {
   const rows = h("div", { class: "sh-list" });
   const foot = h("div", { class: "tk-foot" });
   const err = h("div", { class: "hub-err", text: "" });
-  const el = h("div", { class: "sh" }, input, err, rows, foot);
+  // Why Jinx could not be reached: its own line, so it goes away when she can be again.
+  const syncNote = h("div", { class: "hub-err", text: "" });
+  const el = h("div", { class: "sh" }, input, err, syncNote, rows, foot);
 
   let settle: number | null = null;
   /** A local change is done at once; Jinx hears of it a moment later (one round for a burst of them). */
@@ -312,7 +314,7 @@ function build(): HubHost {
     if (list.length === 0 && fromJinx.length === 0) {
       rows.append(h("div", { class: "hub-hint", text: "Nothing to do. Add a task above; put a time in it and Mochi will remind you." }));
     }
-    err.textContent = err.textContent || (syncError ? `Jinx: ${syncError}` : "");
+    syncNote.textContent = syncError ? `Jinx: ${syncError}` : "";
     clear(foot);
     foot.append(h("span", { class: "hub-hint", text: `${open.length} open${sharing() ? " · shared with Jinx" : ""}` }));
     if (done.length > 0) {
