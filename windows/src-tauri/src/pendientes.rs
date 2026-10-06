@@ -199,6 +199,8 @@ pub fn sync(host: &str) -> SyncResult {
     let mut plan = tasks::Plan::default();
     let mut error = None;
     let updated = tasks::update(|l| {
+        // One list on every device: every task is shared.
+        l.iter_mut().for_each(|t| t.jinx = true);
         plan = tasks::reconcile(l, &rows, tasks::now());
         Ok(())
     });

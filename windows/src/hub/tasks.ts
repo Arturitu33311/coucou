@@ -274,16 +274,6 @@ function build(): HubHost {
         snooze("☀", tomorrowAtNine, "Remind me tomorrow at 09:00"),
       );
     }
-    if (sharing() && !t.done) {
-      // On: hers too (a dot while she has not got it yet). Off: only here.
-      const chip = h("button", {
-        class: `hub-btn sm tk-jinx${t.jinx ? " on" : ""}`,
-        text: t.jinx ? (t.jinxId ? "Jinx ✓" : "Jinx …") : "Jinx",
-        title: t.jinx ? "Also on Jinx's list — click to keep it only here" : "Only here — click to put it on Jinx's list too",
-      });
-      chip.addEventListener("click", () => void run(Bridge.tasksSetJinx(t.id, !t.jinx)));
-      kids.push(chip);
-    }
     const del = h("button", { class: "hub-btn sm", text: "×", title: "Delete" });
     del.addEventListener("click", () => void run(Bridge.tasksDelete(t.id)));
     kids.push(del);
@@ -299,9 +289,9 @@ function build(): HubHost {
     if (list.length === 0) {
       rows.append(h("div", { class: "hub-hint", text: "Nothing to do. Add a task above; put a time in it and Mochi will remind you." }));
     }
-    syncNote.textContent = syncError ? `Jinx: ${syncError}` : "";
+    syncNote.textContent = syncError ? `Sync: ${syncError}` : "";
     clear(foot);
-    foot.append(h("span", { class: "hub-hint", text: `${open.length} open${sharing() ? " · shared with Jinx" : ""}` }));
+    foot.append(h("span", { class: "hub-hint", text: `${open.length} open${sharing() ? " · synced" : ""}` }));
     if (done.length > 0) {
       const clearBtn = h("button", { class: "hub-btn sm", text: `Clear ${done.length} done` });
       clearBtn.addEventListener("click", () => void run(Bridge.tasksClearDone()));
