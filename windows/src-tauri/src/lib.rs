@@ -337,7 +337,7 @@ fn notes_save(shared: State<Shared>, text: String) -> Result<(), String> {
 /// A snapshot for Jinx (calendar, timer…). Only the files the Hub makes.
 #[tauri::command]
 fn share_push(shared: State<Shared>, name: String, content: String) -> Result<(), String> {
-    if !["calendar.json", "context.json"].contains(&name.as_str()) || content.len() > 200_000 {
+    if !["calendar.json", "pomodoro.json", "readme.md"].contains(&name.as_str()) || content.len() > 200_000 {
         return Err("not a Hub file".into());
     }
     if let Some(host) = share_target(&shared) {

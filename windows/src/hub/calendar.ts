@@ -4,6 +4,7 @@
 import { Bridge } from "../core/bridge";
 import { State } from "../core/state";
 import { h, clear } from "../views/dom";
+import { shareReadmeOnce } from "./share";
 import type { HubHost, HubTool } from "./types";
 
 export interface CalEvent {
@@ -98,6 +99,7 @@ function build(): HubHost {
       const stable = JSON.stringify(list.map((e) => [e.id, e.start, e.end]));
       if (stable !== pushed && State.settings.jinxShare !== false) {
         pushed = stable;
+        shareReadmeOnce();
         void Bridge.sharePush("calendar.json", body).catch(() => {});
       }
     } catch (e) {

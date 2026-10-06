@@ -9,6 +9,7 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { h } from "../views/dom";
 import type { Island } from "../island/island";
+import { sharing, shareReadmeOnce } from "./share";
 import type { HubHost, HubTool } from "./types";
 
 const PRESETS = [
@@ -182,6 +183,10 @@ export function setPreset(i: number) {
 export async function refreshStats() {
   try {
     stats = await Bridge.pomodoroStats();
+    if (sharing()) {
+      shareReadmeOnce();
+      void Bridge.sharePush("pomodoro.json", JSON.stringify({ updated: new Date().toISOString(), ...stats }, null, 2)).catch(() => {});
+    }
   } catch {
     /* no statistics yet */
   }
