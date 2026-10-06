@@ -62,6 +62,11 @@ async function main() {
         setPaused(false);
         island.alert(State.defaultView());
         break;
+      case "toggle":
+        setPaused(false);
+        if (State.mode === "expanded") island.fsm.forcePetit();
+        else island.alert(State.defaultView());
+        break;
       case "pause":
         setPaused(!State.paused);
         if (State.paused) island.fsm.forceHidden();

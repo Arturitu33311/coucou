@@ -682,8 +682,10 @@ pub fn run() {
     let gate = Arc::new(PollGate::new());
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `coucou --toggle` (bound to a keyboard shortcut) opens the island, or closes it if it is open.
+            let what = if argv.iter().any(|a| a == "--toggle") { "toggle" } else { "open" };
+            let _ = app.emit_to(island::WINDOW_LABEL, "tray", what.to_string());
         }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage(Shared {
