@@ -125,8 +125,8 @@ targets:
         CFBundleName: Coucou
         CFBundleDisplayName: Coucou
         CFBundleIdentifier: fr.louisraille.NotchBuddy
-        CFBundleVersion: "9"
-        CFBundleShortVersionString: "0.1.8"
+        CFBundleVersion: "10"
+        CFBundleShortVersionString: "0.1.9"
         CFBundlePackageType: APPL
         LSUIElement: YES
         NSHighResolutionCapable: YES
@@ -243,7 +243,7 @@ targets:
         CFBundleName: Coucou
         CFBundleDisplayName: Coucou
         CFBundleIdentifier: fr.louisraille.Coucou
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         CFBundleShortVersionString: "1.0"
         CFBundlePackageType: APPL
         LSRequiresIPhoneOS: YES
@@ -323,7 +323,7 @@ targets:
         CFBundleName: CoucouWidgets
         CFBundleDisplayName: Coucou
         CFBundleIdentifier: fr.louisraille.Coucou.Widgets
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         CFBundleShortVersionString: "1.0"
         CFBundlePackageType: XPC!
         NSExtension:
@@ -366,7 +366,7 @@ targets:
         CFBundleName: CoucouNotificationContent
         CFBundleDisplayName: Coucou
         CFBundleIdentifier: fr.louisraille.Coucou.NotificationContent
-        CFBundleVersion: "2"
+        CFBundleVersion: "3"
         CFBundleShortVersionString: "1.0"
         CFBundlePackageType: XPC!
         NSExtension:
