@@ -121,6 +121,7 @@ The App Store build of the Mac app runs in Apple's sandbox, so a few features st
 ### iPhone
 
 1. **Install Coucou on your iPhone** (iOS 18 or later): install [TestFlight](https://apps.apple.com/app/testflight/id899247664) from the App Store, then [Join the TestFlight beta](https://testflight.apple.com/join/3GpeHv2b). The beta is free; Apple limits it to 10,000 testers. The App Store version is coming soon.
+   *Apple is reviewing the beta: it opens within a day or two — if the link isn't accepting testers yet, check back soon.*
 2. **On your Mac**, with Coucou 0.1.8 or later: **Settings… → General → iPhone**, turn on **Show my agent sessions on my iPhone**, and **Move Mochi to my iPhone's Dynamic Island when my Mac is locked** for the Lock Screen.
 3. **Same Apple Account** in iCloud on the Mac and the iPhone. That's the whole link: no account, no pairing code.
 4. Open Coucou on the iPhone, allow notifications, and start a Claude Code session on the Mac.
