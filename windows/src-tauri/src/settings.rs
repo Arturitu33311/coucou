@@ -77,6 +77,13 @@ pub struct Settings {
     /// The folder of the school's OneDrive files go to unless another is typed.
     #[serde(default = "default_school_folder")]
     pub school_folder: String,
+    /// The Weather tab asks open-meteo.com for these cities (off until turned on).
+    #[serde(default)]
+    pub weather_on: bool,
+    #[serde(default)]
+    pub weather_city: String,
+    #[serde(default)]
+    pub weather_city2: String,
 }
 
 fn default_drive_remote() -> String {
@@ -159,6 +166,9 @@ impl Default for Settings {
             drive_remote: default_drive_remote(),
             drive_folder: default_drive_folder(),
             school_folder: default_school_folder(),
+            weather_on: false,
+            weather_city: String::new(),
+            weather_city2: String::new(),
         }
     }
 }

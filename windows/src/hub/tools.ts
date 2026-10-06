@@ -6,5 +6,7 @@ import { pomodoroTool } from "./pomodoro";
 import { shelfTool } from "./shelf";
 import { notesTool } from "./notes";
 import { calendarTool } from "./calendar";
+import { weatherTool } from "./weather";
+import { quickTool } from "./quick";
 
-export const TOOLS: HubTool[] = [systemTool, serverTool, pomodoroTool, notesTool, calendarTool, shelfTool];
+export const TOOLS: HubTool[] = [systemTool, serverTool, pomodoroTool, notesTool, calendarTool, weatherTool, quickTool, shelfTool];

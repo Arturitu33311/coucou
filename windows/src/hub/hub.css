@@ -78,3 +78,29 @@
 .hub-btn:hover { background: rgba(255,255,255,0.14); }
 .hub-btn.on { background: rgba(99,102,241,0.3); border-color: rgba(129,140,248,0.7); }
 .hub-btn.primary { background: #F5F6F8; color: #0B0C0E; border-color: transparent; font-weight: 600; }
+.wx-wrap { height: 100%; }
+.wx { display: flex; gap: 14px; height: 100%; }
+.wx-card { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wx-city { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wx-now { display: flex; align-items: baseline; gap: 8px; }
+.wx-sym { font-size: 22px; }
+.wx-temp { font-size: 30px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+.wx-words { font-size: 11px; opacity: 0.7; }
+.wx-sub { font-size: 10px; opacity: 0.55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wx-days { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; }
+.wx-day { display: grid; grid-template-columns: 34px 22px 1fr auto; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.wx-day .dim { opacity: 0.5; }
+.qk { display: flex; flex-direction: column; gap: 6px; height: 100%; }
+.qk-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.qk-btn { font: inherit; color: inherit; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 8px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); cursor: pointer; text-align: left; }
+.qk-btn:hover { background: rgba(255,255,255,0.1); }
+.qk-btn:disabled { opacity: 0.35; cursor: default; }
+.qk-btn.on { background: rgba(99,102,241,0.3); border-color: rgba(129,140,248,0.7); }
+.qk-l { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.qk-s { font-size: 9.5px; opacity: 0.6; }
+.qk-row { display: flex; align-items: center; gap: 8px; font-size: 10.5px; }
+.qk-vol { flex: 1 1 auto; }
+.qk-vol-l { width: 34px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.qk-info { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 10.5px; }
+.qk-warn { color: #F5A524; }
+.qk .dim { opacity: 0.55; }

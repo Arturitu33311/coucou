@@ -211,6 +211,10 @@ export interface Settings {
   driveRemote: string;
   driveFolder: string;
   schoolFolder: string;
+  /** The Weather tab asks open-meteo.com for these cities (off until turned on). */
+  weatherOn: boolean;
+  weatherCity: string;
+  weatherCity2: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -242,6 +246,9 @@ export const DEFAULT_SETTINGS: Settings = {
   driveRemote: "gdrive",
   driveFolder: "Coucou",
   schoolFolder: "Por clasificar",
+  weatherOn: false,
+  weatherCity: "",
+  weatherCity2: "",
 };
 
 type Listener = () => void;

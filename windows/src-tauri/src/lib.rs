@@ -15,12 +15,14 @@ mod music;
 mod notes;
 mod pipe;
 mod pomodoro;
+mod quick;
 mod platform;
 mod secrets;
 mod settings;
 mod share;
 mod sysmon;
 mod tray;
+mod weather;
 
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -345,6 +347,32 @@ fn share_push(shared: State<Shared>, name: String, content: String) -> Result<()
 #[tauri::command]
 fn share_status() -> share::Status {
     share::status()
+}
+
+// ── Hub: quick switches (see quick.rs) ──────────────────────────────────────────
+
+#[tauri::command]
+async fn quick_state() -> Result<quick::Quick, String> {
+    tauri::async_runtime::spawn_blocking(quick::read).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn quick_set(what: String, value: i64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || quick::set(&what, value)).await.map_err(|e| e.to_string())?
+}
+
+// ── Hub: the weather (see weather.rs) ──────────────────────────────────────────
+
+/// "off" until the user turns the Weather tab's network use on in Settings.
+#[tauri::command]
+async fn weather_get(shared: State<'_, Shared>, city: String) -> Result<weather::Weather, String> {
+    if !shared.settings.lock().unwrap().weather_on {
+        return Err("off".into());
+    }
+    if city.trim().is_empty() {
+        return Err("no-city".into());
+    }
+    weather::fetch(&city).await
 }
 
 // ── Hub: uploading a shelf file (see drive.rs), directly, no model involved ─────
@@ -695,6 +723,9 @@ pub fn run() {
             notes_save,
             share_push,
             share_status,
+            quick_state,
+            quick_set,
+            weather_get,
             shelf_upload,
             drive_state,
             drive_connect,

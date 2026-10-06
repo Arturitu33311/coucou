@@ -582,6 +582,8 @@ function hubSection(): HTMLElement {
   };
   const driveRemote = field(settings.driveRemote ?? "gdrive", "rclone remote (gdrive)", (v) => (settings.driveRemote = v || "gdrive"), "width:120px");
   const driveFolder = field(settings.driveFolder ?? "Coucou", "Drive folder (Coucou)", (v) => (settings.driveFolder = v || "Coucou"));
+  const weatherCity = field(settings.weatherCity ?? "", "City (Zapopan)", (v) => (settings.weatherCity = v));
+  const weatherCity2 = field(settings.weatherCity2 ?? "", "Second city (optional)", (v) => (settings.weatherCity2 = v));
   const schoolFolder = field(settings.schoolFolder ?? "Por clasificar", "Por clasificar", (v) => (settings.schoolFolder = v || "Por clasificar"));
   return h(
     "section",
@@ -597,6 +599,9 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
         "Nothing else on the server is touched." })),
+    h("div", { class: "row" }, h("label", { text: "Weather" }),
+      toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
+      h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),
     h("div", { class: "row" }, h("label", { text: "Uploads" }), driveRemote, driveFolder,
       h("span", { class: "hint", text: "Google Drive: the rclone remote and the folder; connect it from the Shelf. School OneDrive uses Jinx's sign-in." })),
     h("div", { class: "row" }, h("label", { text: "School folder" }), schoolFolder,
