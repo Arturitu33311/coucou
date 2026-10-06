@@ -197,6 +197,8 @@ export interface Settings {
   hoverOpenDelay: number;
   /** Island position across the top: px from the centre, positive = right. */
   islandOffsetX: number;
+  /** The island steps aside when the pointer goes for the buttons of a window behind it. */
+  dodgeWindows: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -219,6 +221,7 @@ export const DEFAULT_SETTINGS: Settings = {
   openOnHover: false,
   hoverOpenDelay: 0.9,
   islandOffsetX: 0,
+  dodgeWindows: true,
 };
 
 type Listener = () => void;

@@ -180,6 +180,112 @@ pub fn pointer_in_window(win: &WebviewWindow) -> Option<(f64, f64)> {
     Some(((px - origin.1) as f64, (py - origin.2) as f64))
 }
 
+/// How many window buttons the desktop puts on the left and on the right of a title bar
+/// (`button-layout`, e.g. `appmenu:minimize,maximize,close`: none, then three).
+fn button_sides() -> (usize, usize) {
+    use gtk::gio;
+    use gtk::gio::prelude::SettingsExt;
+    let schema = "org.gnome.desktop.wm.preferences";
+    let known = gio::SettingsSchemaSource::default().and_then(|s| s.lookup(schema, true)).is_some();
+    if !known {
+        return (0, 3);
+    }
+    let layout = gio::Settings::new(schema).string("button-layout");
+    let mut sides = layout.splitn(2, ':');
+    let count = |s: &str| s.split(',').filter(|b| matches!(*b, "minimize" | "maximize" | "close")).count();
+    (count(sides.next().unwrap_or("")), count(sides.next().unwrap_or("")))
+}
+
+/// Width and height, in logical px, given to one window button's area and to the title bar.
+const BUTTON_W: i32 = 38;
+const TITLEBAR_H: i32 = 46;
+/// A window whose top edge is lower than this is not up against the top of the screen.
+const TOP_EDGE_REACH: i32 = 64;
+
+/// The areas where a window's buttons are, from its frame `(x, y, w, h)` in root
+/// coordinates: `(left_buttons, right_buttons)` of them at each end of its top edge.
+/// Pure, so it can be tested; empty for a window that is not at the top of the screen.
+pub fn button_areas(frame: (i32, i32, i32, i32), left: usize, right: usize) -> Vec<[i32; 4]> {
+    let (x, y, w, _) = frame;
+    if y > TOP_EDGE_REACH || y < -TITLEBAR_H {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if right > 0 {
+        let width = BUTTON_W * right as i32;
+        out.push([x + w - width, y, width, TITLEBAR_H]);
+    }
+    if left > 0 {
+        out.push([x, y, BUTTON_W * left as i32, TITLEBAR_H]);
+    }
+    out
+}
+
+/// The invisible shadow a GTK window draws around itself, as `(left, right, top, bottom)`:
+/// its frame is that much bigger than what is seen, and its buttons sit inside the visible part.
+fn shadow_extents(w: &gtk::gdk::Window) -> (i32, i32, i32, i32) {
+    let atom = gtk::gdk::Atom::intern("_GTK_FRAME_EXTENTS");
+    let cardinal = gtk::gdk::Atom::intern("CARDINAL");
+    // `length` is in bytes: four 32-bit values.
+    let Some((_, _, data)) = gtk::gdk::property_get(w, &atom, &cardinal, 0, 16, 0) else { return (0, 0, 0, 0) };
+    // GDK hands 32-bit properties back as C longs (8 bytes each on 64-bit).
+    let values: Vec<i32> = match data.len() {
+        32 => data.chunks_exact(8).map(|c| u64::from_ne_bytes(c.try_into().unwrap()) as i32).collect(),
+        16 => data.chunks_exact(4).map(|c| u32::from_ne_bytes(c.try_into().unwrap()) as i32).collect(),
+        _ => return (0, 0, 0, 0),
+    };
+    (values[0].max(0), values[1].max(0), values[2].max(0), values[3].max(0))
+}
+
+/// The button areas of every window up against the top of the screen, in the coordinates of
+/// a window at `(ox, oy)` of size `(own_w, own_h)`; only those that reach into it.
+fn collect_zones(own: Option<&gtk::gdk::Window>, ox: i32, oy: i32, own_w: i32, own_h: i32) -> Vec<[f64; 4]> {
+    use gtk::gdk::WindowState;
+    let Some(screen) = gtk::gdk::Screen::default() else { return Vec::new() };
+    let (left, right) = button_sides();
+    let mut zones = Vec::new();
+    for w in screen.window_stack() {
+        if own.is_some_and(|o| &w == o) || !w.is_visible() {
+            continue;
+        }
+        if w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN) {
+            continue;
+        }
+        let f = w.frame_extents();
+        let (sl, sr, st, sb) = shadow_extents(&w);
+        // What is seen of the window: its frame without the shadow.
+        let visible = (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb);
+        for a in button_areas(visible, left, right) {
+            let (zx, zy) = (a[0] - ox, a[1] - oy);
+            if zx + a[2] > 0 && zx < own_w && zy + a[3] > 0 && zy < own_h {
+                zones.push([f64::from(zx), f64::from(zy), f64::from(a[2]), f64::from(a[3])]);
+            }
+        }
+    }
+    zones
+}
+
+/// Where the buttons of the windows up against the top of the screen are, in the island
+/// window's own coordinates (only those that reach into it). Must run on the main thread.
+pub fn window_button_zones(win: &WebviewWindow) -> Vec<[f64; 4]> {
+    // Debug builds only (compiled out of releases): the test harness has no window manager,
+    // so it states the areas itself, "x,y,w,h;x,y,w,h" in the island window's coordinates.
+    #[cfg(debug_assertions)]
+    if let Ok(list) = std::env::var("COUCOU_TEST_ZONES") {
+        return list
+            .split(';')
+            .filter_map(|z| {
+                let n: Vec<f64> = z.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                (n.len() == 4).then(|| [n[0], n[1], n[2], n[3]])
+            })
+            .collect();
+    }
+    let Ok(gw) = win.gtk_window() else { return Vec::new() };
+    let Some(own) = gw.window() else { return Vec::new() };
+    let (_, ox, oy) = own.origin();
+    collect_zones(Some(&own), ox, oy, own.width(), own.height())
+}
+
 // ── Island window ─────────────────────────────────────────────────────────────
 
 /// The few gtk-layer-shell calls we need, straight from the C library.
@@ -356,6 +462,36 @@ fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
             ));
             gdk_window.input_shape_combine_region(&region, 0, 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    /// Reads the REAL session's windows (read-only, creates nothing): run by hand with
+    /// `DISPLAY=:0 cargo test --lib real_session_probe -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_session_probe() {
+        gtk::init().expect("gtk");
+        let zones = collect_zones(None, 460, 0, 1000, 320);
+        println!("button areas reaching a 1000x320 window at x=460: {zones:?}");
+    }
+
+    #[test]
+    fn buttons_sit_at_the_end_of_the_title_bar_the_layout_names() {
+        // A window tiled to the left half of a 1920 px screen, buttons on the right.
+        let a = button_areas((0, 0, 960, 1080), 0, 3);
+        assert_eq!(a, vec![[960 - 3 * BUTTON_W, 0, 3 * BUTTON_W, TITLEBAR_H]]);
+        // Buttons on the left (macOS style) and a lone close button on the right.
+        let b = button_areas((960, 0, 960, 1080), 3, 1);
+        assert_eq!(b.len(), 2);
+        assert_eq!(b[1], [960, 0, 3 * BUTTON_W, TITLEBAR_H]);
+        // A window floating well below the top edge is not in the way.
+        assert!(button_areas((100, 300, 800, 600), 0, 3).is_empty());
+        // No buttons at all.
+        assert!(button_areas((0, 0, 960, 1080), 0, 0).is_empty());
     }
 }
 

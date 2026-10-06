@@ -49,9 +49,9 @@ export interface ViewLayout {
   agentMode: AgentLayoutMode;
 }
 
-// The window is a fixed 720×320 (largest view) like the macOS panel; the island is
+// The window is a fixed 1000×320 (the largest view is narrower; the rest is room for the island to step aside) like the macOS panel; the island is
 // drawn inside it, glued to the top edge and horizontally centred.
-export const PANEL_W = 720;
+export const PANEL_W = 1000;
 export const PANEL_H = 320;
 
 // No notch on a PC: these are the hidden/compact sizes from docs/SPEC.md.

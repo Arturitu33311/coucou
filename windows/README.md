@@ -232,6 +232,14 @@ What changes on Linux:
   window (drawn over the panel, but the panel keeps the mouse in its strip).
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath.
+- **Stepping aside** (X11, Settings → General → "Step aside"): with the top bar hidden,
+  the buttons of a window tiled beside the middle of the screen end up under the island.
+  Coucou reads where the windows' buttons are (their frame minus the GTK shadow, at the end
+  of the title bar that `button-layout` names) and, when the pointer comes to rest on buttons
+  the island covers from outside it, moves the island to the nearest place that clears them,
+  its mouse area with it. Resting on the island's own body keeps it where it is; it returns
+  to the middle half a second after the pointer leaves the buttons. The window is 1000 px wide
+  so there is room to move (the rest is transparent and takes no mouse).
 - **Mochi's eyes** follow the pointer across the whole screen on X11; on Wayland
   they follow it only while it is over the island, because no app is given the
   cursor position anywhere else.

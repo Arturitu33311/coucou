@@ -49,6 +49,9 @@ pub struct Settings {
     /// (positive = right). Windows tiled beside the middle keep their buttons clear.
     #[serde(default)]
     pub island_offset_x: i32,
+    /// The island steps aside when the pointer goes for the buttons of a window behind it.
+    #[serde(default = "default_true")]
+    pub dodge_windows: bool,
 }
 
 fn default_hover_delay() -> f64 {
@@ -102,6 +105,7 @@ impl Default for Settings {
             open_on_hover: false,
             hover_open_delay: default_hover_delay(),
             island_offset_x: 0,
+            dodge_windows: true,
         }
     }
 }

@@ -558,6 +558,13 @@ function generalSection(): HTMLElement {
       screen,
     ),
     h("div", { class: "row" },
+      h("label", { text: "Step aside" }),
+      toggle(settings.dodgeWindows, (v) => { settings.dodgeWindows = v; void save(); }),
+      h("span", { class: "hint", text:
+        "When you stop the pointer on the buttons of a window the island covers, it moves out of the way " +
+        "(and goes back after). Resting on the island itself keeps it where it is." }),
+    ),
+    h("div", { class: "row" },
       h("label", { text: "Island position" }),
       offset,
       offsetValue,

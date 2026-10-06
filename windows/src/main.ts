@@ -31,6 +31,8 @@ async function main() {
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   // Linux/X11: the pointer anywhere on screen, for Mochi's eyes only.
   await onEvent<{ x: number; y: number }>("gaze", ({ x, y }) => island.onGaze(x, y));
+  // Linux/X11: where the buttons of the windows behind the island are.
+  await onEvent<number[][]>("obstacles", (zones) => island.setObstacles(zones));
 
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {

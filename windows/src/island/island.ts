@@ -22,6 +22,7 @@ import { buildMusicStrip, type MusicHost } from "../views/music";
 import { setBarsWanted } from "./music";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
+import { Dodger, toBoxes, type Box } from "./dodge";
 
 const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
@@ -67,6 +68,13 @@ export class Island {
   private width = new Tracked(NOTCH_W);
   private height = new Tracked(0);
   private radius = new Tracked(ROUNDED_CORNER);
+  /** How far the island has stepped aside for the buttons of a window behind it (see dodge.ts). */
+  private dodge = new Tracked(0);
+  private dodgeTarget = 0;
+  private dodger = new Dodger();
+  private dodgeTimer: number | null = null;
+  private zones: Box[] = [];
+  private pointer: { x: number; y: number } | null = null;
   private botCx = new Spring(46);
   private botCy = new Spring(16);
   private botSize = new Spring(10);
@@ -577,7 +585,8 @@ export class Island {
     this.islandEl.style.width = `${w}px`;
     this.islandEl.style.height = `${hh}px`;
     this.islandEl.style.borderRadius = `0 0 ${r}px ${r}px`;
-    this.islandEl.style.transform = `translateX(-50%)`;
+    const shift = this.dodgeNow(w);
+    this.islandEl.style.transform = `translateX(calc(-50% + ${shift}px))`;
     // These follow the island as it resizes, so they belong here rather than in
     // the state-driven DOM sync.
     this.miniGrid.style.left = `${w - 40 - 14.5}px`;
@@ -591,7 +600,9 @@ export class Island {
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
-    const rect = { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    // The mouse area goes to where the island is headed, not where it is: a click on the
+    // button it stepped away from must reach the button at once.
+    const rect = { x: (PANEL_W - w) / 2 + this.dodgeEnd(w), y: 0, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
@@ -599,11 +610,62 @@ export class Island {
     }
   }
 
-  /** Island rect in window coordinates (origin top-left of the 720×320 window). */
+  /** Island rect in window coordinates (origin top-left of the window). */
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
-    return { x: (PANEL_W - w) / 2, y: 0, w, h: hh };
+    return { x: (PANEL_W - w) / 2 + this.dodgeNow(w), y: 0, w, h: hh };
+  }
+
+  /** The step aside is never more than the window has room for at this width. */
+  private dodgeNow(w: number): number {
+    const room = (PANEL_W - w) / 2;
+    return clamp(this.dodge.value, -room, room);
+  }
+
+  private dodgeEnd(w: number): number {
+    const room = (PANEL_W - w) / 2;
+    return clamp(this.dodgeTarget, -room, room);
+  }
+
+  /** The areas where other windows' buttons are (Linux/X11, from Rust). */
+  setObstacles(zones: number[][]) {
+    const next = toBoxes(zones);
+    // The same areas again (they are repeated every couple of seconds): nothing to do.
+    if (JSON.stringify(next) === JSON.stringify(this.zones)) return;
+    this.zones = next;
+    this.evaluateDodge(performance.now());
+  }
+
+  /**
+   * Decides, from the pointer and the buttons behind the island, whether it steps
+   * aside. Only while minimised: an open island is in use and stays where it is.
+   */
+  private evaluateDodge(now: number) {
+    if (!State.settings.dodgeWindows || State.mode === "hidden") {
+      this.dodger.reset();
+      this.setDodgeTarget(0);
+      return;
+    }
+    if (State.mode !== "compact") return;
+    const w = this.width.value;
+    const rest: Box = { x: (PANEL_W - w) / 2, y: 0, w, h: this.height.value };
+    this.setDodgeTarget(this.dodger.update(now, this.pointer, rest, this.zones, (PANEL_W - w) / 2));
+    // The pointer resting is silence, not an event: look again when the waiting is over.
+    if (this.dodgeTimer != null) window.clearTimeout(this.dodgeTimer);
+    const wait = this.dodger.pending(now);
+    this.dodgeTimer = wait == null ? null : window.setTimeout(() => {
+      this.dodgeTimer = null;
+      this.evaluateDodge(performance.now());
+    }, wait);
+  }
+
+  private setDodgeTarget(target: number) {
+    if (target === this.dodgeTarget) return;
+    void Bridge.log(`dodge ${this.dodgeTarget} -> ${target}`);
+    this.dodgeTarget = target;
+    this.dodge.curveTowards(target, 170);
+    this.ensureRunning();
   }
 
   // ── Window collapse (hidden → tiny wake strip, zero polling) ────────────────
@@ -703,6 +765,8 @@ export class Island {
    */
   onGaze(x: number, y: number) {
     if (State.mode === "hidden") return;
+    this.pointer = { x, y };
+    this.evaluateDodge(performance.now());
     if (this.wasInIsland) {
       // The page learns the pointer left from a mouseout, which a quick move off the
       // window does not always deliver: the island then stayed open until the pointer
@@ -721,6 +785,8 @@ export class Island {
   /** Cursor in window-logical coordinates. */
   onCursor(x: number, y: number) {
     State.mouse = { x, y };
+    this.pointer = x < -5000 ? null : { x, y };
+    this.evaluateDodge(performance.now());
     const rect = this.islandRect();
     State.mouseInIsland = { x: x - rect.x, y: y - rect.y };
 
@@ -836,6 +902,7 @@ export class Island {
     this.width.step(dt, nowMs);
     this.height.step(dt, nowMs);
     this.radius.step(dt, nowMs);
+    this.dodge.step(dt, nowMs);
     this.applyGeometry();
 
     if (this.dirty) {
@@ -881,7 +948,7 @@ export class Island {
     // sweep — so a hidden island went on burning frames in exactly the states it
     // spends most of its life in. Geometry still has to finish retracting.
     const settling =
-      this.width.animating || this.height.animating || this.radius.animating;
+      this.width.animating || this.height.animating || this.radius.animating || this.dodge.animating;
     const busy = State.mode === "hidden"
       ? settling
       : settling ||

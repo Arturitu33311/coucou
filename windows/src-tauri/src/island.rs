@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize
 use crate::platform::{self, cursor_physical, left_button_down};
 
 /// Logical size of the full window — the largest island view, like the macOS panel.
-pub const PANEL_W: f64 = 720.0;
+pub const PANEL_W: f64 = 1000.0;
 pub const PANEL_H: f64 = 320.0;
 /// Logical size of the invisible strip that wakes the island when it is hidden.
 pub const STRIP_W: f64 = 240.0;
@@ -306,6 +306,9 @@ pub fn spawn_gaze_poll(app: AppHandle, gate: Arc<PollGate>) {
     }
     std::thread::spawn(move || {
         let last = Arc::new(Mutex::new((i32::MIN, i32::MIN)));
+        // The areas where other windows' buttons are, sent when they change, 4 times a second.
+        let zones_seen: Arc<Mutex<Vec<[f64; 4]>>> = Arc::new(Mutex::new(Vec::new()));
+        let ticks = Arc::new(std::sync::atomic::AtomicU32::new(0));
         loop {
             gate.wait_until_active();
             while gate.is_active() {
@@ -313,8 +316,25 @@ pub fn spawn_gaze_poll(app: AppHandle, gate: Arc<PollGate>) {
                 // GDK is single-threaded: the read happens on the main thread.
                 let handle = app.clone();
                 let last = last.clone();
+                let zones_seen = zones_seen.clone();
+                let ticks = ticks.clone();
                 let _ = app.run_on_main_thread(move || {
                     let Some(win) = window(&handle) else { return };
+                    let n = ticks.fetch_add(1, Ordering::Relaxed);
+                    if n % 5 == 0 {
+                        let on = handle
+                            .try_state::<crate::Shared>()
+                            .map(|s| s.settings.lock().unwrap().dodge_windows)
+                            .unwrap_or(false);
+                        let zones = if on { platform::window_button_zones(&win) } else { Vec::new() };
+                        let mut seen = zones_seen.lock().unwrap();
+                        // Sent when they change, and again every ~2 s: the page may not have been
+                        // listening yet when they were first read, and a missed one must not stick.
+                        if *seen != zones || n % 40 == 0 {
+                            *seen = zones.clone();
+                            let _ = win.emit("obstacles", zones);
+                        }
+                    }
                     let Some((x, y)) = platform::pointer_in_window(&win) else { return };
                     let key = (x as i32, y as i32);
                     let mut last = last.lock().unwrap();
