@@ -126,6 +126,31 @@ just under it, or sit on the screen edge if the panel is hidden (e.g. with the J
 Perfection extension). So if you also run a music extension that lives in the panel, use
 one of the two.
 
+## Tasks, workspaces and focus insights (Linux)
+
+The Hub (fourth tab of the island) has three tools for the day. All of it stays in
+`~/.local/share/coucou/` and nothing is sent anywhere unless you set a server (see Jinx below).
+
+- **Tasks.** A short to-do list with reminders. The time is read out of the sentence:
+  “llamar a mamá a las 17:30”, “stretch in 20 min”, “mañana 9:00”, “call at 5pm”. At the time,
+  Mochi opens the island with a note and a sound, even if it was shut; **+10m**, **+1h** and **☀**
+  (tomorrow 09:00) snooze it. A reminder is announced once, also across restarts.
+- **Jinx's pendientes.** With a server set in Settings → Hub (and sharing on), the list and Jinx's
+  `pendientes` are one: a task you create is handed to her list (**Jinx ✓**; click the chip to keep
+  one only here), what you tell her appears under **From Jinx**, and finishing a shared task on
+  either side finishes it on the other. Coucou never edits her file: it reads it, and every change
+  goes through her own `pendientes_store` over ssh with a fixed script. The school's Teams
+  assignments are shown but cannot be closed from here (her own job mirrors them). A change that
+  cannot reach her is retried at the next sync, which runs at start and then once a minute while the
+  Tasks tab is open (nothing runs when it is not).
+- **Focus insights** (Pomodoro tab → **Insights**). Your best two hours in a row, the focus
+  minutes by hour of the day, the share of sessions you finish and your most focused weekday, over
+  the last 30 days. They appear after 10 sessions: with fewer it would be an accident, not a habit.
+- **Workspaces.** A named set of apps, folders and links that open together with one click
+  (“Study”, “Work”). Apps are chosen from the installed ones (system, Flatpak and Snap launchers) and
+  started through their own launcher; folders and links through `gio open`. Nothing runs through a
+  shell, and a launched app does not inherit what Coucou's own launcher sets.
+
 ## Chat and keys
 
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
