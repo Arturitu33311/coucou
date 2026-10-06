@@ -260,6 +260,24 @@ async fn chat_send(
     claude::send(&chat, &model, query, context).await
 }
 
+/// An audio file the user chose for a sound, as base64 (the page decodes it). Only audio
+/// files, and nothing large: it is a short sound, not a library.
+#[tauri::command]
+fn read_sound(path: String) -> Result<String, String> {
+    const MAX: u64 = 6 * 1024 * 1024;
+    let p = std::path::Path::new(&path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    if !["wav", "ogg", "oga", "mp3", "flac", "opus", "m4a", "aac"].contains(&ext.as_str()) {
+        return Err("Choose an audio file (wav, ogg, mp3, flac, opus or m4a)".into());
+    }
+    let meta = std::fs::metadata(p).map_err(|_| "That file cannot be read".to_string())?;
+    if !meta.is_file() || meta.len() > MAX {
+        return Err("The sound must be a file under 6 MB".into());
+    }
+    let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+    Ok(claude::base64_for(&bytes))
+}
+
 // ── Jinx (Hermes) ─────────────────────────────────────────────────────────────
 
 /// Starts a run; the reply, tool calls and approval requests arrive as `jinx` events.
@@ -484,6 +502,7 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            read_sound,
             agents_list,
             rate_limits,
             agent_messages,

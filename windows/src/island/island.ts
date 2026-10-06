@@ -1150,6 +1150,7 @@ export class Island {
   applySettings() {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
+    Sound.setFinish(State.settings.finishSound, State.settings.finishSoundFile);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     State.notify();
   }

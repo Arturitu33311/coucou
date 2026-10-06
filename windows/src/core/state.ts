@@ -199,6 +199,9 @@ export interface Settings {
   islandOffsetX: number;
   /** The island steps aside when the pointer goes for the buttons of a window behind it. */
   dodgeWindows: boolean;
+  /** The sound for "an agent finished": a built-in name, "none", or "file" (finishSoundFile). */
+  finishSound: string;
+  finishSoundFile: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -222,6 +225,8 @@ export const DEFAULT_SETTINGS: Settings = {
   hoverOpenDelay: 0.9,
   islandOffsetX: 0,
   dodgeWindows: true,
+  finishSound: "finish",
+  finishSoundFile: "",
 };
 
 type Listener = () => void;

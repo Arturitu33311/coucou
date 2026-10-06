@@ -118,6 +118,8 @@ export const Bridge = {
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
   agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
+  /** An audio file the user chose, as base64. */
+  readSound: (path: string) => callOrThrow<string>("read_sound", { path }),
   /** Starts a Jinx run; the answer streams back as `jinx` events. */
   jinxSend: (text: string, context: ChatContext | null) => callOrThrow<void>("jinx_send", { text, context }),
   jinxApprove: (runId: string, requestId: string, choice: "once" | "session" | "always" | "deny") =>

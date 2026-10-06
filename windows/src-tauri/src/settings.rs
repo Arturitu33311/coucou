@@ -52,6 +52,16 @@ pub struct Settings {
     /// The island steps aside when the pointer goes for the buttons of a window behind it.
     #[serde(default = "default_true")]
     pub dodge_windows: bool,
+    /// The sound for "an agent finished": one of the built-in names, "none", or "file".
+    #[serde(default = "default_finish_sound")]
+    pub finish_sound: String,
+    /// The audio file used when `finish_sound` is "file".
+    #[serde(default)]
+    pub finish_sound_file: String,
+}
+
+fn default_finish_sound() -> String {
+    "finish".into()
 }
 
 fn default_hover_delay() -> f64 {
@@ -106,6 +116,8 @@ impl Default for Settings {
             hover_open_delay: default_hover_delay(),
             island_offset_x: 0,
             dodge_windows: true,
+            finish_sound: default_finish_sound(),
+            finish_sound_file: String::new(),
         }
     }
 }

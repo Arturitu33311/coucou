@@ -489,6 +489,71 @@ function hoverDelayControls(): HTMLElement[] {
   return [slider, value];
 }
 
+/** The "finished" sound: a built-in, none, or a file of your own, with a preview. */
+function finishSoundRow(): HTMLElement {
+  const names = [
+    "finish", "approve", "proud", "pop", "wink", "greet", "tick", "love", "attach", "send", "blip",
+    "peek", "open", "close", "hover", "slap", "annoyed", "dizzy", "work", "error", "approval",
+    "question", "gulp", "think", "search", "rate", "sleep", "yawn",
+  ];
+  const choice = h("select", {}) as HTMLSelectElement;
+  choice.append(
+    h("option", { value: "finish", text: "Default" }),
+    h("option", { value: "none", text: "No sound" }),
+    h("option", { value: "file", text: "My own file…" }),
+  );
+  for (const n of names.filter((x) => x !== "finish")) choice.append(h("option", { value: n, text: n }));
+  const known = ["none", "file", ...names];
+  choice.value = known.includes(settings.finishSound) ? settings.finishSound : "finish";
+
+  const file = h("input", {
+    type: "text", placeholder: "/path/to/sound.wav (wav, ogg, mp3, flac)", spellcheck: "false",
+    value: settings.finishSoundFile ?? "", style: "flex:1 1 auto;min-width:0",
+  }) as HTMLInputElement;
+  const note = h("span", { class: "hint", text: "" });
+  const play = h("button", { text: "▶ Preview" });
+  const syncVisibility = () => {
+    file.style.display = choice.value === "file" ? "" : "none";
+    play.style.display = choice.value === "none" ? "none" : "";
+  };
+  syncVisibility();
+
+  let preview: HTMLAudioElement | null = null;
+  async function previewSound() {
+    note.textContent = "";
+    try {
+      preview?.pause();
+      let url: string;
+      if (choice.value === "file") {
+        const b64 = await Bridge.readSound(file.value.trim());
+        url = URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))]));
+      } else {
+        url = `/sounds/${choice.value}.wav`;
+      }
+      preview = new Audio(url);
+      // The island plays through a gain of this value; the same level here.
+      preview.volume = Math.max(0.05, Math.min(1, settings.soundVolume * 2));
+      await preview.play();
+    } catch (err) {
+      note.textContent = String(err).replace(/^Error:\s*/, "");
+    }
+  }
+  play.addEventListener("click", () => void previewSound());
+  choice.addEventListener("change", () => {
+    syncVisibility();
+    settings.finishSound = choice.value;
+    void save();
+    if (choice.value !== "file") void previewSound();
+  });
+  file.addEventListener("change", () => {
+    settings.finishSoundFile = file.value.trim();
+    void save();
+    if (choice.value === "file") void previewSound();
+  });
+
+  return h("div", { class: "row" }, h("label", { text: "Finished sound" }), choice, file, play, note);
+}
+
 function generalSection(): HTMLElement {
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
@@ -548,6 +613,7 @@ function generalSection(): HTMLElement {
       toggle(settings.soundEnabled, (v) => { settings.soundEnabled = v; void save(); }),
       volume,
     ),
+    finishSoundRow(),
     h("div", { class: "row" },
       h("label", { text: "Auto-close" }),
       autoClose,

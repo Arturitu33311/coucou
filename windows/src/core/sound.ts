@@ -1,3 +1,5 @@
+import { Bridge } from "./bridge";
+
 // SoundEngine — port of SoundEngine.swift.
 // The 28 WAVs are the macOS app's own files (see SOUNDS_DIR in vite.config.ts);
 // they are served at /sounds/<name>.wav. Default volume 0.12, slider range 0–0.2,
@@ -12,6 +14,14 @@ export const SOUND_NAMES = [
 
 export type SoundName = (typeof SOUND_NAMES)[number];
 
+/** The bytes of a base64 string. */
+function bytesOf(b64: string): ArrayBuffer {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
 class SoundEngine {
   enabled = true;
   volume = 0.12;
@@ -21,6 +31,9 @@ class SoundEngine {
   private buffers = new Map<string, AudioBuffer>();
   private loading: Promise<void> | null = null;
   private idleTimer: number | null = null;
+  /** What "an agent finished" sounds like: a built-in name, "none", or the user's own file. */
+  private finishChoice = "finish";
+  private finishFile: AudioBuffer | null = null;
 
   /** Creates the context and decodes every WAV. Safe to call more than once. */
   preload(): Promise<void> {
@@ -84,11 +97,37 @@ class SoundEngine {
     this.enabled = on;
   }
 
+  /**
+   * The sound played wherever the island says "finished" (a Claude Code turn ended, Jinx
+   * answered, an integration succeeded). `file` is read only when the choice is "file".
+   */
+  setFinish(choice: string, file: string) {
+    this.finishChoice = choice || "finish";
+    this.finishFile = null;
+    if (this.finishChoice !== "file" || !file) return;
+    const wanted = file;
+    void Promise.all([this.preload(), Bridge.readSound(wanted)])
+      .then(async ([, b64]) => {
+        const buf = await this.ctx?.decodeAudioData(bytesOf(b64));
+        // A later choice may have replaced this one while it was decoding.
+        if (buf && this.finishChoice === "file") this.finishFile = buf;
+      })
+      .catch(() => {
+        /* an unreadable file falls back to the built-in sound */
+      });
+  }
+
   play(name: SoundName | string) {
     if (!this.enabled) return;
+    let buf: AudioBuffer | undefined;
+    if (name === "finish") {
+      if (this.finishChoice === "none") return;
+      if (this.finishChoice === "file" && this.finishFile) buf = this.finishFile;
+      else if (this.finishChoice !== "file") name = this.finishChoice;
+    }
     const ctx = this.ctx;
     const master = this.master;
-    const buf = this.buffers.get(name);
+    buf ??= this.buffers.get(name);
     if (!ctx || !master || !buf) return;
     if (this.idleTimer != null) {
       window.clearTimeout(this.idleTimer);
