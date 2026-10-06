@@ -5,7 +5,7 @@
 // the file being sucked in. The island's own Mochi is hidden for the duration,
 // exactly as on macOS, because this canvas draws its own.
 
-import { JINX_ID, State } from "../core/state";
+import { State } from "../core/state";
 import {
   USC, eIn, eInOut, eOut, lerp, progressAt,
   type UploadEyeShape, type UploadFrame,
@@ -71,8 +71,8 @@ export interface UploadCanvasActions {
 type ChooseKey = "ask" | "jinx" | "school" | "drive" | "cancel";
 
 /**
- * Where the choose buttons sit, [x, width] (width 0 = not offered): the school's OneDrive,
- * Google Drive and Jinx, then Cancel; "Ask Mochi" joins them only when Mochi has an API key.
+ * Where the choose buttons sit, [x, width] (width 0 = not offered): the school's OneDrive and
+ * Google Drive, then Cancel. The Jinx and Mochi buttons exist but are off (pass true to bring them back).
  */
 function chooseLayout(jinxOn: boolean, mochiOn: boolean): Record<ChooseKey, [number, number]> {
   const lay: Record<ChooseKey, [number, number]> = { ask: [0, 0], jinx: [0, 0], school: [0, 0], drive: [0, 0], cancel: [0, 0] };
@@ -151,7 +151,7 @@ export class UploadCanvas {
 
     // The buttons only exist once the choose card has faded in.
     this.overlay.style.display = f.chooseAlpha > 0.5 ? "block" : "none";
-    const lay = chooseLayout(State.tasks.some((t) => t.id === JINX_ID), State.mochiApi === true);
+    const lay = chooseLayout(false, false);
     for (const [key, el] of Object.entries(this.hits) as [ChooseKey, HTMLButtonElement][]) {
       el.style.left = `${lay[key][0]}px`;
       el.style.width = `${lay[key][1]}px`;
@@ -314,8 +314,7 @@ export class UploadCanvas {
     text(ctx, `${name} is ready.`, 114, 80, `600 14px ${FONT}`, "#F5F6F8");
     text(ctx, State.uploadStatus || "What do you want to do with it?", 114, 100, `400 12.5px ${FONT}`, "#9398A1");
 
-    const jinxOn = State.tasks.some((t) => t.id === JINX_ID);
-    const lay = chooseLayout(jinxOn, State.mochiApi === true);
+    const lay = chooseLayout(false, false);
     if (lay.ask[1] > 0) {
       ctx.fillStyle = "#F5F6F8";
       rr(ctx, lay.ask[0], 113, lay.ask[1], 26, 13);
@@ -323,7 +322,7 @@ export class UploadCanvas {
       text(ctx, "Ask Mochi", lay.ask[0] + lay.ask[1] / 2, 126, `500 12.5px ${FONT}`, "#0B0C0E", "center");
     }
 
-    if (jinxOn) {
+    if (lay.jinx[1] > 0) {
       ctx.fillStyle = "#39FF14";
       rr(ctx, lay.jinx[0], 113, lay.jinx[1], 26, 13);
       ctx.fill();
