@@ -32,7 +32,22 @@ pub struct Stats {
     /// The hour of the day with most completed sessions over the last 30 days.
     pub peak_hour: Option<u32>,
     pub total_sessions: u32,
+    /// Focus minutes of the last 30 days by hour of the day, by when each period began
+    /// (a period that crosses an hour is shared between the two).
+    pub hour_minutes: [u32; 24],
+    /// The same minutes by weekday, Monday first.
+    pub weekday_minutes: [u32; 7],
+    /// Share (0–100) of the focus periods of the last 30 days that ran to their end.
+    pub completion_pct: Option<u32>,
+    /// Focus periods of the last 30 days (finished or not).
+    pub periods_30d: u32,
+    /// Where the best two hours in a row start ("sharpest 9–11"). Not given until there are
+    /// MIN_PERIODS periods to go on: with three sessions it would be an accident, not a habit.
+    pub best_window: Option<u32>,
 }
+
+/// Periods needed before the best window is called a habit.
+pub const MIN_PERIODS: u32 = 10;
 
 fn path() -> PathBuf {
     settings::local_dir().join("pomodoro.jsonl")
@@ -81,6 +96,20 @@ pub fn read_entries() -> Vec<Entry> {
         .collect()
 }
 
+/// Adds `seconds` of focus that began at `start` to the hour buckets, minute by minute's worth:
+/// a period from 09:45 for 50 minutes puts 15 minutes in the 9 o'clock and 35 in the 10.
+fn spread(start: i64, seconds: u32, offset: &dyn Fn(i64) -> i64, hours: &mut [u32; 24]) {
+    let mut at = start;
+    let end = start + seconds as i64;
+    while at < end {
+        let local = at + offset(at);
+        let into_hour = local.rem_euclid(3600);
+        let take = (3600 - into_hour).min(end - at);
+        hours[(local.rem_euclid(86_400) / 3600) as usize] += (take / 60) as u32;
+        at += take;
+    }
+}
+
 pub fn stats() -> Stats {
     compute(&read_entries(), now(), &local_offset)
 }
@@ -92,9 +121,18 @@ pub fn compute(entries: &[Entry], now: i64, offset: &dyn Fn(i64) -> i64) -> Stat
     let mut s = Stats::default();
     let mut days_with_session = std::collections::BTreeSet::new();
     let mut hours = [0u32; 24];
+    let mut finished = 0u32;
     for e in entries.iter().filter(|e| e.kind == "focus") {
         let d = day(e.ts);
         let age = today - d;
+        if (0..30).contains(&age) {
+            s.periods_30d += 1;
+            finished += e.completed as u32;
+            let start = e.ts - e.seconds as i64;
+            spread(start, e.seconds, offset, &mut s.hour_minutes);
+            let started_day = (start + offset(start)).div_euclid(86_400);
+            s.weekday_minutes[(started_day + 3).rem_euclid(7) as usize] += e.seconds / 60;
+        }
         if (0..7).contains(&age) {
             s.week_minutes[(6 - age) as usize] += e.seconds / 60;
         }
@@ -117,6 +155,16 @@ pub fn compute(entries: &[Entry], now: i64, offset: &dyn Fn(i64) -> i64) -> Stat
     while days_with_session.contains(&d) {
         s.streak += 1;
         d -= 1;
+    }
+    if s.periods_30d > 0 {
+        s.completion_pct = Some((finished * 100 + s.periods_30d / 2) / s.periods_30d);
+    }
+    if s.periods_30d >= MIN_PERIODS {
+        let pair = |h: usize| s.hour_minutes[h] + s.hour_minutes[h + 1];
+        let top = (0..23).map(pair).max().unwrap_or(0);
+        if top > 0 {
+            s.best_window = (0..23).find(|&h| pair(h) == top).map(|h| h as u32);
+        }
     }
     let best = hours.iter().copied().max().unwrap_or(0);
     if best > 0 {
@@ -171,6 +219,44 @@ mod tests {
         let s = compute(&[focus(now, 25, true), focus(now - 3600, 25, true)], now, &|_| 2 * 3600);
         assert_eq!(s.today_sessions, 2);
         assert_eq!(s.peak_hour, Some(0), "00:30 and 01:30 local tie: the earliest hour wins");
+    }
+
+    #[test]
+    fn a_period_is_shared_between_the_hours_it_crosses() {
+        let mut h = [0u32; 24];
+        // Began 09:45, 50 minutes.
+        spread(9 * 3600 + 45 * 60, 50 * 60, &|_| 0, &mut h);
+        assert_eq!((h[9], h[10]), (15, 35));
+        assert_eq!(h.iter().sum::<u32>(), 50);
+        // Across midnight at UTC+2: 22:30 UTC is 00:30 local.
+        let mut h = [0u32; 24];
+        spread(22 * 3600 + 1800, 60 * 60, &|_| 2 * 3600, &mut h);
+        assert_eq!((h[0], h[1]), (30, 30));
+    }
+
+    #[test]
+    fn the_habits_wait_for_enough_sessions_then_name_the_best_two_hours() {
+        let now = 100 * DAY + 20 * 3600;
+        // A 25-minute period that began at `hour`:00, `ago` days back (the log holds when it ended).
+        let at = |ago: i64, hour: i64, completed: bool| focus(now - ago * DAY - 20 * 3600 + hour * 3600 + 25 * 60, 25, completed);
+        // Nine periods: too few to call anything a habit, but the counts are there.
+        let few: Vec<Entry> = (1..=9).map(|d| at(d, 9, true)).collect();
+        let s = compute(&few, now, &|_| 0);
+        assert_eq!(s.periods_30d, 9);
+        assert_eq!(s.best_window, None);
+        assert_eq!(s.completion_pct, Some(100));
+        // Twelve: eight at 09:00 that ran to their end, four at 10:00 that did not.
+        let mut many: Vec<Entry> = (1..=8).map(|d| at(d, 9, true)).collect();
+        many.extend((1..=4).map(|d| at(d, 10, false)));
+        let s = compute(&many, now, &|_| 0);
+        assert_eq!(s.periods_30d, 12);
+        assert_eq!(s.completion_pct, Some(67), "8 of 12 ran to their end");
+        assert_eq!((s.hour_minutes[9], s.hour_minutes[10]), (200, 100));
+        assert_eq!(s.best_window, Some(9), "09:00–11:00 holds 300 minutes, more than 08:00–10:00's 200");
+        assert_eq!(s.weekday_minutes.iter().sum::<u32>(), 300, "every minute is on some weekday");
+        // Day 100 is a Saturday: 1970-01-01 was a Thursday, and Monday is 0.
+        let sat = compute(&[focus(100 * DAY + 3600, 25, true)], 100 * DAY + 7200, &|_| 0);
+        assert_eq!(sat.weekday_minutes[5], 25);
     }
 
     #[test]

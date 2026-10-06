@@ -43,7 +43,18 @@ export interface PomoStats {
   streak: number;
   peakHour: number | null;
   totalSessions: number;
+  hourMinutes: number[];
+  weekdayMinutes: number[];
+  completionPct: number | null;
+  periods30d: number;
+  /** Where the best two hours in a row start; null until there is enough to go on. */
+  bestWindow: number | null;
 }
+
+/** Periods needed before the habits are shown (the same number pomodoro.rs waits for). */
+const MIN_PERIODS = 10;
+const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const hh = (n: number) => `${String(n).padStart(2, "0")}:00`;
 
 let st: PState = load();
 let timer: number | null = null;
@@ -219,6 +230,20 @@ function build(): HubHost {
   const streak = h("div", { class: "pm-stat dim", text: "" });
   const week = h("div", { class: "pm-week" });
   const peak = h("div", { class: "pm-stat dim", text: "" });
+  const toggle = h("button", { class: "hub-btn sm pm-toggle", text: "Insights ▸" });
+  const hourBars = Array.from({ length: 24 }, () => h("i"));
+  const hoursEl = h("div", { class: "pm-hours" }, ...hourBars);
+  const axis = h("div", { class: "pm-axis" }, h("span", { text: "0" }), h("span", { text: "6" }), h("span", { text: "12" }), h("span", { text: "18" }), h("span", { text: "24" }));
+  const habit = h("div", { class: "pm-stat" });
+  const habit2 = h("div", { class: "pm-stat dim" });
+  const habit3 = h("div", { class: "pm-stat dim" });
+  const insights = h("div", { class: "pm-ins" }, habit, hoursEl, axis, habit2, habit3);
+  insights.style.display = "none";
+  let showInsights = false;
+  toggle.addEventListener("click", () => {
+    showInsights = !showInsights;
+    render();
+  });
 
   main.addEventListener("click", startPause);
   skipBtn.addEventListener("click", skip);
@@ -235,7 +260,7 @@ function build(): HubHost {
     "div",
     { class: "pm" },
     h("div", { class: "pm-left" }, time, phase, h("div", { class: "pm-btns" }, main, skipBtn, resetBtn), presets),
-    h("div", { class: "pm-right" }, today, streak, week, peak),
+    h("div", { class: "pm-right" }, h("div", { class: "pm-stats" }, today, streak, week, peak), insights, toggle),
   );
 
   let tick: number | null = null;
@@ -261,7 +286,30 @@ function build(): HubHost {
         b.classList.toggle("today", i === 6);
       });
       peak.textContent = stats.peakHour == null ? "" : `Best hour: ${String(stats.peakHour).padStart(2, "0")}:00`;
+      renderInsights(stats);
     }
+    toggle.textContent = showInsights ? "◂ Stats" : "Insights ▸";
+    (el.querySelector(".pm-stats") as HTMLElement).style.display = showInsights ? "none" : "";
+    insights.style.display = showInsights ? "" : "none";
+  }
+
+  function renderInsights(st: PomoStats) {
+    const max = Math.max(1, ...st.hourMinutes);
+    hourBars.forEach((b, i) => {
+      b.style.height = `${Math.max(2, Math.round((st.hourMinutes[i] / max) * 30))}px`;
+      b.title = `${hh(i)}: ${st.hourMinutes[i]} min`;
+      b.classList.toggle("best", st.bestWindow != null && (i === st.bestWindow || i === st.bestWindow + 1));
+    });
+    if (st.periods30d < MIN_PERIODS) {
+      habit.textContent = `Your focus habits show up after ${MIN_PERIODS} sessions`;
+      habit2.textContent = `${st.periods30d} in the last 30 days so far`;
+      habit3.textContent = "";
+      return;
+    }
+    habit.textContent = st.bestWindow == null ? "" : `You focus best ${hh(st.bestWindow)}–${hh(st.bestWindow + 2)}`;
+    habit2.textContent = st.completionPct == null ? "" : `You finish ${st.completionPct}% of your sessions`;
+    const top = st.weekdayMinutes.reduce((best, m, i) => (m > st.weekdayMinutes[best] ? i : best), 0);
+    habit3.textContent = st.weekdayMinutes[top] > 0 ? `Most focused day: ${DAYS[top]} · last 30 days` : "";
   }
 
   return {

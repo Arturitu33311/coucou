@@ -110,3 +110,10 @@
 .tk-box.on { background: #4ADE80; border-color: #4ADE80; }
 .tk-done { text-decoration: line-through; opacity: 0.45; }
 .tk-late { color: #F5A524; opacity: 1; }
+.pm-right { position: relative; }
+.pm-toggle { margin-top: 6px; }
+.pm-ins { display: flex; flex-direction: column; gap: 2px; }
+.pm-hours { display: flex; align-items: flex-end; gap: 1.5px; height: 32px; }
+.pm-hours i { flex: 1 1 0; min-width: 0; background: rgba(129,140,248,0.45); border-radius: 1.5px; }
+.pm-hours i.best { background: #4ADE80; }
+.pm-axis { display: flex; justify-content: space-between; font-size: 8px; opacity: 0.4; margin-bottom: 3px; }
