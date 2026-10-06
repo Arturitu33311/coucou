@@ -58,6 +58,17 @@ pub struct Settings {
     /// The audio file used when `finish_sound` is "file".
     #[serde(default)]
     pub finish_sound_file: String,
+    /// The Hub's Server tab reads this machine over ssh ("" = none): an alias from ~/.ssh/config
+    /// or user@host, with key authentication.
+    #[serde(default)]
+    pub server_host: String,
+    /// The systemd services the Server tab shows, comma separated.
+    #[serde(default = "default_server_services")]
+    pub server_services: String,
+}
+
+fn default_server_services() -> String {
+    "hermes-gateway,ollama,docker,tailscaled,smbd".into()
 }
 
 fn default_finish_sound() -> String {
@@ -118,6 +129,8 @@ impl Default for Settings {
             dodge_windows: true,
             finish_sound: default_finish_sound(),
             finish_sound_file: String::new(),
+            server_host: String::new(),
+            server_services: default_server_services(),
         }
     }
 }

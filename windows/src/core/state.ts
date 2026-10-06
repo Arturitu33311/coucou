@@ -202,6 +202,9 @@ export interface Settings {
   /** The sound for "an agent finished": a built-in name, "none", or "file" (finishSoundFile). */
   finishSound: string;
   finishSoundFile: string;
+  /** The Hub's Server tab reads this machine over ssh ("" = none). */
+  serverHost: string;
+  serverServices: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -227,6 +230,8 @@ export const DEFAULT_SETTINGS: Settings = {
   dodgeWindows: true,
   finishSound: "finish",
   finishSoundFile: "",
+  serverHost: "",
+  serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
 };
 
 type Listener = () => void;
@@ -270,6 +275,14 @@ class AppState {
   mochiApi: boolean | null = null;
   /** Claude Code's usage limits (percent used), when known. */
   limits: { five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null = null;
+  /** The Hub's sub-tab in front (remembered). */
+  hubTab: string = (() => {
+    try {
+      return window.localStorage.getItem("coucou.hubTab") || "system";
+    } catch {
+      return "system";
+    }
+  })();
   /** The chat has chosen its first target for this opening. */
   chatPicked = false;
   jinxHistory: ChatMessage[] = [];

@@ -3,6 +3,7 @@
 import "./style.css";
 import "./music.css";
 import "./jinx.css";
+import "./hub/hub.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
@@ -11,6 +12,14 @@ import { registerHookHandlers } from "./island/hooks";
 import { registerJinxHandlers } from "./island/jinx";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
+
+// A script error must not vanish into a webview nobody is looking at: it goes to the log.
+window.addEventListener("error", (e) => {
+  void Bridge.log(`js error: ${e.message} (${e.filename?.split("/").pop()}:${e.lineno})`);
+});
+window.addEventListener("unhandledrejection", (e) => {
+  void Bridge.log(`js rejection: ${String((e.reason && (e.reason.stack || e.reason.message)) ?? e.reason).slice(0, 300)}`);
+});
 
 async function main() {
   const root = document.getElementById("root");

@@ -14,6 +14,7 @@ mod pipe;
 mod platform;
 mod secrets;
 mod settings;
+mod sysmon;
 mod tray;
 
 use std::process::Command;
@@ -278,6 +279,27 @@ fn read_sound(path: String) -> Result<String, String> {
     Ok(claude::base64_for(&bytes))
 }
 
+// ── Hub: system and server vitals (see sysmon.rs) ─────────────────────────────
+
+#[tauri::command]
+async fn sys_sample() -> Result<sysmon::Vitals, String> {
+    tauri::async_runtime::spawn_blocking(sysmon::local).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn server_sample(shared: State<'_, Shared>) -> Result<sysmon::Vitals, String> {
+    let (host, services) = {
+        let s = shared.settings.lock().unwrap();
+        (s.server_host.clone(), s.server_services.clone())
+    };
+    if host.trim().is_empty() {
+        return Err("not-configured".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || sysmon::remote(host.trim(), &services))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ── Jinx (Hermes) ─────────────────────────────────────────────────────────────
 
 /// Starts a run; the reply, tool calls and approval requests arrive as `jinx` events.
@@ -503,6 +525,8 @@ pub fn run() {
             chat_send,
             chat_reset,
             read_sound,
+            sys_sample,
+            server_sample,
             agents_list,
             rate_limits,
             agent_messages,

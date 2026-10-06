@@ -23,6 +23,7 @@ import { setBarsWanted } from "./music";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { Dodger, toBoxes, type Box } from "./dodge";
+import { hubTyping, syncHubRuntime } from "../hub/hub";
 
 const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
@@ -73,6 +74,7 @@ export class Island {
   private dodgeTarget = 0;
   private dodger = new Dodger();
   private dodgeTimer: number | null = null;
+  private lastWantsKeys = false;
   private zones: Box[] = [];
   private pointer: { x: number; y: number } | null = null;
   private botCx = new Spring(46);
@@ -1096,16 +1098,22 @@ export class Island {
 
     // The chat is the only view with a text field, so it is the only time the
     // island is allowed to take keyboard focus.
-    if (this.lastSyncedView !== State.view) {
-      const wasChat = this.lastSyncedView === "prompt";
+    // The chat, and a Hub tool with a text field (Notes), are the only times it is.
+    const wantsKeys = State.view === "prompt" || (State.view === "tool" && hubTyping());
+    if (this.lastSyncedView !== State.view || this.lastWantsKeys !== wantsKeys) {
+      const hadKeys = this.lastWantsKeys;
       this.lastSyncedView = State.view;
-      if (State.view === "prompt") {
+      this.lastWantsKeys = wantsKeys;
+      if (wantsKeys) {
         void Bridge.focusWindow(true);
-        window.setTimeout(() => this.views.get("prompt")?.focus?.(), 120);
-      } else if (wasChat) {
+        const view = State.view;
+        window.setTimeout(() => this.views.get(view)?.focus?.(), 120);
+      } else if (hadKeys) {
         void Bridge.focusWindow(false);
       }
     }
+    // A Hub tool reads its source only while its panel is on screen.
+    syncHubRuntime();
 
     // cava (the real-time bars) runs only while they can be seen and music plays.
     const musicOnScreen =

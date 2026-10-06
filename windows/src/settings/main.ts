@@ -554,6 +554,38 @@ function finishSoundRow(): HTMLElement {
   return h("div", { class: "row" }, h("label", { text: "Finished sound" }), choice, file, play, note);
 }
 
+/** The Hub's sources: the server it reads over ssh. */
+function hubSection(): HTMLElement {
+  const host = h("input", {
+    type: "text", placeholder: "server  (a name from ~/.ssh/config, or user@host)", spellcheck: "false",
+    value: settings.serverHost ?? "", style: "flex:1 1 auto;min-width:0",
+  }) as HTMLInputElement;
+  host.addEventListener("change", () => {
+    settings.serverHost = host.value.trim();
+    void save();
+  });
+  const services = h("input", {
+    type: "text", placeholder: "hermes-gateway,ollama,docker", spellcheck: "false",
+    value: settings.serverServices ?? "", style: "flex:1 1 auto;min-width:0",
+  }) as HTMLInputElement;
+  services.addEventListener("change", () => {
+    settings.serverServices = services.value.trim();
+    void save();
+  });
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Hub" })),
+    h("div", { class: "hint", text:
+      "The Hub (the fourth tab of the island) shows this computer's vitals, your server's, a Pomodoro timer, " +
+      "notes, your calendar, the weather, a file shelf and quick switches. It reads nothing while it is closed." }),
+    h("div", { class: "row" }, h("label", { text: "Server" }), host,
+      h("span", { class: "hint", text: "read over ssh with your key; nothing is installed there" })),
+    h("div", { class: "row" }, h("label", { text: "Services" }), services,
+      h("span", { class: "hint", text: "systemd units shown on the Server tab" })),
+  );
+}
+
 function generalSection(): HTMLElement {
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
@@ -670,6 +702,7 @@ async function main() {
     apiSection(hasKey),
     integrationsSection(present),
     musicSection(),
+    hubSection(),
     generalSection(),
     h("div", {
       class: "hint",

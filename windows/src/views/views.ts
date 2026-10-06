@@ -14,6 +14,7 @@ import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { buildMusicCompact, buildMusicView } from "./music";
 import { buildJinxCard } from "./jinx";
+import { buildHub } from "../hub/hub";
 import { musicTint } from "../island/music";
 
 export interface ViewActions {
@@ -92,6 +93,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
   const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabHub = h("button", { class: "tab", title: "Hub", onclick: () => go("tool") }, svg(ICONS.hub, 13));
 
   const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));
   const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
@@ -104,7 +106,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop, tabHub),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -115,6 +117,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabHub.classList.toggle("on", v === "tool");
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -659,6 +662,7 @@ export function buildViews(
   map.set("approval", buildApproval(actions));
   map.set("question", buildQuestion(actions));
   map.set("music", buildMusicView(actions));
+  map.set("tool", buildHub(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());

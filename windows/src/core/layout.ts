@@ -10,6 +10,8 @@ export type IslandViewName =
   | "approval"
   | "question"
   | "music"
+  // The Hub: sub-tabs of small tools (system, pomodoro, notes, calendar…).
+  | "tool"
   | "error"
   | "finished"
   | "confused"
@@ -75,6 +77,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   question: { height: 240, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   // The full Music view: Mochi on the left, the art next to it, then the lyrics.
   music: { height: 200, botX: 62, botY: null, botDiameter: 56, agentMode: "none" },
+  tool: { height: 214, botX: 54, botY: null, botDiameter: 44, agentMode: "none" },
   error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   finished: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   confused: { height: 160, botX: 76, botY: null, botDiameter: 66, agentMode: "column" },

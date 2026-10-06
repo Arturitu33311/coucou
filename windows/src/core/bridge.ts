@@ -118,6 +118,9 @@ export const Bridge = {
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
   agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
+  // The Hub: vitals of this computer and of the server (over ssh).
+  sysSample: () => call<import("../hub/system").Vitals>("sys_sample"),
+  serverSample: () => callOrThrow<import("../hub/system").Vitals>("server_sample"),
   /** An audio file the user chose, as base64. */
   readSound: (path: string) => callOrThrow<string>("read_sound", { path }),
   /** Starts a Jinx run; the answer streams back as `jinx` events. */

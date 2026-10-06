@@ -400,6 +400,20 @@ pub fn make_non_activating(win: &WebviewWindow) {
 ///   * `or`: an override-redirect window. mutter never manages it (no placement,
 ///     no tiling, no focus handling) and draws it in the group above the Shell's
 ///     own UI, so it can sit on the very edge of the screen over the panel.
+/// The window type the island rests in for a `COUCOU_X11_MODE`.
+fn resting_hint(mode: &str) -> Option<gtk::gdk::WindowTypeHint> {
+    use gtk::gdk::WindowTypeHint as T;
+    Some(match mode {
+        "utility" => T::Utility,
+        "notification" => T::Notification,
+        "dock" => T::Dock,
+        "splash" => T::Splashscreen,
+        "popup" => T::PopupMenu,
+        "tooltip" => T::Tooltip,
+        _ => return None,
+    })
+}
+
 fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
     // The island is an overlay, not a window to switch to: keep it out of the
     // overview (Super), Alt+Tab and the dock whatever the window type ends up being.
@@ -407,14 +421,13 @@ fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
     gw.set_skip_pager_hint(true);
     let mode = std::env::var("COUCOU_X11_MODE").unwrap_or_default();
     match mode.as_str() {
-        "utility" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Utility),
-        // GNOME's overview (Super) lists utility windows but none of these: the island
-        // is an overlay, not a window to switch to.
-        "notification" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Notification),
-        "dock" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock),
-        "splash" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Splashscreen),
-        "popup" => gw.set_type_hint(gtk::gdk::WindowTypeHint::PopupMenu),
-        "tooltip" => gw.set_type_hint(gtk::gdk::WindowTypeHint::Tooltip),
+        // GNOME's overview (Super) lists utility windows but none of the other types: the
+        // island is an overlay, not a window to switch to.
+        "utility" | "notification" | "dock" | "splash" | "popup" | "tooltip" => {
+            if let Some(hint) = resting_hint(&mode) {
+                gw.set_type_hint(hint)
+            }
+        }
         "or" => {
             gw.realize();
             if let Some(window) = gw.window() {
@@ -435,6 +448,15 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
     // The island is created `focusable: false` (tauri.linux.conf.json), so GTK
     // refuses focus until we say otherwise — on a layer surface too.
     gw.set_accept_focus(activating);
+    // A window manager may refuse the keyboard to the overlay window types (the ones GNOME's
+    // overview does not list): while someone types, the island is an ordinary utility window,
+    // and it goes back to its resting type when they are done.
+    if !LAYER_SURFACE.load(Ordering::Relaxed) {
+        let mode = std::env::var("COUCOU_X11_MODE").unwrap_or_default();
+        if let (Some(window), Some(resting)) = (gw.window(), resting_hint(&mode)) {
+            window.set_type_hint(if activating { gtk::gdk::WindowTypeHint::Utility } else { resting });
+        }
+    }
     if LAYER_SURFACE.load(Ordering::Relaxed) {
         let mode = if activating { layer::KEYBOARD_ON_DEMAND } else { layer::KEYBOARD_NONE };
         unsafe { layer::gtk_layer_set_keyboard_mode(gtk_window_ptr(&gw), mode) };
