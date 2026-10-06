@@ -79,7 +79,7 @@ The Mac app does the work; the iPhone app keeps you in the loop when you step aw
 - 🫧 **Liquid Glass, native to the bone** — SwiftUI, tabs, zoom transitions, context menus, swipe actions, alternate icons, Mochi at 120 Hz.
 - 🔒 **Through your own iCloud** — sessions sync through your private CloudKit database; project names, commands and questions are encrypted with your iCloud keys. No Coucou server sees your projects, commands or keys. Turn it on in the Mac app: Settings → General → iPhone.
 
-**Get it on your iPhone in 3 steps:** install Coucou on your iPhone ([App Store or TestFlight](#iphone)), turn on **Settings → General → iPhone** in the Mac app (0.1.8 or later), and use the same Apple Account in iCloud on both. Full guide, troubleshooting and build-it-yourself: [docs/IPHONE.md](docs/IPHONE.md).
+**Get it on your iPhone in 3 steps:** install Coucou on your iPhone ([Join the TestFlight beta](https://testflight.apple.com/join/3GpeHv2b) — free, App Store coming soon), turn on **Settings → General → iPhone** in the Mac app (0.1.8 or later), and use the same Apple Account in iCloud on both. Full guide, troubleshooting and build-it-yourself: [docs/IPHONE.md](docs/IPHONE.md).
 
 <table>
 <tr>
@@ -120,7 +120,7 @@ The App Store build of the Mac app runs in Apple's sandbox, so a few features st
 
 ### iPhone
 
-1. **Install Coucou on your iPhone** (iOS 18 or later): from the App Store once it's out, or the TestFlight beta. Both links will be here.
+1. **Install Coucou on your iPhone** (iOS 18 or later): install [TestFlight](https://apps.apple.com/app/testflight/id899247664) from the App Store, then [Join the TestFlight beta](https://testflight.apple.com/join/3GpeHv2b). The beta is free; Apple limits it to 10,000 testers. The App Store version is coming soon.
 2. **On your Mac**, with Coucou 0.1.8 or later: **Settings… → General → iPhone**, turn on **Show my agent sessions on my iPhone**, and **Move Mochi to my iPhone's Dynamic Island when my Mac is locked** for the Lock Screen.
 3. **Same Apple Account** in iCloud on the Mac and the iPhone. That's the whole link: no account, no pairing code.
 4. Open Coucou on the iPhone, allow notifications, and start a Claude Code session on the Mac.
