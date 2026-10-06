@@ -160,7 +160,15 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let (lw, lh) = if collapsed { (STRIP_W, STRIP_H) } else { (PANEL_W, PANEL_H) };
     let pw = (lw * scale).round().max(1.0) as u32;
     let ph = (lh * scale).round().max(1.0) as u32;
-    let x = mp.x + (ms.width as i32 - pw as i32) / 2;
+    // Centred, plus the user's offset (a window tiled beside the middle has its buttons
+    // under a centred island), kept on the screen.
+    let offset = app
+        .try_state::<crate::Shared>()
+        .map(|s| s.settings.lock().unwrap().island_offset_x)
+        .unwrap_or(0);
+    let centred = mp.x + (ms.width as i32 - pw as i32) / 2;
+    let x = (centred + (f64::from(offset) * scale).round() as i32)
+        .clamp(mp.x, (mp.x + ms.width as i32 - pw as i32).max(mp.x));
     let y = mp.y;
 
     // GTK never sizes a non-resizable window below its natural size (200 px

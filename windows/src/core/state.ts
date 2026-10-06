@@ -193,6 +193,10 @@ export interface Settings {
   musicScroll: "track" | "volume";
   /** The minimised island opens when the pointer rests on it (no click) and folds back fast. */
   openOnHover: boolean;
+  /** Seconds the pointer rests on the minimised island before it opens (open on hover). */
+  hoverOpenDelay: number;
+  /** Island position across the top: px from the centre, positive = right. */
+  islandOffsetX: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -213,6 +217,8 @@ export const DEFAULT_SETTINGS: Settings = {
   musicKeep: true,
   musicScroll: "track",
   openOnHover: false,
+  hoverOpenDelay: 0.9,
+  islandOffsetX: 0,
 };
 
 type Listener = () => void;

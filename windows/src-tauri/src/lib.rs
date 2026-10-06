@@ -67,7 +67,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     let (screen_changed, autostart_changed) = {
         let mut current = shared.settings.lock().unwrap();
-        let screen_changed = current.screen != settings.screen;
+        let screen_changed = current.screen != settings.screen || current.island_offset_x != settings.island_offset_x;
         let autostart_changed = current.autostart != settings.autostart;
         *current = settings.clone();
         (screen_changed, autostart_changed)

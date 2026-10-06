@@ -42,6 +42,17 @@ pub struct Settings {
     /// The minimised island opens when the pointer rests on it, and folds back quickly.
     #[serde(default)]
     pub open_on_hover: bool,
+    /// Seconds the pointer must rest on the minimised island before it opens (open on hover).
+    #[serde(default = "default_hover_delay")]
+    pub hover_open_delay: f64,
+    /// Where the island sits across the top of the screen: logical px from the centre
+    /// (positive = right). Windows tiled beside the middle keep their buttons clear.
+    #[serde(default)]
+    pub island_offset_x: i32,
+}
+
+fn default_hover_delay() -> f64 {
+    0.9
 }
 
 fn default_scroll() -> String {
@@ -89,6 +100,8 @@ impl Default for Settings {
             music_keep: true,
             music_scroll: default_scroll(),
             open_on_hover: false,
+            hover_open_delay: default_hover_delay(),
+            island_offset_x: 0,
         }
     }
 }

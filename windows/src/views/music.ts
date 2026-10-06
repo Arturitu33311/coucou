@@ -122,6 +122,8 @@ function seekBar(onSeek: (fraction: number) => void) {
 class Visualizer {
   private ctx: CanvasRenderingContext2D | null;
   private last = 0;
+  /** When the bars were last moved, to smooth by elapsed time rather than by frame. */
+  private moved = 0;
   private heights: number[];
   private cleared = false;
 
@@ -181,7 +183,7 @@ class Visualizer {
       this.cleared = true;
       return;
     }
-    if (now - this.last < 30) return;
+    if (now - this.last < 12) return;
     this.last = now;
     this.cleared = false;
 
@@ -198,6 +200,14 @@ class Visualizer {
     ctx.fillStyle = color;
 
     const { norm, silent } = this.levels(now, playing, mode);
+    // The extension moves its bars once per cava frame (60 a second): up by 95 % of the
+    // way, down by 60 %. This draws fewer frames than that (software rendering), so the
+    // same easing is applied for as many 60 Hz frames as have passed; otherwise the
+    // bars fall at half the speed and seem stuck near the top.
+    const steps = this.moved === 0 ? 1 : Math.min(6, Math.max(1, (now - this.moved) / (1000 / 60)));
+    this.moved = now;
+    const up = 1 - Math.pow(0.05, steps);
+    const down = 1 - Math.pow(0.4, steps);
     const maxHalf = cssH / 2;
     const centre = Math.floor(cssH / 2);
     const slot = cssW / this.bars;
@@ -211,7 +221,7 @@ class Visualizer {
       let target = Math.max(1, Math.round(Math.pow(level, 0.8) * maxHalf));
       if (!silent && level > 0 && target < 3) target = 3;
       const prev = this.heights[i];
-      const alpha = target < prev ? 0.6 : 0.95;
+      const alpha = target < prev ? down : up;
       const half = Math.round(prev * (1 - alpha) + target * alpha);
       this.heights[i] = half;
 

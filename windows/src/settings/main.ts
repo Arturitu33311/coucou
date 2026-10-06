@@ -447,6 +447,10 @@ function musicSection(): HTMLElement {
         "from any view. Right-click and double-click no longer open it." }),
     ),
     h("div", { class: "row" },
+      h("label", { text: "Hover time" }),
+      ...hoverDelayControls(),
+    ),
+    h("div", { class: "row" },
       h("label", { text: "Wheel on the pill" }),
       scroll,
       h("span", { class: "hint", text: "over the minimised island (needs a player with a volume control for Volume)" }),
@@ -468,6 +472,23 @@ function musicSection(): HTMLElement {
 
 // ── General section ───────────────────────────────────────────────────────────
 
+/** The slider and read-out of how long the pointer must rest on the island to open it. */
+function hoverDelayControls(): HTMLElement[] {
+  const value = h("span", { class: "hint", text: "" });
+  const slider = h("input", {
+    type: "range", min: "0.3", max: "3", step: "0.1",
+    value: String(settings.hoverOpenDelay ?? 0.9), style: "flex:1 1 auto",
+  }) as HTMLInputElement;
+  const show = () => { value.textContent = `${Number(slider.value).toFixed(1)} s`; };
+  show();
+  slider.addEventListener("input", show);
+  slider.addEventListener("change", () => {
+    settings.hoverOpenDelay = Number(slider.value);
+    void save();
+  });
+  return [slider, value];
+}
+
 function generalSection(): HTMLElement {
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
@@ -486,6 +507,24 @@ function generalSection(): HTMLElement {
   autoClose.addEventListener("change", () => {
     settings.autoCloseInterval = Math.max(5, Math.min(120, Number(autoClose.value) || 15));
     autoClose.value = String(settings.autoCloseInterval);
+    void save();
+  });
+
+  // Where the island sits across the top; a window tiled beside the middle has its
+  // buttons under a centred one.
+  const offsetValue = h("span", { class: "hint", text: "" });
+  const offset = h("input", {
+    type: "range", min: "-900", max: "900", step: "10",
+    value: String(settings.islandOffsetX ?? 0), style: "flex:1 1 auto",
+  }) as HTMLInputElement;
+  const showOffset = () => {
+    const v = Number(offset.value);
+    offsetValue.textContent = v === 0 ? "centred" : `${Math.abs(v)} px ${v > 0 ? "right" : "left"}`;
+  };
+  showOffset();
+  offset.addEventListener("input", showOffset);
+  offset.addEventListener("change", () => {
+    settings.islandOffsetX = Number(offset.value);
     void save();
   });
 
@@ -517,6 +556,11 @@ function generalSection(): HTMLElement {
     h("div", { class: "row" },
       h("label", { text: "Island lives on" }),
       screen,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Island position" }),
+      offset,
+      offsetValue,
     ),
     h("div", { class: "row" },
       h("label", { text: "Launch at startup" }),

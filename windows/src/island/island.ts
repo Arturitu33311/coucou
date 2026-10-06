@@ -10,7 +10,7 @@ import {
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { JINX_ID, State } from "../core/state";
+import { INTEGRATION_AGENTS, JINX_ID, State } from "../core/state";
 import { answerJinxApproval } from "./jinx";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
@@ -27,7 +27,7 @@ const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
 const MUSIC_LEAVE_S = 0.3;
 /** With "open on hover": how long the pointer rests on the minimised island before it opens. */
-const HOVER_OPEN_S = 0.45;
+const HOVER_OPEN_S = 0.9;
 /** Frame interval while only the minimised Music pill animates (≈ 12 fps)… */
 const STRIP_FRAME_MS = 80;
 /** …and with the real-time bars, which need to keep up with the music (≈ 30 fps). */
@@ -694,7 +694,7 @@ export class Island {
     const hover = State.settings.openOnHover;
     const glance = hover || (State.musicStrip() && (State.view === "music" || State.view === "overview"));
     this.fsm.homeToPetitDelay = glance ? MUSIC_LEAVE_S : State.settings.autoCloseInterval;
-    this.fsm.hoverOpenDelay = hover ? HOVER_OPEN_S : null;
+    this.fsm.hoverOpenDelay = hover ? State.settings.hoverOpenDelay || HOVER_OPEN_S : null;
   }
 
   /**
@@ -957,6 +957,13 @@ export class Island {
       const quiet = State.effectiveState === "idle" || State.effectiveState === "sleeping";
       if (State.mode === "expanded" && State.view === "music") body = hexToRGB(State.music.accent);
       else if (State.mode === "compact" && State.musicStrip() && quiet) body = hexToRGB(State.music.accent);
+    }
+    // In the chat he wears the colour of who he is talking to: Claude Code's orange for a
+    // session or a new agent, Jinx's green, and plain white for Mochi's own API chat.
+    if (State.mode === "expanded" && State.view === "prompt") {
+      const who = State.chatTarget === "jinx" ? JINX_ID : State.chatTarget === "mochi" ? null : "integration_claude";
+      const proto = who ? INTEGRATION_AGENTS.find((t) => t.id === who) : null;
+      body = proto ? hexToRGB(proto.color) : null;
     }
     this.engine.bodyColor = body;
     this.engine.particleOverhang = BOT_OVERHANG;
