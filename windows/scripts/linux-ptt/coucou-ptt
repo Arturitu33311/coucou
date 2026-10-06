@@ -1,0 +1,123 @@
+#!/usr/bin/python3
+"""coucou-ptt — hold a key to dictate with Handy (push to talk), on X11.
+
+Handy's own shortcut can't use a single key like CapsLock, and the Fn key never reaches the
+computer on most laptops (the firmware keeps it). This reserves ONE key and, while it is held,
+keeps Handy recording: it sends Handy the signal that toggles recording (SIGUSR2) when the key
+goes down and again when it goes up. Coucou's island shows "Listening…" by itself, because
+Handy shows up in the sound server as a program capturing the microphone.
+
+Only that key is reserved (XGrabKey): nothing else you type is seen, stored or logged.
+CapsLock itself is turned off for the session (xkb option caps:none), otherwise holding it would
+also flip the caps lock.
+
+    coucou-ptt [--keycode N]       default 66 (CapsLock on a PC keyboard; `xev` shows others)
+    coucou-ptt --test              grab, print the events and exit after 10 seconds (no signals)
+"""
+import argparse
+import os
+import signal
+import subprocess
+import sys
+import time
+
+from Xlib import X, display, error
+
+DEFAULT_KEYCODE = 66
+MAX_HOLD_S = 120  # a release that never arrives (the grab was lost) must not leave Handy recording
+REPEAT_WINDOW_S = 0.03  # X reports a held key as release+press pairs this close together
+
+
+def handy_pid():
+    """The running Handy (its process is named `handy`), or None."""
+    out = subprocess.run(["pgrep", "-x", "handy"], capture_output=True, text=True).stdout.split()
+    return int(out[0]) if out else None
+
+
+def handy_capturing():
+    """Is Handy capturing the microphone right now? (It shows up as a stream in the sound server.)"""
+    out = subprocess.run(["pactl", "list", "source-outputs"], capture_output=True, text=True).stdout.lower()
+    for block in out.split("source output #")[1:]:
+        if ('application.process.binary = "handy"' in block or 'application.name = "handy"' in block) \
+                and 'stream.monitor = "true"' not in block:
+            return True
+    return False
+
+
+def wait_for_capture(seconds):
+    """Handy needs a moment to open the microphone after the signal; wait for it, up to `seconds`."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if handy_capturing():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def toggle_handy(dry):
+    pid = handy_pid()
+    if pid is None:
+        return False
+    if not dry:
+        os.kill(pid, signal.SIGUSR2)
+    return True
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--keycode", type=int, default=DEFAULT_KEYCODE)
+    ap.add_argument("--test", action="store_true")
+    args = ap.parse_args()
+
+    # The key must not also do its own job (CapsLock would flip the caps lock on every press).
+    if not args.test:
+        subprocess.run(["setxkbmap", "-option", "caps:none"], check=False)
+
+    d = display.Display()
+    root = d.screen().root
+    caught = error.CatchError(error.BadAccess)
+    root.grab_key(args.keycode, X.AnyModifier, True, X.GrabModeAsync, X.GrabModeAsync, onerror=caught)
+    d.sync()
+    if caught.get_error():
+        sys.exit(f"coucou-ptt: key {args.keycode} is already reserved by another program")
+
+    down_at = None
+    deadline = time.time() + 10 if args.test else None
+    recording = False
+    while True:
+        if deadline and time.time() > deadline:
+            return
+        # Wake up now and then to enforce the longest hold; otherwise sleep in the read.
+        if d.pending_events() == 0:
+            if recording and time.time() - down_at > MAX_HOLD_S:
+                toggle_handy(args.test)
+                recording = False
+            time.sleep(0.02)
+            continue
+        ev = d.next_event()
+        if ev.type == X.KeyPress and not recording and down_at is None:
+            down_at = time.time()
+            recording = toggle_handy(args.test)
+            if args.test:
+                print("down", flush=True)
+        elif ev.type == X.KeyRelease:
+            # An auto-repeat is a release followed at once by a press of the same key: ignore both.
+            time.sleep(REPEAT_WINDOW_S)
+            if d.pending_events() and d.display.event_queue and d.display.event_queue[0].type == X.KeyPress:
+                d.next_event()
+                continue
+            # Stop only if Handy really started: if it could not open the microphone, a second
+            # signal would START it. A quick tap lets go while the microphone is still opening.
+            if recording and (args.test or wait_for_capture(1.0)):
+                toggle_handy(args.test)
+            if args.test:
+                print(f"up after {time.time() - (down_at or time.time()):.2f}s", flush=True)
+            recording = False
+            down_at = None
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

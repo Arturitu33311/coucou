@@ -5,6 +5,8 @@ mod bars;
 mod calendar;
 mod claude;
 mod drive;
+#[cfg(target_os = "linux")]
+mod dictation;
 mod files;
 mod hooks;
 mod integrations;
@@ -934,6 +936,9 @@ pub fn run() {
                 loaded.active_integrations.iter().any(|x| x == "integration_music"),
             );
             notifs::sync_enabled(&handle, loaded.notification_peek);
+            // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
+            #[cfg(target_os = "linux")]
+            dictation::start(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

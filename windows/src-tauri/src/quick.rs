@@ -88,9 +88,13 @@ pub fn mic_in_use(listing: &str) -> bool {
         .split("Source Output #")
         .skip(1)
         .any(|block| {
+            let lower = block.to_lowercase();
+            // Coucou's own visualizer, and Handy (the user's own dictation, which the island shows itself).
             let ours = block.contains("org.PulseAudio.pavucontrol")
                 || block.contains("application.process.binary = \"cava\"")
-                || block.contains("application.name = \"cava\"");
+                || block.contains("application.name = \"cava\"")
+                || lower.contains("application.process.binary = \"handy\"")
+                || lower.contains("application.name = \"handy\"");
             let monitor = block.contains("node.passive = \"true\"") || block.contains("stream.monitor = \"true\"");
             !ours && !monitor
         })

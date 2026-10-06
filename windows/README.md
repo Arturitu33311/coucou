@@ -151,6 +151,26 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
   started through their own launcher; folders and links through `gio open`. Nothing runs through a
   shell, and a launched app does not inherit what Coucou's own launcher sets.
 
+## Dictation with Handy: hold a key, see it in the notch (Linux, X11)
+
+[Handy](https://github.com/cjpais/Handy) (MIT, local speech to text) types what you say into
+whatever has the focus. Coucou adds the two things it lacks on Linux:
+
+- **Hold a key to talk.** `scripts/linux-ptt/coucou-ptt` reserves one key (CapsLock by default,
+  `--keycode N` for another) and, while it is held, keeps Handy recording by sending it the signal
+  that toggles recording (`SIGUSR2`) when the key goes down and when it comes up. Only that key is
+  reserved: nothing else you type is seen. The Fn key cannot be used: on most laptops the firmware
+  keeps it, and X11 cannot carry the evdev code Linux gives it (464, above X's limit of 255).
+  `coucou-ptt` turns CapsLock itself off for the session (`xkb` option `caps:none`).
+- **The island says so.** While Handy records, the island opens with “🎙 Listening…” and shows
+  “✍️ Transcribing…” when you let go. Handy cannot tell other programs what it does, but recording
+  shows in the sound server as a program capturing the microphone, so Coucou listens to the server's
+  own announcements (`pactl subscribe`) and only looks at who captures when something changes: it is
+  asleep otherwise. Only the fact “Handy is capturing” is read; no audio is ever opened by Coucou.
+  The Quick tab's “microphone in use” warning leaves Handy out for the same reason.
+
+Handy's own on-screen indicator is off on Linux by default, so there is a single one.
+
 ## Chat and keys
 
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
