@@ -25,6 +25,8 @@ mod secrets;
 mod settings;
 mod share;
 mod sysmon;
+#[cfg(target_os = "linux")]
+mod sysstate;
 mod tasks;
 mod tray;
 mod weather;
@@ -566,6 +568,21 @@ async fn jinx_resolve(shared: State<'_, Shared>, id: String, action: String) -> 
     tauri::async_runtime::spawn_blocking(move || pendientes::resolve(&host, &id, &action)).await.map_err(|e| e.to_string())?
 }
 
+// ── The island's quiet details: battery, mains power, internet (see sysstate.rs) ──
+
+/// What is known now; null where the system cannot say (not Linux).
+#[tauri::command]
+fn sys_state() -> serde_json::Value {
+    #[cfg(target_os = "linux")]
+    {
+        serde_json::to_value(sysstate::current()).unwrap_or(serde_json::Value::Null)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        serde_json::Value::Null
+    }
+}
+
 // ── Hub: workspaces (see workspaces.rs) ───────────────────────────────────────
 
 #[tauri::command]
@@ -877,6 +894,7 @@ pub fn run() {
             tasks_notified,
             tasks_delete,
             tasks_clear_done,
+            sys_state,
             tasks_set_jinx,
             tasks_sync,
             jinx_resolve,
@@ -939,6 +957,9 @@ pub fn run() {
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);
+            // Battery, mains power and internet, announced by the system itself (no polling).
+            #[cfg(target_os = "linux")]
+            sysstate::start(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

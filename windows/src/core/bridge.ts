@@ -131,6 +131,8 @@ export const Bridge = {
   tasksNotified: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_notified", { id }),
   tasksDelete: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_delete", { id }),
   tasksClearDone: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_clear_done"),
+  /** Battery, mains power and internet, as the system last said; null where it cannot say. */
+  sysState: () => call<{ battery: number | null; plugged: boolean; charging: boolean; online: boolean } | null>("sys_state"),
   workspacesList: () => callOrThrow<unknown[]>("workspaces_list"),
   workspacesSave: (list: unknown[]) => callOrThrow<unknown[]>("workspaces_save", { list }),
   workspacesApps: () => callOrThrow<unknown[]>("workspaces_apps"),

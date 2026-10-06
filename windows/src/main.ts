@@ -2,6 +2,7 @@
 
 import "./style.css";
 import "./music.css";
+import "./pill.css";
 import "./jinx.css";
 import "./hub/hub.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
@@ -13,6 +14,7 @@ import { registerJinxHandlers } from "./island/jinx";
 import { registerPomodoro } from "./hub/pomodoro";
 import { registerTasks } from "./hub/tasks";
 import { registerDictation } from "./hub/dictation";
+import { registerSysState } from "./island/sysstate";
 import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
@@ -95,6 +97,7 @@ async function main() {
   registerPomodoro(island);
   registerTasks(island);
   registerDictation(island);
+  registerSysState(island);
   registerNotificationPeek(island);
 
   island.launch();

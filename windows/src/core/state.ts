@@ -259,6 +259,24 @@ export const DEFAULT_SETTINGS: Settings = {
 
 type Listener = () => void;
 
+/** What the minimised island's pill can be showing, most important first. */
+export type PillKind = "dictation" | "reminder" | "flash" | "pomodoro";
+
+/** A few seconds of news in the pill ("Plugged in", "Back online"). */
+export interface Flash {
+  icon: string;
+  text: string;
+  tone: "" | "ok" | "warn" | "crit";
+}
+
+/** The battery, the mains and the internet, as the system last said. */
+export interface SysInfo {
+  battery: number | null;
+  plugged: boolean;
+  charging: boolean;
+  online: boolean;
+}
+
 class AppState {
   mode: IslandMode = "hidden";
   view: IslandViewName = "overview";
@@ -285,6 +303,17 @@ class AppState {
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;
   noteMessage: string | null = null;
+  // ── The status pill (it shares the Music pill's place on the minimised island) ──
+  sys: SysInfo = { battery: null, plugged: false, charging: false, online: true };
+  /** Handy: recording, then a moment of transcribing. */
+  dictation: "off" | "listening" | "transcribing" = "off";
+  dictationSince = 0;
+  /** Reminders that have gone off and wait for a click. */
+  reminders: { id: string; title: string }[] = [];
+  flash: Flash | null = null;
+  /** The Pomodoro's period, kept here by the Pomodoro so the pill can follow it. */
+  pomodoroPhase: "idle" | "focus" | "break" = "idle";
+  pomodoroRunning = false;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   /** Who the chat talks to: Mochi (Claude's API) or Jinx (Hermes). Each keeps its own thread. */
@@ -456,6 +485,21 @@ class AppState {
       this.music !== null &&
       this.tasks.some((t) => t.id === MUSIC_ID)
     );
+  }
+
+  /** What the pill shows now: a recording, a reminder, a bit of news, or the Pomodoro running. */
+  pillKind(): PillKind | null {
+    if (this.paused) return null;
+    if (this.dictation !== "off") return "dictation";
+    if (this.reminders.length > 0) return "reminder";
+    if (this.flash) return "flash";
+    if (this.pomodoroPhase !== "idle") return "pomodoro";
+    return null;
+  }
+
+  /** The minimised island is wide when something is in its pill or the Music pill has a track. */
+  stripWanted(): boolean {
+    return this.pillKind() !== null || this.musicStrip();
   }
 
   defaultView(): IslandViewName {

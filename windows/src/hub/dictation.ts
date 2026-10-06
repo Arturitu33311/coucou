@@ -1,36 +1,35 @@
-// Dictation in the notch: while Handy records, the island opens with "Listening…" for as long as
-// the key is held, and says "Transcribing…" for a moment when it is let go. The Rust side
-// (dictation.rs) only reports that Handy started or stopped capturing; nothing is heard here.
+// Dictation in the notch: while Handy records, the minimised island's pill says "Listening…" with a
+// clock and moving bars, and "Transcribing" for a moment when the key is let go. With the island
+// open (where the pill is not on screen) a red hairline along its lower edge says the same, so
+// the Tasks or chat field being dictated into is never covered. The Rust side (dictation.rs) only
+// reports that Handy started or stopped capturing; nothing is heard here.
 
 import { onEvent } from "../core/bridge";
 import { State } from "../core/state";
 import type { Island } from "../island/island";
 
-/** A note folds away after about six seconds: ask again before it does, while the key is held. */
-const KEEP_EVERY_MS = 4000;
+/** Handy gives no sign when the text has been typed: the pill lingers this long, then goes. */
+const TRANSCRIBING_MS = 2500;
 
 export function registerDictation(island: Island) {
-  let keep: number | null = null;
+  let done: number | null = null;
 
-  const show = (message: string) => {
-    State.noteMessage = message;
-    island.alert("note");
-  };
-  const stopKeeping = () => {
-    if (keep != null) window.clearInterval(keep);
-    keep = null;
+  const set = (next: "off" | "listening" | "transcribing") => {
+    State.dictation = next;
+    if (next === "listening") State.dictationSince = Date.now();
+    island.refreshStrip();
+    State.notify();
   };
 
   void onEvent<{ recording: boolean }>("dictation", (e) => {
     if (State.paused) return;
-    // A permission or a question waiting for an answer keeps the island: the indicator must not cover it.
-    if (State.pendingApproval || State.pendingQuestion) return;
-    stopKeeping();
+    if (done != null) window.clearTimeout(done);
+    done = null;
     if (e.recording) {
-      show("🎙  Listening…");
-      keep = window.setInterval(() => show("🎙  Listening…"), KEEP_EVERY_MS);
+      set("listening");
     } else {
-      show("✍️  Transcribing…");
+      set("transcribing");
+      done = window.setTimeout(() => set("off"), TRANSCRIBING_MS);
     }
   });
 }

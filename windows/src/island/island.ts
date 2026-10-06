@@ -20,10 +20,11 @@ import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { buildMusicStrip, type MusicHost } from "../views/music";
 import { setBarsWanted } from "./music";
-import { h } from "../views/dom";
+import { h, svg } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { Dodger, toBoxes, type Box } from "./dodge";
-import { hubTyping, syncHubRuntime } from "../hub/hub";
+import { hubTyping, selectTool, syncHubRuntime } from "../hub/hub";
+import { buildStatusPill, pillTint, type PillHost } from "./pill";
 
 const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
@@ -61,6 +62,12 @@ export class Island {
   private miniGrid!: HTMLElement;
   /** The Music pill shown on the minimised island. */
   private strip!: MusicHost;
+  /** Its neighbour in the same place: a recording, a reminder, news, the Pomodoro. */
+  private pill!: PillHost;
+  /** The quiet details: a hairline along the lower edge (battery, recording) and an "offline" mark. */
+  private hair!: HTMLElement;
+  private hairFill!: HTMLElement;
+  private netDot!: HTMLElement;
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -280,6 +287,16 @@ export class Island {
       raise: () => void Bridge.musicControl("raise"),
       open: () => this.alert("music"),
     });
+    this.pill = buildStatusPill({
+      openPomodoro: () => {
+        selectTool("pomodoro");
+        this.alert("tool");
+      },
+      blip: () => Sound.play("blip"),
+    });
+    this.hairFill = h("i");
+    this.hair = h("div", { id: "sys-hair" }, this.hairFill);
+    this.netDot = h("div", { id: "net-dot", title: "No internet" }, svg("M2 8.5a14 14 0 0 1 20 0 M5.5 12a9 9 0 0 1 13 0 M9 15.5a4.5 4.5 0 0 1 6 0 M12 19.2v.01 M3 3l18 18", 12, { stroke: 2 }));
     this.islandEl = h(
       "div",
       { id: "island" },
@@ -287,6 +304,9 @@ export class Island {
       this.botGlow,
       this.botCanvas,
       this.strip.el,
+      this.pill.el,
+      this.hair,
+      this.netDot,
       this.miniGrid,
       this.countdown,
     );
@@ -306,7 +326,7 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     // With the Music pill showing a track, the minimised island stays up.
-    this.fsm.keepCompact = () => State.musicStrip();
+    this.fsm.keepCompact = () => State.stripWanted();
     this.fsm.onTransition = (from, to) => {
       switch (to) {
         case "hidden":
@@ -457,8 +477,13 @@ export class Island {
    * and let it retract again once nothing keeps it there.
    */
   refreshMusicStrip() {
+    this.refreshStrip();
+  }
+
+  /** The pill (Music, recording, reminder, news, Pomodoro) appeared or went: resize, reveal, settle. */
+  refreshStrip() {
     if (State.mode === "compact") this.animateGeometry(false);
-    if (State.musicStrip()) {
+    if (State.stripWanted()) {
       if (State.mode === "hidden") this.fsm.reveal();
     } else {
       this.fsm.settle();
@@ -650,7 +675,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.musicStrip());
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.stripWanted());
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -688,6 +713,13 @@ export class Island {
     this.strip.el.style.width = `${Math.max(0, w - 58 - 68)}px`;
     this.strip.el.style.height = `${stripH}px`;
     this.strip.el.style.top = `${(hh - stripH) / 2}px`;
+    this.pill.el.style.left = "58px";
+    this.pill.el.style.width = `${Math.max(0, w - 58 - 68)}px`;
+    this.pill.el.style.height = `${stripH}px`;
+    this.pill.el.style.top = `${(hh - stripH) / 2}px`;
+    // The offline mark: in a corner of the minimised island, beside the header's buttons when open.
+    this.netDot.style.top = State.mode === "expanded" ? "11px" : "3px";
+    this.netDot.style.left = State.mode === "expanded" ? `${w - 96}px` : `${w - 18}px`;
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
@@ -1028,7 +1060,7 @@ export class Island {
 
     tickMiniBots(dt);
     this.views.get(State.view)?.tick?.(nowMs);
-    const stripShown = State.mode === "compact" && State.musicStrip();
+    const stripShown = State.mode === "compact" && State.musicStrip() && State.pillKind() === null;
     if (stripShown) this.strip.tick(nowMs);
     if (UploadSeq.isActive) this.stepSequence();
     this.updateCountdown(nowMs);
@@ -1124,6 +1156,12 @@ export class Island {
       const proto = who ? INTEGRATION_AGENTS.find((t) => t.id === who) : null;
       body = proto ? hexToRGB(proto.color) : null;
     }
+    // A recording, a reminder, news or the Pomodoro tint him too (a recording in any view).
+    const kind = State.pillKind();
+    if (kind && (State.mode === "compact" || kind === "dictation") && State.effectiveState !== "working") {
+      const tint = pillTint(kind);
+      if (tint) body = hexToRGB(tint);
+    }
     this.engine.bodyColor = body;
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
@@ -1207,7 +1245,7 @@ export class Island {
 
     // cava (the real-time bars) runs only while they can be seen and music plays.
     const musicOnScreen =
-      (State.mode === "compact" && State.musicStrip()) ||
+      (State.mode === "compact" && State.musicStrip() && State.pillKind() === null) ||
       (State.mode === "expanded" &&
         (State.view === "music" || (State.view === "overview" && State.focusId === "integration_music")));
     setBarsWanted(
@@ -1218,10 +1256,15 @@ export class Island {
     );
 
     // The Music pill on the minimised island
-    const showStrip = State.mode === "compact" && State.musicStrip();
+    const showPill = State.mode === "compact" && State.pillKind() !== null;
+    const showStrip = State.mode === "compact" && State.musicStrip() && !showPill;
     this.strip.el.style.opacity = showStrip ? "1" : "0";
     this.strip.el.style.pointerEvents = showStrip ? "auto" : "none";
     if (State.musicStrip()) this.strip.sync();
+    this.pill.sync();
+    this.pill.el.style.opacity = showPill ? "1" : "0";
+    this.pill.el.style.pointerEvents = showPill ? "auto" : "none";
+    this.syncSys();
 
     // Compact mini grid
     const showGrid = State.mode === "compact";
@@ -1242,6 +1285,26 @@ export class Island {
 
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
+  }
+
+  /**
+   * The quiet details. A hairline along the lower edge: red and breathing while Handy records,
+   * green and breathing while the battery charges (its length is the level), amber under 20 %
+   * and red under 10 % when running on the battery; nothing otherwise. And a small mark when
+   * there is no internet.
+   */
+  private syncSys() {
+    const s = State.sys;
+    const on = State.mode !== "hidden";
+    let cls = "";
+    let pct = 100;
+    if (State.dictation === "listening") cls = "dict";
+    else if (s.battery != null && s.charging) [cls, pct] = ["chg", s.battery];
+    else if (s.battery != null && !s.plugged && s.battery <= 10) [cls, pct] = ["crit", s.battery];
+    else if (s.battery != null && !s.plugged && s.battery <= 20) [cls, pct] = ["low", s.battery];
+    this.hair.className = on ? cls : "";
+    this.hairFill.style.width = `${Math.max(4, pct)}%`;
+    this.netDot.style.opacity = on && !s.online ? "0.85" : "0";
   }
 
   /** Applies settings coming from Rust at boot. */

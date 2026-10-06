@@ -60,6 +60,8 @@ let st: PState = load();
 let timer: number | null = null;
 let stats: PomoStats | null = null;
 let announce: (message: string) => void = () => {};
+/** The island resizes its pill when the period changes. */
+let onChange: () => void = () => {};
 
 function load(): PState {
   const fresh: PState = { phase: "idle", long: false, preset: 0, cycle: 0, endsAt: null, remainingMs: null };
@@ -75,6 +77,9 @@ function load(): PState {
 }
 
 function save() {
+  State.pomodoroPhase = st.phase;
+  State.pomodoroRunning = st.endsAt != null;
+  onChange();
   try {
     window.localStorage.setItem(KEY, JSON.stringify(st));
   } catch {
@@ -206,6 +211,10 @@ export async function refreshStats() {
 
 /** The island says so when a period ends: a sound and a note, even with the island shut. */
 export function registerPomodoro(island: Island) {
+  onChange = () => island.refreshStrip();
+  State.pomodoroPhase = st.phase;
+  State.pomodoroRunning = st.endsAt != null;
+  if (st.phase !== "idle") onChange();
   announce = (message) => {
     Sound.play("finish");
     State.noteMessage = `🍅 ${message}`;
@@ -337,6 +346,12 @@ export function pomodoroSummary(): { phase: Phase; minutesLeft: number | null; r
     running: running(),
     cycle: st.cycle,
   };
+}
+
+/** What the pill shows of the timer. */
+export function pomodoroPill(): { phase: Phase; long: boolean; running: boolean; leftMs: number; totalMs: number } {
+  const total = st.phase === "idle" ? 0 : minutes(st.phase, st.long) * 60_000;
+  return { phase: st.phase, long: st.long, running: running(), leftMs: leftMs(), totalMs: total };
 }
 
 export function pomodoroStatsNow(): PomoStats | null {

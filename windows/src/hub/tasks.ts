@@ -58,7 +58,9 @@ let list: Task[] = [];
 let fromJinx: JinxRow[] = [];
 let syncError: string | null = null;
 let timer: number | null = null;
-let announce: (message: string) => void = () => {};
+let announce: (due: Task[]) => void = () => {};
+/** The island resizes its pill when a reminder arrives or is answered. */
+let onChange: () => void = () => {};
 let loaded = false;
 let syncing = false;
 let syncAgain = false;
@@ -85,7 +87,7 @@ function fire() {
   const now = nowSec();
   const due = list.filter((t) => !t.done && !t.notified && t.remindAt != null && t.remindAt <= now);
   if (due.length > 0) {
-    announce(due.length === 1 ? due[0].title : `${due.length} reminders: ${due[0].title}…`);
+    announce(due);
     for (const t of due) {
       t.notified = true; // not announced twice even if the file cannot be written
       void Bridge.tasksNotified(t.id).catch(() => {});
@@ -135,16 +137,48 @@ async function sync() {
 
 /** The island says so when a reminder is due: a sound and a note, even with the island shut. */
 export function registerTasks(island: Island) {
-  announce = (message) => {
+  onChange = () => island.refreshStrip();
+  announce = (due) => {
     Sound.play("finish");
-    State.noteMessage = `⏰ ${message}`;
-    island.alert("note");
+    for (const t of due) {
+      if (!State.reminders.some((r) => r.id === t.id)) State.reminders.push({ id: t.id, title: t.title });
+      // Left alone, a reminder leaves the pill after two minutes (it stays in the list).
+      window.setTimeout(() => dropReminder(t.id), REMINDER_PILL_MS);
+    }
+    // With the island open the pill is not on screen: say it in a note instead.
+    if (State.mode === "expanded" && State.view !== "tool") {
+      State.noteMessage = `⏰ ${due.length === 1 ? due[0].title : `${due.length} reminders: ${due[0].title}…`}`;
+      island.alert("note");
+    }
+    onChange();
+    State.notify();
   };
   // Overdue reminders are announced once, now; then one look at Jinx's list.
   void reload().then(() => {
     fire();
     void sync();
   });
+}
+
+const REMINDER_PILL_MS = 120_000;
+
+/** Takes a reminder off the pill (answered, or left alone for long enough). */
+export function dropReminder(id: string) {
+  if (!State.reminders.some((r) => r.id === id)) return;
+  State.reminders = State.reminders.filter((r) => r.id !== id);
+  onChange();
+  State.notify();
+}
+
+/** The pill's buttons: the task is done, or the reminder comes back in a while. */
+export function reminderDone(id: string) {
+  dropReminder(id);
+  void Bridge.tasksDone(id, true).then(set).catch(() => {});
+}
+
+export function reminderSnooze(id: string, seconds: number) {
+  dropReminder(id);
+  void Bridge.tasksSnooze(id, nowSec() + seconds).then(set).catch(() => {});
 }
 
 /** How many open tasks are due or overdue (for whoever wants a badge). */

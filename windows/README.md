@@ -151,6 +151,28 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
   started through their own launcher; folders and links through `gio open`. Nothing runs through a
   shell, and a launched app does not inherit what Coucou's own launcher sets.
 
+## The pill and the quiet details (Linux)
+
+With no panel on screen, the minimised island is all there is, so it widens, in the Music pill's
+place, for what deserves a glance (the Music pill steps aside meanwhile):
+
+- **Recording** (Handy): a breathing red dot, “Listening…”, a clock and five moving bars, then
+  “Transcribing” for a moment. Mochi turns red and a red hairline runs along the lower edge (also
+  with the island open, where the pill is not on screen).
+- **A reminder that went off**: a ringing bell, the task, and **✓** (done), **+10m** and **×**
+  (dismiss: it stays in the list). Left alone it leaves the pill after two minutes.
+- **The Pomodoro running**: a ring that empties and the time left; a click starts or pauses it, a
+  double click or the right button opens its panel in the Hub.
+- **News**, for three seconds, only when the island is already on screen (plugging in the charger
+  never wakes it): plugged in or charging with the level, on battery, offline, back online, and
+  the battery falling through 20, 10 and 5 %.
+
+And two details that are just there: a hairline along the lower edge that breathes green while
+the battery charges (its length is the level), turns amber under 20 % and red under 10 % on
+battery, and is invisible otherwise; and a small crossed Wi-Fi mark in a corner when there is no
+internet. They come from UPower and NetworkManager, which announce every change on the system
+bus: nothing is polled, and nothing about the network is read besides NetworkManager's own verdict.
+
 ## Dictation with Handy: hold a key, see it in the notch (Linux, X11)
 
 [Handy](https://github.com/cjpais/Handy) (MIT, local speech to text) types what you say into
