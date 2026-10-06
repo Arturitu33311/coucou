@@ -7,4 +7,30 @@
 .jx-actions { display: flex; gap: 8px; margin-top: 2px; }
 .chat-target { display: flex; gap: 4px; padding: 0 2px 6px; }
 .chat-target button { font: inherit; font-size: 10.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.14); background: transparent; color: inherit; opacity: 0.6; cursor: pointer; }
-.chat-target button.on { opacity: 1; background: rgba(57,255,20,0.16); border-color: rgba(57,255,20,0.55); }
+.chat-target button.on { opacity: 1; background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
+.chat-target button.jinx.on { background: rgba(57,255,20,0.16); border-color: rgba(57,255,20,0.55); }
+
+/* Claude Code agents in the chat: chips with a state dot, the state line, tool lines. */
+.chat-target, .agent-status { flex: 0 0 auto; }
+.chat-target { overflow-x: auto; white-space: nowrap; scrollbar-width: none; flex-wrap: nowrap; }
+.chat-target::-webkit-scrollbar { display: none; }
+.chat-target button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; max-width: 160px; }
+.chat-target button span { overflow: hidden; text-overflow: ellipsis; }
+.chat-target button.agent.on { background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; background: #8b8f98; flex: 0 0 auto; }
+.sdot.working { background: #3B9EFF; animation: sdot-pulse 1.1s ease-in-out infinite; }
+.sdot.done { background: #22C55E; }
+.sdot.blocked { background: #F5A524; animation: sdot-pulse 0.8s ease-in-out infinite; }
+@keyframes sdot-pulse { 50% { opacity: 0.35; } }
+.agent-status { display: flex; align-items: center; gap: 8px; font-size: 10.5px; opacity: 0.7; padding: 0 4px 5px; min-height: 14px; }
+.agent-status .limits { margin-left: auto; font-size: 10px; opacity: 0.55; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.agent-status .limits.warn { color: #F5A524; opacity: 1; }
+.agent-status .limits.crit { color: #F4505E; opacity: 1; }
+.agent-status.blocked { color: #F5A524; opacity: 1; }
+.agent-status.working { color: #7DB8FF; opacity: 1; }
+.agent-cwd { font: inherit; font-size: 10.5px; color: inherit; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 6px; padding: 1px 4px; max-width: 260px; }
+.agent-cwd option { color: #111; }
+.chat-row.queued { flex-direction: column; align-items: flex-end; gap: 2px; }
+.chat-row.queued .bubble { opacity: 0.55; border: 1px dashed rgba(255,255,255,0.3); }
+.queued-tag { font-size: 9.5px; opacity: 0.55; padding-right: 4px; }
+.chat-tool { font-size: 10.5px; opacity: 0.5; padding: 1px 2px; font-family: ui-monospace, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

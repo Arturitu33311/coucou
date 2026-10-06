@@ -53,8 +53,28 @@ export interface QuestionInfo {
 
 export interface ChatMessage {
   id: number;
-  role: "user" | "assistant";
+  /** "tool" is a line of what an agent is doing (Edit · src/a.ts), not talk. */
+  role: "user" | "assistant" | "tool" | "queued";
   content: string;
+}
+
+export interface LimitWindow {
+  pct: number;
+  /** Unix seconds. */
+  resetsAt: number | null;
+}
+
+/** A running Claude Code session, as `claude agents` lists it. */
+export interface AgentSession {
+  id: string;
+  name: string;
+  cwd: string;
+  kind: string;
+  status: string;
+  /** working | done | blocked */
+  state: string;
+  sessionId: string;
+  waitingFor?: string | null;
 }
 
 export type PromptContext =
@@ -224,7 +244,20 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   /** Who the chat talks to: Mochi (Claude's API) or Jinx (Hermes). Each keeps its own thread. */
-  chatTarget: "mochi" | "jinx" = "mochi";
+  chatTarget: "mochi" | "jinx" | "agent" | "new" = "mochi";
+  /** The running Claude Code sessions, the selected one, and what has been read of each. */
+  agents: AgentSession[] = [];
+  agentId: string | null = null;
+  agentThreads: Record<string, { offset: number; msgs: ChatMessage[] }> = {};
+  agentsError: string | null = null;
+  /** The file already handed to an agent (it can read it from the path). */
+  agentFilePath: string | null = null;
+  /** Is there an Anthropic API key (Mochi's own chat)? null until asked. */
+  mochiApi: boolean | null = null;
+  /** Claude Code's usage limits (percent used), when known. */
+  limits: { five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null = null;
+  /** The chat has chosen its first target for this opening. */
+  chatPicked = false;
   jinxHistory: ChatMessage[] = [];
   /** The dropped file already sent to Jinx (she keeps it for the whole session). */
   jinxFilePath: string | null = null;

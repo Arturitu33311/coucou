@@ -1,5 +1,6 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod agents;
 mod bars;
 mod claude;
 mod files;
@@ -289,6 +290,41 @@ async fn jinx_test() -> Result<String, String> {
     jinx::test().await
 }
 
+// ── Claude Code sessions (see agents.rs) ──────────────────────────────────────
+
+#[tauri::command]
+async fn agents_list() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(agents::list).await.map_err(|e| e.to_string())?
+}
+
+/// The 5-hour / 7-day usage percentages, when the statusline has written them.
+#[tauri::command]
+fn rate_limits() -> Option<serde_json::Value> {
+    agents::limits()
+}
+
+#[tauri::command]
+async fn agent_messages(session_id: String, offset: u64) -> Result<agents::Messages, String> {
+    tauri::async_runtime::spawn_blocking(move || agents::messages(&session_id, offset))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn agent_send(id: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || agents::send(&id, &text)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn agent_start(cwd: String, prompt: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || agents::start(&cwd, &prompt)).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn agent_stop(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || agents::stop(&id)).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
@@ -363,16 +399,20 @@ fn settings_page_url(app: &AppHandle) -> WebviewUrl {
 /// one that exists before the island's webview does.
 fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
-    match WebviewWindowBuilder::new(app, "settings", url)
+    let builder = WebviewWindowBuilder::new(app, "settings", url)
         .additional_browser_args(BROWSER_ARGS)
         .title("Settings — Coucou")
         .inner_size(560.0, 680.0)
         .min_inner_size(460.0, 480.0)
         .resizable(true)
         .visible(false)
-        .center()
-        .build()
-    {
+        .center();
+    // On Linux GNOME lists any ordinary window as a running application (Super,
+    // the dock). Coucou lives in the notch and the tray, so neither window should
+    // appear there; Settings is reopened from the island's gear or the tray.
+    #[cfg(target_os = "linux")]
+    let builder = builder.skip_taskbar(true);
+    match builder.build() {
         Ok(win) => {
             // Closing it must only hide it, or it could never be reopened.
             let hidden = win.clone();
@@ -444,6 +484,12 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            agents_list,
+            rate_limits,
+            agent_messages,
+            agent_send,
+            agent_start,
+            agent_stop,
             jinx_send,
             jinx_approve,
             jinx_stop,
