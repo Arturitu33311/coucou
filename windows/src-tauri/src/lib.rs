@@ -25,6 +25,7 @@ mod sysmon;
 mod tasks;
 mod tray;
 mod weather;
+mod workspaces;
 
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -531,6 +532,30 @@ fn tasks_clear_done(shared: State<Shared>) -> Result<Vec<tasks::Task>, String> {
     .map(|l| tasks_shared(&shared, l))
 }
 
+// ── Hub: workspaces (see workspaces.rs) ───────────────────────────────────────
+
+#[tauri::command]
+fn workspaces_list() -> Vec<workspaces::Workspace> {
+    workspaces::load()
+}
+
+#[tauri::command]
+fn workspaces_save(list: Vec<workspaces::Workspace>) -> Result<Vec<workspaces::Workspace>, String> {
+    workspaces::save(list)
+}
+
+/// The installed applications, to choose from. Reads a few hundred small files: off the UI thread.
+#[tauri::command]
+async fn workspaces_apps() -> Result<Vec<workspaces::App>, String> {
+    tauri::async_runtime::spawn_blocking(workspaces::list_apps).await.map_err(|e| e.to_string())
+}
+
+/// Opens a workspace; what could not be opened comes back (empty: everything went).
+#[tauri::command]
+async fn workspaces_launch(id: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || workspaces::launch(&id)).await.map_err(|e| e.to_string())?
+}
+
 // ── Hub: Pomodoro log and statistics (see pomodoro.rs) ─────────────────────────
 
 #[tauri::command]
@@ -818,6 +843,10 @@ pub fn run() {
             tasks_notified,
             tasks_delete,
             tasks_clear_done,
+            workspaces_list,
+            workspaces_save,
+            workspaces_apps,
+            workspaces_launch,
             sys_sample,
             server_sample,
             agents_list,

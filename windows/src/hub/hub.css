@@ -117,3 +117,13 @@
 .pm-hours i { flex: 1 1 0; min-width: 0; background: rgba(129,140,248,0.45); border-radius: 1.5px; }
 .pm-hours i.best { background: #4ADE80; }
 .pm-axis { display: flex; justify-content: space-between; font-size: 8px; opacity: 0.4; margin-bottom: 3px; }
+.ws { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; }
+.ws-name { flex: 0 0 auto; max-width: 110px; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-items { flex: 1 1 auto; }
+.ws-ico { flex: 0 0 auto; opacity: 0.55; font-size: 11px; }
+.ws-add { display: flex; gap: 6px; align-items: center; }
+.ws-add .sh-folder { flex: 1 1 auto; }
+.ws-picker { display: flex; flex-direction: column; gap: 4px; max-height: 118px; min-height: 0; }
+.ws-apps { overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 2px; }
+.ws-app { font: inherit; font-size: 11px; text-align: left; color: inherit; background: rgba(255,255,255,0.045); border: 0; border-radius: 7px; padding: 3px 8px; cursor: pointer; flex: 0 0 auto; }
+.ws-app:hover { background: rgba(129,140,248,0.25); }
