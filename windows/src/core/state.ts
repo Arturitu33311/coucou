@@ -279,6 +279,8 @@ class AppState {
   uploadProgress = 0;
   uploadDuration = 2.4;
   fileDragOver = false;
+  /** What the cloud upload is doing, shown on the drop card in place of its question. */
+  uploadStatus = "";
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;

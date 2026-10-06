@@ -259,6 +259,7 @@ export class Island {
         State.chatTarget = "jinx";
         this.setView("prompt");
       },
+      toCloud: (dest) => void this.sendToCloud(dest),
       cancel: () => this.setView(State.defaultView()),
     });
 
@@ -481,11 +482,19 @@ export class Island {
       case "over": {
         if (State.fileDragOver) return;
         State.fileDragOver = true;
+        // In a conversation the file belongs to it: the chat stays on screen and takes the file on drop.
+        if (this.dropGoesToChat()) {
+          this.engine.animateMorph(1);
+          break;
+        }
         this.engine.animateMorph(1);
         // enterZone must run before the island expands, so the sequence is
         // already active by the time the view becomes `upload`.
         UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
         this.alert("upload");
+        // Waking the island from minimised goes through the home view, which ends the sequence
+        // (leaving the drop flow): start it again now that the upload view is up.
+        if (!UploadSeq.isActive) UploadSeq.enterZone(State.mouseInIsland.x, State.mouseInIsland.y);
         break;
       }
       case "leave": {
@@ -502,13 +511,69 @@ export class Island {
         const path = e.paths?.[0];
         if (!path) {
           this.engine.animateMorph(0);
-          this.setView(State.defaultView());
+          if (!this.dropGoesToChat()) this.setView(State.defaultView());
           return;
         }
-        this.swallow(path);
+        if (this.dropGoesToChat()) this.attachToChat(path);
+        else this.swallow(path);
         break;
       }
     }
+  }
+
+  /** Straight to the cloud, no model involved: the same upload as the Hub's Shelf. */
+  private cloudBusy = false;
+  private async sendToCloud(dest: "school" | "drive") {
+    const file = State.droppedFile;
+    if (!file || this.cloudBusy) return;
+    this.cloudBusy = true;
+    State.uploadStatus = dest === "school" ? "Sending to the server, then to OneDrive…" : "Uploading to Google Drive…";
+    State.notify();
+    try {
+      const folder = (dest === "school" ? State.settings.schoolFolder : State.settings.driveFolder) || "";
+      const r = await Bridge.shelfUpload(file.path, dest, folder);
+      State.uploadStatus = `✓ ${r.location}`;
+      Sound.play("approve");
+    } catch (e) {
+      const m = String(e).replace(/^Error:\s*/, "");
+      State.uploadStatus = (m === "reauth" ? "The school sign-in expired: sign in again from the Hub, Shelf." : m).slice(0, 70);
+      Sound.play("error");
+    } finally {
+      this.cloudBusy = false;
+      State.notify();
+    }
+  }
+
+  /** The chat with an agent (Claude Code, Jinx, a new session) is open: a dropped file goes into it. */
+  private dropGoesToChat(): boolean {
+    return State.mode === "expanded" && State.view === "prompt" && State.chatTarget !== "mochi";
+  }
+
+  /** Puts the file in the open conversation: it rides with the next message, as with the Shelf's Jinx/Claude buttons. */
+  private attachToChat(path: string) {
+    const name = path.split(/[\\/]/).pop() || "file";
+    State.droppedFile = { name, path };
+    State.promptContext = { kind: "file", name, path };
+    State.jinxFilePath = null;
+    State.agentFilePath = null;
+    this.engine.animateMorph(0);
+    this.engine.triggerEmote("happy");
+    Sound.play("approve");
+    State.notify();
+    void Bridge.ingestFile(path)
+      .then((file) => {
+        State.droppedFile = { name: file.name, path: file.path };
+        State.promptContext = { kind: "file", name: file.name, path: file.path };
+        State.notify();
+      })
+      .catch((err) => {
+        State.droppedFile = null;
+        State.promptContext = null;
+        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        Sound.play("error");
+        this.setView("note");
+        window.setTimeout(() => this.setView("prompt"), 2400);
+      });
   }
 
   /**
@@ -524,6 +589,7 @@ export class Island {
     State.jinxHistory = [];
     State.jinxFilePath = null;
     void Bridge.chatReset();
+    State.uploadStatus = "";
 
     UploadSeq.performDrop(State.uploadDuration);
     this.uploadTens = 0;

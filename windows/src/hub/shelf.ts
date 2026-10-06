@@ -32,7 +32,7 @@ function build(ctx: HubContext): HubHost {
   const add = h("input", {
     type: "text", class: "sh-add", placeholder: "Add a file: paste its path and press Enter", spellcheck: "false",
   }) as HTMLInputElement;
-  const main = h("div", { class: "sh" }, h("div", { class: "sh-head" }, count, folder), list, h("div", { class: "sh-foot" }, add), note);
+  const main = h("div", { class: "sh" }, h("div", { class: "sh-head" }, count, folder), h("div", { class: "sh-foot" }, add), list, note);
   const up = h("div", { class: "sh-up" });
   const el = h("div", { class: "sh-wrap" }, main, up);
   up.style.display = "none";

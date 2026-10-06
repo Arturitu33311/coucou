@@ -97,6 +97,9 @@ body {
   height: 176px;
   opacity: 0;
   pointer-events: none;
+  /* Above the views: their container takes the clicks otherwise, and the choose buttons never get any.
+     The canvas itself is click-through, so the header underneath stays usable. */
+  z-index: 3;
   transition: opacity 0.22s ease-in-out;
 }
 

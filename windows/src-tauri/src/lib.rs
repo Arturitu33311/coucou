@@ -395,7 +395,8 @@ async fn shelf_upload(shared: State<'_, Shared>, path: String, dest: String, fol
         // GNOME's drive when the account is signed in there (what the file manager mounts), else rclone.
         "drive" => match drive::gnome_root(&account) {
             Some(_) => drive::gnome_upload(&account, &folder, &file, &name),
-            None => drive::drive_upload(&remote, &folder, &file, &name, None),
+            None if drive::drive_state(&remote, None).connected => drive::drive_upload(&remote, &folder, &file, &name, None),
+            None => Err("No Google account: add it in Settings → Online Accounts (or connect rclone)".to_string()),
         },
         _ => Err("unknown destination".to_string()),
     })
