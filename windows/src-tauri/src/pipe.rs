@@ -37,6 +37,7 @@ use tokio::sync::mpsc;
 
 use crate::island::WINDOW_LABEL;
 use crate::log;
+use crate::remote;
 
 /// Slightly under coucou-hook's own 110 s wait, so we always answer first.
 const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
@@ -206,6 +207,7 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
 
     if event != "PermissionRequest" && !is_question {
         log::line(format!("hook {event}"));
+        remote::publish_event(&payload);
         let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
         pipe.finish();
         return;
@@ -224,10 +226,14 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         ("PermissionRequest", DECISION_TIMEOUT)
     };
     log::line(format!("hook {label} id={id}"));
+    remote::publish_request(&id, is_question, &payload, limit.as_secs());
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
 
     let decision = wait_for_decision(&id, &mut rx, limit).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
+    // Whoever answered (the island, the phone, the clock), the other places learn it is over.
+    remote::publish_resolved(&id, decision.as_deref());
+    let _ = app.emit_to(WINDOW_LABEL, "hook-resolved", json!({ "request_id": id }));
 
     // No decision: say nothing at all. coucou-hook then writes nothing to stdout
     // and Claude Code asks in the terminal, exactly as if Coucou were closed.

@@ -605,6 +605,11 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Show other programs' notifications in the island. It reads what they say (messages, mail), so it is off by " +
         "until you turn it on; nothing is stored or logged. It cannot hide the desktop's own banner." })),
+    h("div", { class: "row" }, h("label", { text: "Phone" }),
+      toggle(settings.remoteEnabled === true, (v) => { settings.remoteEnabled = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Let your phone follow Claude Code and answer its permission requests and questions. It listens to a private " +
+        "socket that only an ssh key restricted to `coucou-hook --remote` can reach; nothing is opened on the network." })),
     h("div", { class: "row" }, h("label", { text: "Weather" }),
       toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
       h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),

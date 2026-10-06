@@ -219,6 +219,8 @@ export interface Settings {
   weatherCity2: string;
   /** Show other programs' notifications in the island (reads their content: off until turned on). */
   notificationPeek: boolean;
+  /** Let a phone follow Claude Code and answer its requests, through ssh (off until turned on). */
+  remoteEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -255,6 +257,7 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherCity: "",
   weatherCity2: "",
   notificationPeek: false,
+  remoteEnabled: false,
 };
 
 type Listener = () => void;

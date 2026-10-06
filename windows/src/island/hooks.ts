@@ -171,7 +171,31 @@ function clearSession() {
   t.pillBadge = null;
 }
 
+/** A request was settled somewhere else (the phone, the clock): its card must not stay up. */
+function resolvedElsewhere(island: Island, requestId: string) {
+  const approval = State.pendingApproval;
+  if (approval && approval.requestId === requestId) {
+    State.pendingApproval = null;
+    State.isPinned = false;
+    island.dropPin();
+    State.updateTask(CLAUDE_ID, "working");
+    State.setPillBadge(CLAUDE_ID, null);
+    if (State.view === "approval") island.setView(State.defaultView());
+  }
+  const question = State.pendingQuestion;
+  if (question && question.requestId === requestId) {
+    State.pendingQuestion = null;
+    State.isPinned = false;
+    island.dropPin();
+    State.updateTask(CLAUDE_ID, "working");
+    State.setPillBadge(CLAUDE_ID, null);
+    if (State.view === "question") island.setView(State.defaultView());
+  }
+  State.notify();
+}
+
 export function registerHookHandlers(island: Island) {
+  void onEvent<{ request_id: string }>("hook-resolved", (e) => resolvedElsewhere(island, e.request_id));
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
 }
 

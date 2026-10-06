@@ -15,6 +15,9 @@
 //!   stdout, and Claude Code asks in the terminal exactly as if Coucou were not
 //!   installed.
 //!
+//! `coucou-hook --remote` is not a hook: it is the command a phone's ssh key is restricted to, and it
+//! pipes the ssh channel to Coucou's phone-link socket (Linux).
+//!
 //! Usage: `coucou-hook [--agent <name>] [--ask] <EventName>` (the name is also
 //! read from the JSON). `--ask` is the PreToolUse hook scoped to
 //! `AskUserQuestion`: Coucou shows the options and the relay hands the chosen
@@ -52,6 +55,11 @@ mod unix;
 use unix::connect;
 
 fn main() {
+    // The one command a phone's ssh key may run: join its channel to Coucou's phone link.
+    #[cfg(target_os = "linux")]
+    if std::env::args().skip(1).any(|a| a == "--remote") {
+        unix::run_remote();
+    }
     let Some(Event { payload, name: event, ask }) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest" || ask.is_some();

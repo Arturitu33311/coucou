@@ -90,6 +90,9 @@ pub struct Settings {
     /// Show other programs' notifications in the island (reads their content: off until turned on).
     #[serde(default)]
     pub notification_peek: bool,
+    /// Let a phone follow Claude Code and answer its requests, through ssh (off until turned on).
+    #[serde(default)]
+    pub remote_enabled: bool,
 }
 
 fn default_drive_remote() -> String {
@@ -177,6 +180,7 @@ impl Default for Settings {
             weather_city: String::new(),
             weather_city2: String::new(),
             notification_peek: false,
+            remote_enabled: false,
         }
     }
 }

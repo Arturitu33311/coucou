@@ -19,6 +19,7 @@ mod notifs;
 mod pipe;
 mod pendientes;
 mod pomodoro;
+mod remote;
 mod quick;
 mod platform;
 mod secrets;
@@ -94,6 +95,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     // The Music pill's switch decides whether the players are watched at all.
     music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
     notifs::sync_enabled(&app, settings.notification_peek);
+    remote::sync_enabled(&app, settings.remote_enabled);
     if autostart_changed {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
@@ -954,6 +956,7 @@ pub fn run() {
                 loaded.active_integrations.iter().any(|x| x == "integration_music"),
             );
             notifs::sync_enabled(&handle, loaded.notification_peek);
+            remote::sync_enabled(&handle, loaded.remote_enabled);
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);

@@ -19,11 +19,16 @@ use crate::CONNECT_TIMEOUT;
 /// directory must be ours and closed to everyone else, or there is no relay.
 /// Must match `platform::relay_socket_path()` in the app exactly.
 fn socket_path() -> Option<PathBuf> {
+    private_runtime_dir().map(|dir| dir.join("coucou.sock"))
+}
+
+/// The user's runtime directory, if it is ours and closed to everyone else.
+fn private_runtime_dir() -> Option<PathBuf> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
-    is_private_dir(&dir).then(|| dir.join("coucou.sock"))
+    is_private_dir(&dir).then_some(dir)
 }
 
 /// A real directory (not a symlink), owned by us, no access for group or others.
@@ -111,4 +116,41 @@ fn server_is_same_user(stream: &UnixStream) -> bool {
     rc == 0
         && len as usize == std::mem::size_of::<libc::ucred>()
         && cred.uid == unsafe { libc::getuid() }
+}
+
+/// `coucou-hook --remote`: what a phone's ssh key is allowed to run, and the only thing it can run.
+/// It joins the ssh channel (stdin and stdout) to Coucou's phone-link socket, line for line, and
+/// does nothing else: no shell, no arguments, no file. If Coucou is closed, or the phone link is
+/// off, it says so in one line and ends.
+pub fn run_remote() -> ! {
+    use std::io::{Read, Write};
+
+    let path = private_runtime_dir().map(|d| d.join("coucou-remote.sock"));
+    let stream = path.and_then(|p| UnixStream::connect(p).ok()).filter(server_is_same_user);
+    let Some(stream) = stream else {
+        println!("{{\"t\":\"offline\"}}");
+        std::process::exit(0);
+    };
+    let Ok(mut to_app) = stream.try_clone() else { std::process::exit(1) };
+    // Phone → Coucou. When the phone hangs up, say so to the app (it then closes its side).
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 4096];
+        let mut stdin = std::io::stdin();
+        while let Ok(n) = stdin.read(&mut chunk) {
+            if n == 0 || to_app.write_all(&chunk[..n]).is_err() {
+                break;
+            }
+        }
+        let _ = to_app.shutdown(std::net::Shutdown::Write);
+    });
+    // Coucou → phone, flushed at every read: events must not sit in a buffer.
+    let mut from_app = stream;
+    let mut out = std::io::stdout();
+    let mut chunk = [0u8; 4096];
+    while let Ok(n) = from_app.read(&mut chunk) {
+        if n == 0 || out.write_all(&chunk[..n]).is_err() || out.flush().is_err() {
+            break;
+        }
+    }
+    std::process::exit(0);
 }
