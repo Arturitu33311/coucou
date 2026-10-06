@@ -432,6 +432,20 @@ export class Island {
     }
   }
 
+  /**
+   * Opened from the keyboard (the toggle shortcut): the pointer is elsewhere, so the short
+   * "pointer left" delay of hover-opening would fold it away at once. It keeps the user's
+   * auto-close time instead.
+   */
+  openFromKeyboard() {
+    this.alert(State.defaultView());
+    if (!this.wasInIsland && !State.isPinned) {
+      this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+      this.fsm.mouseLeft();
+      this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
+    }
+  }
+
   reveal() {
     this.fsm.reveal();
   }

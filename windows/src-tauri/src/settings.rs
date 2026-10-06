@@ -74,6 +74,9 @@ pub struct Settings {
     pub drive_remote: String,
     #[serde(default = "default_drive_folder")]
     pub drive_folder: String,
+    /// The Google account (as listed in GNOME Online Accounts) whose Drive is used; empty = the first one.
+    #[serde(default)]
+    pub drive_account: String,
     /// The folder of the school's OneDrive files go to unless another is typed.
     #[serde(default = "default_school_folder")]
     pub school_folder: String,
@@ -168,6 +171,7 @@ impl Default for Settings {
             jinx_share: true,
             drive_remote: default_drive_remote(),
             drive_folder: default_drive_folder(),
+            drive_account: String::new(),
             school_folder: default_school_folder(),
             weather_on: false,
             weather_city: String::new(),

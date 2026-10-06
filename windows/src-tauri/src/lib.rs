@@ -385,14 +385,18 @@ async fn weather_get(shared: State<'_, Shared>, city: String) -> Result<weather:
 async fn shelf_upload(shared: State<'_, Shared>, path: String, dest: String, folder: String) -> Result<drive::Uploaded, String> {
     let file = files::inside(&files::inbox_dir(), &path)?;
     let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
-    let (host, remote) = {
+    let (host, remote, account) = {
         let s = shared.settings.lock().unwrap();
-        (s.server_host.trim().to_string(), s.drive_remote.trim().to_string())
+        (s.server_host.trim().to_string(), s.drive_remote.trim().to_string(), s.drive_account.trim().to_string())
     };
     tauri::async_runtime::spawn_blocking(move || match dest.as_str() {
         "school" if host.is_empty() => Err("Set the server in Settings → Hub: the school's OneDrive goes through Jinx".to_string()),
         "school" => drive::school_upload(&host, &file, &name, &folder),
-        "drive" => drive::drive_upload(&remote, &folder, &file, &name, None),
+        // GNOME's drive when the account is signed in there (what the file manager mounts), else rclone.
+        "drive" => match drive::gnome_root(&account) {
+            Some(_) => drive::gnome_upload(&account, &folder, &file, &name),
+            None => drive::drive_upload(&remote, &folder, &file, &name, None),
+        },
         _ => Err("unknown destination".to_string()),
     })
     .await
@@ -401,8 +405,20 @@ async fn shelf_upload(shared: State<'_, Shared>, path: String, dest: String, fol
 
 #[tauri::command]
 async fn drive_state(shared: State<'_, Shared>) -> Result<drive::DriveState, String> {
-    let remote = shared.settings.lock().unwrap().drive_remote.trim().to_string();
-    tauri::async_runtime::spawn_blocking(move || drive::drive_state(&remote, None)).await.map_err(|e| e.to_string())
+    let (remote, account) = {
+        let s = shared.settings.lock().unwrap();
+        (s.drive_remote.trim().to_string(), s.drive_account.trim().to_string())
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut st = drive::drive_state(&remote, None);
+        if drive::gnome_root(&account).is_some() {
+            st.installed = true;
+            st.connected = true;
+        }
+        st
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// The one-time Google sign-in for Drive: rclone opens the browser and waits.

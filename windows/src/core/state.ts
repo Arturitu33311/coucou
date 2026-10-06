@@ -210,6 +210,8 @@ export interface Settings {
   /** Where uploads go: the rclone remote and folder for Google Drive, the school OneDrive folder. */
   driveRemote: string;
   driveFolder: string;
+  /** Google account whose Drive GNOME mounts (Online Accounts); empty = the first. */
+  driveAccount: string;
   schoolFolder: string;
   /** The Weather tab asks open-meteo.com for these cities (off until turned on). */
   weatherOn: boolean;
@@ -247,6 +249,7 @@ export const DEFAULT_SETTINGS: Settings = {
   jinxShare: true,
   driveRemote: "gdrive",
   driveFolder: "Coucou",
+  driveAccount: "",
   schoolFolder: "Por clasificar",
   weatherOn: false,
   weatherCity: "",

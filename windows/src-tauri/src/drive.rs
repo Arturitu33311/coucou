@@ -210,6 +210,72 @@ pub fn school_login(host: &str, mut on_line: impl FnMut(String)) -> Result<(), S
     }
 }
 
+// ── Google Drive, through GNOME (the way the file manager mounts it) ──────────
+
+/// The Google accounts GNOME Online Accounts offers as drives, from `gio mount -l -i`.
+pub fn parse_drive_roots(listing: &str) -> Vec<String> {
+    let mut roots: Vec<String> = Vec::new();
+    for line in listing.lines() {
+        if let Some(root) = line.trim().strip_prefix("activation_root=") {
+            if root.starts_with("google-drive://") && !roots.iter().any(|r| r == root) {
+                roots.push(root.to_string());
+            }
+        }
+    }
+    roots
+}
+
+/// The root to use: the account the user named, else the first one.
+pub fn pick_root(roots: &[String], account: &str) -> Option<String> {
+    let account = account.trim();
+    if account.is_empty() {
+        return roots.first().cloned();
+    }
+    roots.iter().find(|r| r.contains(&format!("//{account}/"))).cloned()
+}
+
+/// "My Drive" shows up as one folder named by its id, next to `GVfsSharedWithMe`.
+pub fn pick_my_drive(listing: &str) -> Option<String> {
+    listing.lines().map(str::trim).find(|l| !l.is_empty() && *l != "GVfsSharedWithMe").map(str::to_string)
+}
+
+fn gio_ok(args: &[&str]) -> Result<String, String> {
+    let out = Command::new("gio").args(args).stdin(Stdio::null()).output().map_err(|_| "gio is not installed".to_string())?;
+    if out.status.success() {
+        return Ok(String::from_utf8_lossy(&out.stdout).to_string());
+    }
+    let why = String::from_utf8_lossy(&out.stderr);
+    Err(why.lines().next().unwrap_or("").trim().chars().take(140).collect())
+}
+
+/// The drive root of the chosen account, if GNOME has it (it must be signed in under Settings → Online Accounts).
+pub fn gnome_root(account: &str) -> Option<String> {
+    let listing = gio_ok(&["mount", "-l", "-i"]).ok()?;
+    pick_root(&parse_drive_roots(&listing), account)
+}
+
+/// Copies `path` to `My Drive/folder/name` through the mounted drive.
+pub fn gnome_upload(account: &str, folder: &str, path: &Path, name: &str) -> Result<Uploaded, String> {
+    let root = gnome_root(account).ok_or_else(|| "No Google Drive in GNOME Online Accounts".to_string())?;
+    // Mounting is what the file manager does when the drive is opened; it is a no-op when already mounted.
+    let _ = gio_ok(&["mount", &root]);
+    let top = gio_ok(&["list", &root]).map_err(|e| format!("Cannot open the drive ({e}): sign in again under Settings → Online Accounts"))?;
+    let my_drive = pick_my_drive(&top).ok_or_else(|| "The drive looks empty".to_string())?;
+    let folder = clean_folder(folder, DEFAULT_DRIVE_FOLDER);
+    let dir = format!("{root}{my_drive}/{folder}");
+    if gio_ok(&["info", &dir]).is_err() {
+        gio_ok(&["mkdir", "-p", &dir])?;
+    }
+    // A file of the same name is never replaced: it gets the time in front of its name instead.
+    let mut name = name.to_string();
+    if gio_ok(&["info", &format!("{dir}/{name}")]).is_ok() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        name = format!("{stamp}-{name}");
+    }
+    gio_ok(&["copy", &path.to_string_lossy(), &format!("{dir}/{name}")])?;
+    Ok(Uploaded { location: format!("Google Drive: {folder}/{name}"), url: None })
+}
+
 // ── Google Drive, through rclone ──────────────────────────────────────────────
 
 fn rclone_with(config: Option<&Path>) -> Command {
@@ -295,6 +361,20 @@ mod tests {
     }
 
     #[test]
+    fn the_gnome_drive_is_found_by_account_and_my_drive_by_elimination() {
+        let listing = "Volume(0): a@gmail.com\n  uuid=google-drive://a@gmail.com/\n  activation_root=google-drive://a@gmail.com/\n\
+                       Volume(1): b@gmail.com\n  activation_root=google-drive://b@gmail.com/\n  activation_root=google-drive://b@gmail.com/\n\
+                       Mount(0): disk -> file:///media/x\n  activation_root=file:///media/x\n";
+        let roots = parse_drive_roots(listing);
+        assert_eq!(roots, vec!["google-drive://a@gmail.com/", "google-drive://b@gmail.com/"]);
+        assert_eq!(pick_root(&roots, "").as_deref(), Some("google-drive://a@gmail.com/"));
+        assert_eq!(pick_root(&roots, " b@gmail.com ").as_deref(), Some("google-drive://b@gmail.com/"));
+        assert_eq!(pick_root(&roots, "c@gmail.com"), None);
+        assert_eq!(pick_my_drive("0ADjUkGApBHPKUk9PVA\nGVfsSharedWithMe\n").as_deref(), Some("0ADjUkGApBHPKUk9PVA"));
+        assert_eq!(pick_my_drive("GVfsSharedWithMe\n"), None);
+    }
+
+    #[test]
     fn staged_names_are_plain_and_unique_by_time() {
         assert_eq!(staging_name("captura de pantalla (1).png", 17), "17-captura_de_pantalla__1_.png");
         assert_eq!(staging_name("a'b;c$d", 5), "5-a_b_c_d");
@@ -328,6 +408,17 @@ mod tests {
         let file = std::env::temp_dir().join("coucou-probe-delete-me.txt");
         std::fs::write(&file, "probe").unwrap();
         println!("result: {:?}", school_upload(&host, &file, "coucou-probe-delete-me.txt", "Por clasificar"));
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// `COUCOU_PROBE_ACCOUNT=you@gmail.com cargo test --lib real_gnome_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn real_gnome_probe() {
+        let account = std::env::var("COUCOU_PROBE_ACCOUNT").expect("COUCOU_PROBE_ACCOUNT");
+        let file = std::env::temp_dir().join("coucou-probe-delete-me.txt");
+        std::fs::write(&file, "probe").unwrap();
+        println!("result: {:?}", gnome_upload(&account, "Coucou", &file, "coucou-probe-delete-me.txt"));
         let _ = std::fs::remove_file(&file);
     }
 

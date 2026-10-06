@@ -582,6 +582,7 @@ function hubSection(): HTMLElement {
   };
   const driveRemote = field(settings.driveRemote ?? "gdrive", "rclone remote (gdrive)", (v) => (settings.driveRemote = v || "gdrive"), "width:120px");
   const driveFolder = field(settings.driveFolder ?? "Coucou", "Drive folder (Coucou)", (v) => (settings.driveFolder = v || "Coucou"));
+  const driveAccount = field(settings.driveAccount ?? "", "Google account (you@gmail.com)", (v) => (settings.driveAccount = v.trim()));
   const weatherCity = field(settings.weatherCity ?? "", "City (Zapopan)", (v) => (settings.weatherCity = v));
   const weatherCity2 = field(settings.weatherCity2 ?? "", "Second city (optional)", (v) => (settings.weatherCity2 = v));
   const schoolFolder = field(settings.schoolFolder ?? "Por clasificar", "Por clasificar", (v) => (settings.schoolFolder = v || "Por clasificar"));
@@ -607,8 +608,8 @@ function hubSection(): HTMLElement {
     h("div", { class: "row" }, h("label", { text: "Weather" }),
       toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
       h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),
-    h("div", { class: "row" }, h("label", { text: "Uploads" }), driveRemote, driveFolder,
-      h("span", { class: "hint", text: "Google Drive: the rclone remote and the folder; connect it from the Shelf. School OneDrive uses Jinx's sign-in." })),
+    h("div", { class: "row" }, h("label", { text: "Uploads" }), driveAccount, driveFolder, driveRemote,
+      h("span", { class: "hint", text: "Google Drive goes through GNOME Online Accounts (the account above, the folder under My Drive); the rclone remote is the fallback. School OneDrive uses Jinx's sign-in." })),
     h("div", { class: "row" }, h("label", { text: "School folder" }), schoolFolder,
       h("span", { class: "hint", text: "e.g. Por clasificar, or Materias/BIOLOGIA I/Actividades" })),
     h("div", { class: "row" }, h("label", { text: "Services" }), services,

@@ -65,7 +65,7 @@ async function main() {
       case "toggle":
         setPaused(false);
         if (State.mode === "expanded") island.fsm.forcePetit();
-        else island.alert(State.defaultView());
+        else island.openFromKeyboard();
         break;
       case "pause":
         setPaused(!State.paused);
