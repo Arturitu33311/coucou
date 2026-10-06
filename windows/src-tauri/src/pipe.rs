@@ -226,10 +226,11 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         ("PermissionRequest", DECISION_TIMEOUT)
     };
     log::line(format!("hook {label} id={id}"));
-    remote::publish_request(&id, is_question, &payload, limit.as_secs());
-    let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+    let _ = app.emit_to(WINDOW_LABEL, "hook", payload.clone());
 
-    let decision = wait_for_decision(&id, &mut rx, limit).await;
+    // The phone hears of a request only once the island has it on screen: one that the island hands
+    // straight back to the terminal (another card is up, or it is paused) is not one to answer.
+    let decision = wait_for_decision(&id, &mut rx, limit, || remote::publish_request(&id, is_question, &payload, limit.as_secs())).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
     // Whoever answered (the island, the phone, the clock), the other places learn it is over.
     remote::publish_resolved(&id, decision.as_deref());
@@ -261,9 +262,10 @@ async fn wait_for_decision(
     id: &str,
     rx: &mut mpsc::Receiver<Reply>,
     limit: Duration,
+    on_ack: impl FnOnce(),
 ) -> Option<String> {
     match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
-        Ok(Some(Reply::Ack)) => {}
+        Ok(Some(Reply::Ack)) => on_ack(),
         // A click that beats the ack is still a click.
         Ok(Some(Reply::Decision(d))) => {
             log::line(format!("hook id={id} answered {}", describe(&d)));

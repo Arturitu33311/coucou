@@ -31,6 +31,8 @@ export interface Task {
   jinx: boolean;
   /** Her id for it, once she has it. */
   jinxId: string | null;
+  /** Who made it when it was not made here (her source: "hook", "teams", "portal"…): the list marks it. */
+  origin?: string | null;
 }
 
 /** One of Jinx's own pendientes. */
@@ -55,7 +57,6 @@ const MAX_WAIT_MS = 24 * 3600 * 1000;
 const SYNC_EVERY_MS = 60_000;
 
 let list: Task[] = [];
-let fromJinx: JinxRow[] = [];
 let syncError: string | null = null;
 let timer: number | null = null;
 let announce: (due: Task[]) => void = () => {};
@@ -109,7 +110,6 @@ async function reload() {
 /** A round with Jinx's pendientes: hand over, follow what was closed, list what she holds. */
 async function sync() {
   if (!sharing()) {
-    fromJinx = [];
     syncError = null;
     return;
   }
@@ -121,7 +121,6 @@ async function sync() {
   try {
     const r = (await Bridge.tasksSync()) as SyncResult;
     set(r.tasks);
-    fromJinx = r.jinx;
     syncError = r.error && r.error !== "busy" ? r.error : null;
   } catch (e) {
     syncError = String(e).replace(/^Error:\s*/, "");
@@ -207,18 +206,6 @@ function when(unix: number): { text: string; late: boolean } {
   return { text: `${day}${clock}`, late: false };
 }
 
-/** Her due dates are plain days ("2026-10-06"). */
-function dueText(due: string): { text: string; late: boolean } {
-  const d = new Date(`${due}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const days = Math.round((d.getTime() - today.getTime()) / 86_400_000);
-  if (days < 0) return { text: `${-days} d late`, late: true };
-  if (days === 0) return { text: "today", late: false };
-  if (days === 1) return { text: "tomorrow", late: false };
-  return { text: d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }), late: false };
-}
-
 function tomorrowAtNine(): number {
   const d = new Date();
   d.setDate(d.getDate() + 1);
@@ -253,18 +240,6 @@ function build(): HubHost {
       err.textContent = "";
       set(await p);
       soon();
-    } catch (e) {
-      err.textContent = String(e).replace(/^Error:\s*/, "");
-    }
-    render();
-  }
-
-  async function jinxDo(id: string, action: "hecho" | "descartado") {
-    try {
-      err.textContent = "";
-      await Bridge.jinxResolve(id, action);
-      fromJinx = fromJinx.filter((r) => r.id !== id);
-      void sync().then(render);
     } catch (e) {
       err.textContent = String(e).replace(/^Error:\s*/, "");
     }
@@ -315,37 +290,13 @@ function build(): HubHost {
     return h("div", { class: "sh-row" }, ...kids);
   }
 
-  /** One of her own pendientes: told to her, not made here. */
-  function jinxRow(r: JinxRow): HTMLElement {
-    const kids: Node[] = [h("div", { class: "sh-name", text: r.titulo, title: r.titulo })];
-    if (r.due) {
-      const d = dueText(r.due);
-      kids.push(h("div", { class: `sh-meta${d.late ? " tk-late" : ""}`, text: d.text }));
-    }
-    if (r.source === "teams") {
-      // The school's assignments are mirrored by her own job: closing them here would be undone.
-      kids.push(h("div", { class: "sh-meta", text: "Teams" }));
-    } else {
-      const ok = h("button", { class: "hub-btn sm", text: "✓", title: "Done" });
-      ok.addEventListener("click", () => void jinxDo(r.id, "hecho"));
-      const no = h("button", { class: "hub-btn sm", text: "×", title: "Dismiss it" });
-      no.addEventListener("click", () => void jinxDo(r.id, "descartado"));
-      kids.push(ok, no);
-    }
-    return h("div", { class: "sh-row tk-fromjinx" }, ...kids);
-  }
-
   function render() {
     clear(rows);
     // Open ones first (reminders by time, then the rest), the finished ones at the bottom.
     const open = list.filter((t) => !t.done).sort((a, b) => (a.remindAt ?? Infinity) - (b.remindAt ?? Infinity) || a.created - b.created);
     const done = list.filter((t) => t.done).sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
     for (const t of [...open, ...done]) rows.append(row(t));
-    if (fromJinx.length > 0) {
-      rows.append(h("div", { class: "cal-day", text: "From Jinx" }));
-      for (const r of fromJinx) rows.append(jinxRow(r));
-    }
-    if (list.length === 0 && fromJinx.length === 0) {
+    if (list.length === 0) {
       rows.append(h("div", { class: "hub-hint", text: "Nothing to do. Add a task above; put a time in it and Mochi will remind you." }));
     }
     syncNote.textContent = syncError ? `Jinx: ${syncError}` : "";

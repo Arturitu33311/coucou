@@ -130,4 +130,3 @@
 .ws > .sh-folder, .ws-picker > .sh-folder { flex: 0 0 auto; }
 .tk-jinx { opacity: 0.55; }
 .tk-jinx.on { opacity: 1; border-color: rgba(57,255,20,0.55); color: #39FF14; }
-.tk-fromjinx { background: rgba(57,255,20,0.05); }

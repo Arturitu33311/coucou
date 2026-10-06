@@ -36,6 +36,10 @@ pub struct Task {
     /// Her id for it, once she has it. Its state and ours follow each other (see `reconcile`).
     #[serde(default)]
     pub jinx_id: Option<String>,
+    /// Who made it when it was not made here: her source ("hook", "teams", "portal"…). The list shows
+    /// a mark for these; they work like any other task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 /// One row of Jinx's pendientes, as far as the Hub needs it.
@@ -115,7 +119,7 @@ pub fn add(list: &mut Vec<Task>, title: &str, remind_at: Option<i64>, now: i64) 
     if list.len() >= MAX_TASKS {
         return Err("Too many tasks: finish or clear some first".into());
     }
-    list.push(Task { id: new_id(now), title, done: false, remind_at, notified: false, created: now, completed_at: None, jinx: false, jinx_id: None });
+    list.push(Task { id: new_id(now), title, done: false, remind_at, notified: false, created: now, completed_at: None, jinx: false, jinx_id: None, origin: None });
     Ok(())
 }
 
@@ -212,6 +216,63 @@ pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
 /// Her open pendientes that are not one of our shared tasks (the ones to show beside ours).
 pub fn unlinked_open(list: &[Task], jinx: &[JinxRow]) -> Vec<JinxRow> {
     jinx.iter().filter(|r| r.open() && !list.iter().any(|t| t.jinx_id.as_deref() == Some(r.id.as_str()))).cloned().collect()
+}
+
+/// The day number (from 1970-01-01) of "2026-10-06", the inverse of `civil_date`.
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// When a pendiente with only a day gets its reminder: 09:00 that day, in this computer's time zone.
+pub fn due_reminder(due: &str, offset: &dyn Fn(i64) -> i64) -> Option<i64> {
+    let b = due.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let (y, m, d) = (due[0..4].parse::<i64>().ok()?, due[5..7].parse::<i64>().ok()?, due[8..10].parse::<i64>().ok()?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let nine = days_from_civil(y, m, d) * 86_400 + 9 * 3600;
+    Some(nine - offset(nine))
+}
+
+/// Her open pendientes that are not any task of ours become tasks of ours — the same kind, with the same
+/// actions — marked with who made them. One with a day gets a reminder at 09:00 that day, unless that time
+/// has passed (it then shows as late, without ringing for something old). Returns how many were taken in.
+pub fn import_unlinked(list: &mut Vec<Task>, jinx: &[JinxRow], now: i64, offset: &dyn Fn(i64) -> i64) -> usize {
+    let mut taken = 0;
+    for r in jinx.iter().filter(|r| r.open()) {
+        if list.len() >= MAX_TASKS || list.iter().any(|t| t.jinx_id.as_deref() == Some(r.id.as_str())) {
+            continue;
+        }
+        let title: String = r.titulo.trim().chars().take(MAX_TITLE).collect();
+        if title.is_empty() {
+            continue;
+        }
+        let remind_at = r.due.as_deref().and_then(|d| due_reminder(d, offset));
+        list.push(Task {
+            id: format!("j-{}", r.id),
+            title,
+            done: false,
+            remind_at,
+            // Only a reminder still to come may ring.
+            notified: remind_at.is_some_and(|t| t <= now),
+            created: now,
+            completed_at: None,
+            jinx: true,
+            jinx_id: Some(r.id.clone()),
+            origin: r.source.clone().filter(|s| s != "coucou"),
+        });
+        taken += 1;
+    }
+    taken
 }
 
 /// "2026-10-06" for a day number counted from 1970-01-01 (proleptic Gregorian).
@@ -504,6 +565,67 @@ mod tests {
         assert_eq!(civil_date(11_016), "2000-02-29");
         assert_eq!(civil_date(20_732), "2026-10-06");
         assert_eq!(civil_date(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn a_day_becomes_nine_in_the_morning_in_this_zone() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 2, 29), 11_016);
+        assert_eq!(days_from_civil(2026, 10, 6), 20_732);
+        assert_eq!(days_from_civil(1969, 12, 31), -1);
+        assert_eq!(due_reminder("2026-10-06", &|_| 0), Some(20_732 * DAY + 9 * 3600));
+        assert_eq!(due_reminder("2026-10-06", &|_| -6 * 3600), Some(20_732 * DAY + 15 * 3600), "09:00 at UTC-6 is 15:00 UTC");
+        for bad in ["mañana", "2026-13-01", "2026-10-00", "2026/10/06", "", "2026-10-061"] {
+            assert_eq!(due_reminder(bad, &|_| 0), None, "{bad}");
+        }
+    }
+
+    fn pend(id: &str, source: &str, due: Option<&str>, status: &str) -> JinxRow {
+        JinxRow { id: id.into(), titulo: format!("pend {id}"), due: due.map(String::from), categoria: None, source: Some(source.into()), status: status.into() }
+    }
+
+    #[test]
+    fn what_jinx_made_becomes_ordinary_tasks_with_a_mark() {
+        let today = 20_732 * DAY + 10 * 3600; // 2026-10-06 10:00 UTC
+        let mut l = Vec::new();
+        let rows = [
+            pend("a", "hook", Some("2026-10-08"), "pendiente"),   // a day ahead: rings at 09:00 that day
+            pend("b", "teams", Some("2026-10-06"), "pendiente"),  // today, 09:00 has passed: late, silent
+            pend("c", "portal", None, "pendiente"),               // no day: no reminder
+            pend("d", "coucou", None, "pendiente"),               // made on another of my devices: no mark
+            pend("e", "hook", None, "hecho"),                     // closed: not taken in
+        ];
+        assert_eq!(import_unlinked(&mut l, &rows, today, &|_| 0), 4);
+        let by = |id: &str| l.iter().find(|t| t.jinx_id.as_deref() == Some(id)).unwrap();
+        assert_eq!((by("a").remind_at, by("a").notified, by("a").origin.as_deref()), (Some(20_734 * DAY + 9 * 3600), false, Some("hook")));
+        assert_eq!((by("b").remind_at, by("b").notified, by("b").origin.as_deref()), (Some(20_732 * DAY + 9 * 3600), true, Some("teams")));
+        assert_eq!((by("c").remind_at, by("c").origin.as_deref()), (None, Some("portal")));
+        assert_eq!(by("d").origin, None);
+        assert!(l.iter().all(|t| t.jinx && !t.done), "shared with her, open");
+        // They behave like any other: the next sync leaves them alone, and it takes nothing in twice.
+        assert_eq!(import_unlinked(&mut l, &rows, today, &|_| 0), 0);
+        assert_eq!(reconcile(&mut l, &rows, today), Plan::default());
+        // She closes one: it is done here; we close one: it is closed there.
+        let mut rows2 = rows.to_vec();
+        rows2[0].status = "hecho".into();
+        reconcile(&mut l, &rows2, today);
+        assert!(by_id(&l, "a").done);
+        let id = l.iter().find(|t| t.jinx_id.as_deref() == Some("c")).unwrap().id.clone();
+        set_done(&mut l, &id, true, today).unwrap();
+        assert_eq!(reconcile(&mut l, &rows2, today).to_resolve, vec![("c".to_string(), "hecho")]);
+    }
+
+    fn by_id<'a>(l: &'a [Task], jid: &str) -> &'a Task {
+        l.iter().find(|t| t.jinx_id.as_deref() == Some(jid)).unwrap()
+    }
+
+    #[test]
+    fn nothing_is_taken_in_beyond_the_limit() {
+        let mut l = Vec::new();
+        for _ in 0..MAX_TASKS {
+            let _ = add(&mut l, "t", None, NOW);
+        }
+        assert_eq!(import_unlinked(&mut l, &[pend("z", "hook", None, "pendiente")], NOW, &|_| 0), 0);
     }
 
     #[test]

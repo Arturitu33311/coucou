@@ -230,6 +230,12 @@ pub fn sync(host: &str) -> SyncResult {
     }
     // What was just changed is read again, so a closed pendiente does not flash back.
     let rows = if wrote { read().unwrap_or(rows) } else { rows };
+    // Hers become ours: the same kind of task, with the same actions, marked with who made them.
+    let now = tasks::now();
+    let _ = tasks::update(|l| {
+        tasks::import_unlinked(l, &rows, now, &crate::pomodoro::local_offset);
+        Ok(())
+    });
     let list = tasks::load();
     SyncResult { jinx: tasks::unlinked_open(&list, &rows), tasks: list, error }
 }
