@@ -294,6 +294,13 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
+  { id: "integration_jinx", name: "Jinx", color: "#39FF14",
+    fields: [
+      { key: "jinx-url", label: "Hermes address", placeholder: "http://100.x.y.z:8642", secret: false },
+      { key: "jinx-api-key", label: "API key", placeholder: "the gateway's API_SERVER_KEY", secret: true },
+    ],
+    note: "Talk to Jinx from the island: her replies and her permission requests show up here. " +
+      "Both values are stored in the Secret Service, never on disk." },
   { id: "integration_music", name: "Music", color: "#FA2D48", fields: [],
     note: "What is playing — Spotify, a browser tab, VLC… No key needed. Options are under Music below." },
 ];

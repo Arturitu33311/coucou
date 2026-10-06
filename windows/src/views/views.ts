@@ -6,13 +6,14 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { Bridge } from "../core/bridge";
-import { State, type AgentTask, type QuestionItem } from "../core/state";
+import { JINX_ID, State, type AgentTask, type QuestionItem } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { buildMusicCompact, buildMusicView } from "./music";
+import { buildJinxCard } from "./jinx";
 import { musicTint } from "../island/music";
 
 export interface ViewActions {
@@ -24,6 +25,9 @@ export interface ViewActions {
   openTarget(): void;
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
+  /** Opens the chat addressed to Jinx. */
+  talkToJinx(): void;
+  stopJinx(): void;
   /** Every question of the pending AskUserQuestion has an answer: hand them over. */
   submitQuestion(): void;
   /** "Reply in terminal": no answer from here, Claude Code asks in its own prompt. */
@@ -145,11 +149,12 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | "music" | null = null;
+  let mode: "ticker" | "card" | "music" | "jinx" | null = null;
   let cardKey = "";
   // The Music card keeps its own DOM (its controls and bars update every frame),
   // so it is built once here and mounted into the left card when it is in focus.
   const music = buildMusicCompact(actions);
+  const jinx = buildJinxCard(actions);
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -208,6 +213,14 @@ function buildOverview(actions: ViewActions): ViewHost {
           }));
         }
         ticker.sync(task);
+      } else if (task?.id === JINX_ID) {
+        if (mode !== "jinx") {
+          clear(leftBody);
+          leftBody.append(jinx.el);
+          mode = "jinx";
+          cardKey = "";
+        }
+        jinx.sync();
       } else if (task?.id === "integration_music") {
         if (mode !== "music") {
           clear(leftBody);

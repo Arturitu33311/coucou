@@ -16,6 +16,8 @@ pub const KNOWN_KEYS: &[&str] = &[
     "resend-api-key",
     "notion-api-key",
     "calcom-api-key",
+    "jinx-url",
+    "jinx-api-key",
 ];
 
 fn entry(key: &str) -> Option<Entry> {

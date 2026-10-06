@@ -5,7 +5,8 @@ import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, type ChatMessage } from "../core/state";
+import { JINX_ID, State, type ChatMessage } from "../core/state";
+import { jinxSendFailed, jinxStarted } from "../island/jinx";
 import type { ViewHost } from "./views";
 
 let nextId = 1;
@@ -36,8 +37,25 @@ function contextChip(label: string): HTMLElement {
   return chip;
 }
 
+/** The thread the chat is showing: Mochi's, or Jinx's when she is the one being talked to. */
+function thread(): ChatMessage[] {
+  return State.chatTarget === "jinx" ? State.jinxHistory : State.chatHistory;
+}
+
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const chipRow = h("div", { class: "chip-row" });
+  // Only when the Jinx pill is on: who the next message goes to.
+  const mochiBtn = h("button", { text: "Mochi" });
+  const jinxBtn = h("button", { text: "Jinx" });
+  const targetRow = h("div", { class: "chat-target" }, mochiBtn, jinxBtn);
+  const setTarget = (t: "mochi" | "jinx") => {
+    State.chatTarget = t;
+    State.notify();
+    onHeightChange();
+    input.focus();
+  };
+  mochiBtn.addEventListener("click", () => setTarget("mochi"));
+  jinxBtn.addEventListener("click", () => setTarget("jinx"));
   const log = h("div", { class: "chat-log" });
   const input = h("input", {
     type: "text",
@@ -51,16 +69,46 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, targetRow, chipRow, log, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
   let sending = false;
-  let renderedCount = -1;
+  let renderedKey = "";
+
+  /** One message to Jinx: the answer arrives as events (see island/jinx.ts). */
+  async function submitToJinx(query: string) {
+    // As with Mochi, the dropped file rides along with the thread's first message
+    // (Jinx keeps the session); she gets its text, so what she can't read is refused.
+    const file = State.droppedFile;
+    const context: ChatContext | null =
+      file && State.jinxFilePath !== file.path ? { kind: "file", name: file.name, path: file.path } : null;
+    State.jinxHistory.push({ id: nextId++, role: "user", content: query });
+    Sound.play("send");
+    jinxStarted();
+    State.notify();
+    onHeightChange();
+    try {
+      await Bridge.jinxSend(query, context);
+      if (context) State.jinxFilePath = context.kind === "file" ? context.path ?? null : null;
+    } catch (err) {
+      jinxSendFailed(String(err).replace(/^Error:\s*/, ""));
+    } finally {
+      State.notify();
+      onHeightChange();
+      input.focus();
+    }
+  }
 
   async function submit() {
     const query = input.value.trim();
     if (!query || sending) return;
+    if (State.chatTarget === "jinx") {
+      if (State.jinxBusy) return;
+      input.value = "";
+      await submitToJinx(query);
+      return;
+    }
     input.value = "";
     sending = true;
     Sound.play("send");
@@ -112,18 +160,32 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         if (wantChip) chipRow.append(contextChip(wantChip));
       }
 
-      const thinking = State.stateOverride === "thinking";
-      const count = State.chatHistory.length + (thinking ? 0.5 : 0);
-      if (count !== renderedCount) {
-        renderedCount = count;
+      const jinxAvailable = State.tasks.some((t) => t.id === JINX_ID);
+      if (!jinxAvailable) State.chatTarget = "mochi";
+      const toJinx = State.chatTarget === "jinx";
+      targetRow.style.display = jinxAvailable ? "" : "none";
+      mochiBtn.classList.toggle("on", !toJinx);
+      jinxBtn.classList.toggle("on", toJinx);
+
+      const history = thread();
+      const last = history[history.length - 1];
+      // Jinx is "thinking" until her first words arrive.
+      const thinking = toJinx
+        ? State.jinxBusy && (!last || last.role === "user")
+        : State.stateOverride === "thinking";
+      const key = `${State.chatTarget}:${history.length}:${last?.content.length ?? 0}:${thinking}`;
+      if (key !== renderedKey) {
+        renderedKey = key;
         clear(log);
-        for (const m of State.chatHistory) log.append(bubble(m));
+        for (const m of history) log.append(bubble(m));
         if (thinking) log.append(typingDots());
         log.scrollTop = log.scrollHeight;
       }
 
-      input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
-      input.disabled = sending;
+      input.placeholder = toJinx
+        ? (history.length === 0 ? "Talk to Jinx…" : "Continue with Jinx…")
+        : (State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…");
+      input.disabled = toJinx ? State.jinxBusy : sending;
     },
     focus() {
       input.focus();

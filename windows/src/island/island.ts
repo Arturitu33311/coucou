@@ -10,7 +10,8 @@ import {
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { JINX_ID, State } from "../core/state";
+import { answerJinxApproval } from "./jinx";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
@@ -141,6 +142,7 @@ export class Island {
         };
         if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
         else if (task.id === "integration_music") this.setView("music");
+        else if (task.id === JINX_ID) actions.talkToJinx();
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
@@ -152,13 +154,23 @@ export class Island {
         void Bridge.log(`decide ${d} req=${req?.requestId ?? "none"}`);
         if (!req) return;
         Sound.play(d === "deny" ? "blip" : "approve");
-        void Bridge.approvalDecision(req.requestId, d);
+        // Jinx's requests go back to Hermes; everything else is Claude Code's relay.
+        const agent = req.jinxRun ? JINX_ID : "integration_claude";
+        if (req.jinxRun) answerJinxApproval(d === "allow");
+        else void Bridge.approvalDecision(req.requestId, d);
         State.pendingApproval = null;
         State.isPinned = false;
         this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
-        State.setPillBadge("integration_claude", null);
+        State.updateTask(agent, "working");
+        State.setPillBadge(agent, null);
         this.setView(State.defaultView());
+      },
+      talkToJinx: () => {
+        State.chatTarget = "jinx";
+        this.setView("prompt");
+      },
+      stopJinx: () => {
+        void Bridge.jinxStop();
       },
       submitQuestion: () => {
         const req = State.pendingQuestion;
@@ -225,6 +237,14 @@ export class Island {
         State.promptContext = State.droppedFile
           ? { kind: "file", name: State.droppedFile.name, path: State.droppedFile.path }
           : null;
+        State.chatTarget = "mochi";
+        this.setView("prompt");
+      },
+      askJinx: () => {
+        State.promptContext = State.droppedFile
+          ? { kind: "file", name: State.droppedFile.name, path: State.droppedFile.path }
+          : null;
+        State.chatTarget = "jinx";
         this.setView("prompt");
       },
       cancel: () => this.setView(State.defaultView()),
@@ -468,6 +488,8 @@ export class Island {
     State.droppedFile = { name, path };
     State.promptContext = { kind: "file", name, path };
     State.chatHistory = [];
+    State.jinxHistory = [];
+    State.jinxFilePath = null;
     void Bridge.chatReset();
 
     UploadSeq.performDrop(State.uploadDuration);

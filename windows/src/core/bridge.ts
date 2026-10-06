@@ -109,6 +109,12 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  /** Starts a Jinx run; the answer streams back as `jinx` events. */
+  jinxSend: (text: string, context: ChatContext | null) => callOrThrow<void>("jinx_send", { text, context }),
+  jinxApprove: (runId: string, requestId: string, choice: "once" | "session" | "always" | "deny") =>
+    callOrThrow<void>("jinx_approve", { runId, requestId, choice }),
+  jinxStop: () => call<void>("jinx_stop"),
+  jinxTest: () => callOrThrow<string>("jinx_test"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -168,6 +174,7 @@ async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Prom
 export type BridgeEvent =
   | { name: "cursor"; payload: { x: number; y: number } }
   | { name: "gaze"; payload: { x: number; y: number } }
+  | { name: "jinx"; payload: Record<string, unknown> }
   | { name: "tray"; payload: string }
   | { name: "hook"; payload: Record<string, unknown> }
   | { name: "screen-changed"; payload: null };

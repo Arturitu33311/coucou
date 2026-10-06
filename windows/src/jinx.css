@@ -1,0 +1,10 @@
+/* Jinx: the pill's card and the Mochi | Jinx switch in the chat. */
+.jx-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px 12px 116px; height: 100%; justify-content: center; min-width: 0; box-sizing: border-box; }
+.jx-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; }
+.jx-head .jx-state { font-weight: 500; opacity: 0.55; }
+.jx-reply { font-size: 12px; line-height: 1.35; opacity: 0.85; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.jx-reply.hint { opacity: 0.5; }
+.jx-actions { display: flex; gap: 8px; margin-top: 2px; }
+.chat-target { display: flex; gap: 4px; padding: 0 2px 6px; }
+.chat-target button { font: inherit; font-size: 10.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.14); background: transparent; color: inherit; opacity: 0.6; cursor: pointer; }
+.chat-target button.on { opacity: 1; background: rgba(57,255,20,0.16); border-color: rgba(57,255,20,0.55); }

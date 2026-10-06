@@ -26,6 +26,8 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** Set when Jinx (Hermes) is the one asking: the run to answer. */
+  jinxRun?: string;
 }
 
 /** One multiple-choice question of an AskUserQuestion call. */
@@ -90,14 +92,17 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
   // Same id and colour as the macOS "Apple Music" pill; here it follows whatever
   // MPRIS player is running (Linux).
   task("integration_music", "Music", "#FA2D48", "n8n"),
+  // Jinx (the Hermes agent) as a character: chat, replies and permission requests.
+  task("integration_jinx", "Jinx", "#39FF14", "n8n"),
 ];
 
 export const TOGGLEABLE_INTEGRATION_IDS = [
   "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
-  "integration_notion", "integration_calcom", "integration_stripe", "integration_music",
+  "integration_notion", "integration_calcom", "integration_stripe", "integration_music", "integration_jinx",
 ];
 
 export const MUSIC_ID = "integration_music";
+export const JINX_ID = "integration_jinx";
 
 /** What the player reports (see music.rs). */
 export interface MusicTrack {
@@ -218,6 +223,13 @@ class AppState {
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
+  /** Who the chat talks to: Mochi (Claude's API) or Jinx (Hermes). Each keeps its own thread. */
+  chatTarget: "mochi" | "jinx" = "mochi";
+  jinxHistory: ChatMessage[] = [];
+  /** The dropped file already sent to Jinx (she keeps it for the whole session). */
+  jinxFilePath: string | null = null;
+  /** A Jinx run is under way (from sending until its last event). */
+  jinxBusy = false;
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
   /** What the Music pill is showing; null when no player has a track. */

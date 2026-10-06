@@ -5,7 +5,7 @@
 // the file being sucked in. The island's own Mochi is hidden for the duration,
 // exactly as on macOS, because this canvas draws its own.
 
-import { State } from "../core/state";
+import { JINX_ID, State } from "../core/state";
 import {
   USC, eIn, eInOut, eOut, lerp, progressAt,
   type UploadEyeShape, type UploadFrame,
@@ -60,8 +60,17 @@ function text(
 export interface UploadCanvasActions {
   /** Primary button — hand the file to the chat. */
   ask(): void;
+  /** The same file, to Jinx — offered when her pill is on. */
+  askJinx(): void;
   /** Secondary button. */
   cancel(): void;
+}
+
+/** Where the choose buttons sit: the original two, or three once Jinx is an option. */
+function chooseLayout(jinxOn: boolean) {
+  return jinxOn
+    ? { ask: [114, 104], jinx: [226, 96], cancel: [330, 80] }
+    : { ask: [114, 168], jinx: [0, 0], cancel: [290, 120] };
 }
 
 export class UploadCanvas {
@@ -71,6 +80,7 @@ export class UploadCanvas {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D | null;
   private overlay: HTMLElement;
+  private hits: { ask: HTMLButtonElement; jinx: HTMLButtonElement; cancel: HTMLButtonElement };
   private sizedFor = 0;
 
   constructor(actions: UploadCanvasActions) {
@@ -91,7 +101,8 @@ export class UploadCanvas {
     };
     this.overlay = document.createElement("div");
     this.overlay.id = "upload-overlay";
-    this.overlay.append(mk(114, 168, actions.ask), mk(290, 120, actions.cancel));
+    this.hits = { ask: mk(114, 168, actions.ask), jinx: mk(226, 96, actions.askJinx), cancel: mk(290, 120, actions.cancel) };
+    this.overlay.append(this.hits.ask, this.hits.jinx, this.hits.cancel);
 
     this.el = document.createElement("div");
     this.el.id = "upload-layer";
@@ -119,6 +130,12 @@ export class UploadCanvas {
 
     // The buttons only exist once the choose card has faded in.
     this.overlay.style.display = f.chooseAlpha > 0.5 ? "block" : "none";
+    const lay = chooseLayout(State.tasks.some((t) => t.id === JINX_ID));
+    for (const [key, el] of Object.entries(this.hits) as ["ask" | "jinx" | "cancel", HTMLButtonElement][]) {
+      el.style.left = `${lay[key][0]}px`;
+      el.style.width = `${lay[key][1]}px`;
+      el.style.display = lay[key][1] === 0 ? "none" : "";
+    }
   }
 
   // ── Scene ─────────────────────────────────────────────────────────────────
@@ -276,15 +293,24 @@ export class UploadCanvas {
     text(ctx, `${name} is ready.`, 114, 80, `600 14px ${FONT}`, "#F5F6F8");
     text(ctx, "What do you want to do with it?", 114, 100, `400 12.5px ${FONT}`, "#9398A1");
 
+    const jinxOn = State.tasks.some((t) => t.id === JINX_ID);
+    const lay = chooseLayout(jinxOn);
     ctx.fillStyle = "#F5F6F8";
-    rr(ctx, 114, 113, 168, 26, 13);
+    rr(ctx, lay.ask[0], 113, lay.ask[1], 26, 13);
     ctx.fill();
-    text(ctx, "Ask a question about it", 198, 126, `500 12.5px ${FONT}`, "#0B0C0E", "center");
+    text(ctx, jinxOn ? "Ask Mochi" : "Ask a question about it", lay.ask[0] + lay.ask[1] / 2, 126, `500 12.5px ${FONT}`, "#0B0C0E", "center");
+
+    if (jinxOn) {
+      ctx.fillStyle = "#39FF14";
+      rr(ctx, lay.jinx[0], 113, lay.jinx[1], 26, 13);
+      ctx.fill();
+      text(ctx, "Ask Jinx", lay.jinx[0] + lay.jinx[1] / 2, 126, `600 12.5px ${FONT}`, "#06210A", "center");
+    }
 
     ctx.fillStyle = "rgba(255,255,255,0.09)";
-    rr(ctx, 290, 113, 120, 26, 13);
+    rr(ctx, lay.cancel[0], 113, lay.cancel[1], 26, 13);
     ctx.fill();
-    text(ctx, "Cancel", 350, 126, `500 12.5px ${FONT}`, "#F1F2F4", "center");
+    text(ctx, "Cancel", lay.cancel[0] + lay.cancel[1] / 2, 126, `500 12.5px ${FONT}`, "#F1F2F4", "center");
     ctx.restore();
   }
 

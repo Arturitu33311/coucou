@@ -2,11 +2,13 @@
 
 import "./style.css";
 import "./music.css";
+import "./jinx.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
+import { registerJinxHandlers } from "./island/jinx";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 
@@ -69,6 +71,7 @@ async function main() {
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
   registerMusicHandlers(island);
+  registerJinxHandlers(island);
 
   island.launch();
 

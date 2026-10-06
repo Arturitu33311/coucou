@@ -6,6 +6,7 @@ mod files;
 mod hooks;
 mod integrations;
 mod island;
+mod jinx;
 mod log;
 mod music;
 mod pipe;
@@ -258,6 +259,36 @@ async fn chat_send(
     claude::send(&chat, &model, query, context).await
 }
 
+// ── Jinx (Hermes) ─────────────────────────────────────────────────────────────
+
+/// Starts a run; the reply, tool calls and approval requests arrive as `jinx` events.
+#[tauri::command]
+async fn jinx_send(
+    app: AppHandle,
+    jinx: State<'_, jinx::Jinx>,
+    text: String,
+    context: Option<ChatContext>,
+) -> Result<(), String> {
+    jinx::send(app, &jinx, text, context).await
+}
+
+/// `choice`: once | session | always | deny.
+#[tauri::command]
+async fn jinx_approve(run_id: String, request_id: String, choice: String) -> Result<(), String> {
+    jinx::approve(&run_id, &request_id, &choice).await
+}
+
+#[tauri::command]
+async fn jinx_stop(jinx: State<'_, jinx::Jinx>) -> Result<(), String> {
+    jinx::stop(&jinx).await
+}
+
+/// Reachable, and is the key accepted?
+#[tauri::command]
+async fn jinx_test() -> Result<String, String> {
+    jinx::test().await
+}
+
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
@@ -387,6 +418,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Chat::default())
+        .manage(jinx::Jinx::default())
         .invoke_handler(tauri::generate_handler![
             boot,
             save_settings,
@@ -412,6 +444,10 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            jinx_send,
+            jinx_approve,
+            jinx_stop,
+            jinx_test,
             ingest_file,
             secret_present,
             secret_set,
