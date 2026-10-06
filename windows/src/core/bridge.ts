@@ -124,6 +124,10 @@ export const Bridge = {
   tasksAdd: (text: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_add", { text }),
   tasksDone: (id: string, done: boolean) => callOrThrow<import("../hub/tasks").Task[]>("tasks_done", { id, done }),
   tasksSnooze: (id: string, until: number) => callOrThrow<import("../hub/tasks").Task[]>("tasks_snooze", { id, until }),
+  tasksSetJinx: (id: string, on: boolean) => callOrThrow<import("../hub/tasks").Task[]>("tasks_set_jinx", { id, on }),
+  /** One round with Jinx's pendientes; resolves with our list and what she holds that is not ours. */
+  tasksSync: () => callOrThrow<{ tasks: import("../hub/tasks").Task[]; jinx: import("../hub/tasks").JinxRow[]; error: string | null }>("tasks_sync"),
+  jinxResolve: (id: string, action: "hecho" | "descartado") => callOrThrow<void>("jinx_resolve", { id, action }),
   tasksNotified: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_notified", { id }),
   tasksDelete: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_delete", { id }),
   tasksClearDone: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_clear_done"),

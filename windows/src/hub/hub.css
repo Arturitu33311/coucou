@@ -123,7 +123,11 @@
 .ws-ico { flex: 0 0 auto; opacity: 0.55; font-size: 11px; }
 .ws-add { display: flex; gap: 6px; align-items: center; }
 .ws-add .sh-folder { flex: 1 1 auto; }
-.ws-picker { display: flex; flex-direction: column; gap: 4px; max-height: 118px; min-height: 0; }
+.ws-picker { display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; min-height: 0; }
 .ws-apps { overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 2px; }
 .ws-app { font: inherit; font-size: 11px; text-align: left; color: inherit; background: rgba(255,255,255,0.045); border: 0; border-radius: 7px; padding: 3px 8px; cursor: pointer; flex: 0 0 auto; }
 .ws-app:hover { background: rgba(129,140,248,0.25); }
+.ws > .sh-folder, .ws-picker > .sh-folder { flex: 0 0 auto; }
+.tk-jinx { opacity: 0.55; }
+.tk-jinx.on { opacity: 1; border-color: rgba(57,255,20,0.55); color: #39FF14; }
+.tk-fromjinx { background: rgba(57,255,20,0.05); }

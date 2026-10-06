@@ -168,8 +168,17 @@ function build(): HubHost {
       buttons.push(remove);
     }
 
+    if (picking) {
+      // Choosing an app takes the whole panel: there is room for the search and a few rows, not more.
+      const back = h("button", { class: "hub-btn sm", text: "← Back" });
+      back.addEventListener("click", () => {
+        picking = false;
+        render();
+      });
+      el.append(h("div", { class: "sh-head" }, h("span", { class: "hub-hint", text: `Add an app to “${d.name || "this workspace"}”` }), back), renderPicker(d));
+      return;
+    }
     el.append(name, items, h("div", { class: "ws-add" }, addApp, text, addTargetBtn));
-    if (picking) el.append(renderPicker(d));
     el.append(h("div", { class: "tk-foot" }, h("div", { class: "pm-btns" }, ...buttons)));
     if (result) el.append(h("div", { class: resultBad ? "hub-err" : "hub-hint", text: result }));
     if (!d.name) setTimeout(() => name.focus(), 0); // a new one starts on its name

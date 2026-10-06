@@ -30,6 +30,30 @@ pub struct Task {
     pub created: i64,
     #[serde(default)]
     pub completed_at: Option<i64>,
+    /// Shared with Jinx: it is (or will be) one of her pendientes too.
+    #[serde(default)]
+    pub jinx: bool,
+    /// Her id for it, once she has it. Its state and ours follow each other (see `reconcile`).
+    #[serde(default)]
+    pub jinx_id: Option<String>,
+}
+
+/// One row of Jinx's pendientes, as far as the Hub needs it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct JinxRow {
+    pub id: String,
+    pub titulo: String,
+    pub due: Option<String>,
+    pub categoria: Option<String>,
+    pub source: Option<String>,
+    pub status: String,
+}
+
+impl JinxRow {
+    pub fn open(&self) -> bool {
+        self.status == "pendiente"
+    }
 }
 
 static LOCK: Mutex<()> = Mutex::new(());
@@ -91,7 +115,7 @@ pub fn add(list: &mut Vec<Task>, title: &str, remind_at: Option<i64>, now: i64) 
     if list.len() >= MAX_TASKS {
         return Err("Too many tasks: finish or clear some first".into());
     }
-    list.push(Task { id: new_id(now), title, done: false, remind_at, notified: false, created: now, completed_at: None });
+    list.push(Task { id: new_id(now), title, done: false, remind_at, notified: false, created: now, completed_at: None, jinx: false, jinx_id: None });
     Ok(())
 }
 
@@ -128,6 +152,80 @@ pub fn delete(list: &mut Vec<Task>, id: &str) -> Result<(), String> {
         return Err("That task is gone".into());
     }
     Ok(())
+}
+
+/// Shares a task with Jinx, or stops sharing it (her copy is then dismissed by the next sync).
+pub fn set_jinx(list: &mut [Task], id: &str, on: bool) -> Result<(), String> {
+    find(list, id)?.jinx = on;
+    Ok(())
+}
+
+// ── Following Jinx's pendientes ─────────────────────────────────────────────────
+
+/// What a sync has to do on her side after the local list has been brought up to date.
+#[derive(Debug, Default, PartialEq)]
+pub struct Plan {
+    /// Local tasks (ids) to hand to her: shared, not yet hers.
+    pub to_add: Vec<String>,
+    /// (her id, "hecho" | "descartado") to apply there.
+    pub to_resolve: Vec<(String, &'static str)>,
+    /// The local list changed (and must be saved).
+    pub changed: bool,
+}
+
+/// Brings the local tasks in step with her list. She is the other half of a shared task:
+/// finished there, it is finished here; finished here, it is closed there; no longer shared,
+/// it is dismissed there. What cannot be done now (she is unreachable) is simply asked again
+/// at the next sync, because the difference is still there.
+pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
+    let mut plan = Plan::default();
+    for t in list.iter_mut() {
+        let Some(jid) = t.jinx_id.clone() else {
+            if t.jinx && !t.done {
+                plan.to_add.push(t.id.clone());
+            }
+            continue;
+        };
+        let Some(row) = jinx.iter().find(|r| r.id == jid) else {
+            // Not in her list any more: the link is dead.
+            t.jinx_id = None;
+            plan.changed = true;
+            continue;
+        };
+        if !t.jinx {
+            if row.open() {
+                plan.to_resolve.push((jid, "descartado"));
+            }
+            t.jinx_id = None;
+            plan.changed = true;
+        } else if !row.open() && !t.done {
+            t.done = true;
+            t.completed_at = Some(now);
+            plan.changed = true;
+        } else if row.open() && t.done {
+            plan.to_resolve.push((jid, "hecho"));
+        }
+    }
+    plan
+}
+
+/// Her open pendientes that are not one of our shared tasks (the ones to show beside ours).
+pub fn unlinked_open(list: &[Task], jinx: &[JinxRow]) -> Vec<JinxRow> {
+    jinx.iter().filter(|r| r.open() && !list.iter().any(|t| t.jinx_id.as_deref() == Some(r.id.as_str()))).cloned().collect()
+}
+
+/// "2026-10-06" for a day number counted from 1970-01-01 (proleptic Gregorian).
+pub fn civil_date(days: i64) -> String {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    format!("{:04}-{:02}-{:02}", if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 pub fn clear_done(list: &mut Vec<Task>) {
@@ -335,6 +433,77 @@ mod tests {
         delete(&mut l, &id).unwrap();
         assert!(l.is_empty());
         assert!(delete(&mut l, &id).is_err());
+    }
+
+    fn row(id: &str, status: &str) -> JinxRow {
+        JinxRow { id: id.into(), titulo: "x".into(), due: None, categoria: None, source: Some("coucou".into()), status: status.into() }
+    }
+    fn shared(title: &str, jinx_id: Option<&str>) -> Task {
+        let mut l = Vec::new();
+        add(&mut l, title, None, NOW).unwrap();
+        let mut t = l.remove(0);
+        t.jinx = true;
+        t.jinx_id = jinx_id.map(String::from);
+        t
+    }
+
+    #[test]
+    fn a_shared_task_not_yet_hers_is_handed_over_while_it_is_open() {
+        let mut l = vec![shared("a", None)];
+        assert_eq!(reconcile(&mut l, &[], NOW).to_add, vec![l[0].id.clone()]);
+        l[0].done = true;
+        assert!(reconcile(&mut l, &[], NOW).to_add.is_empty(), "a finished one is not worth handing over");
+        let mut private = vec![shared("b", None)];
+        private[0].jinx = false;
+        assert_eq!(reconcile(&mut private, &[], NOW), Plan::default());
+    }
+
+    #[test]
+    fn finishing_follows_in_both_directions() {
+        // She closed it: it is done here.
+        let mut l = vec![shared("a", Some("j1"))];
+        let p = reconcile(&mut l, &[row("j1", "hecho")], NOW);
+        assert!(l[0].done && l[0].completed_at == Some(NOW) && p.changed && p.to_resolve.is_empty());
+        // We closed it, she still has it open: asked again until it is there.
+        let mut l = vec![shared("a", Some("j1"))];
+        l[0].done = true;
+        let p = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "hecho")]);
+        assert!(!p.changed);
+        // Both open, or both closed: nothing to do.
+        let mut l = vec![shared("a", Some("j1"))];
+        assert_eq!(reconcile(&mut l, &[row("j1", "pendiente")], NOW), Plan::default());
+        let mut l = vec![shared("a", Some("j1"))];
+        l[0].done = true;
+        assert_eq!(reconcile(&mut l, &[row("j1", "hecho")], NOW), Plan::default());
+    }
+
+    #[test]
+    fn unsharing_dismisses_her_copy_and_a_vanished_one_breaks_the_link() {
+        let mut l = vec![shared("a", Some("j1"))];
+        l[0].jinx = false;
+        let p = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "descartado")]);
+        assert_eq!(l[0].jinx_id, None);
+        let mut l = vec![shared("a", Some("gone"))];
+        assert!(reconcile(&mut l, &[row("j1", "pendiente")], NOW).changed);
+        assert_eq!(l[0].jinx_id, None);
+    }
+
+    #[test]
+    fn only_her_open_items_that_are_not_ours_are_listed() {
+        let l = vec![shared("a", Some("j1"))];
+        let rows = [row("j1", "pendiente"), row("j2", "pendiente"), row("j3", "hecho")];
+        assert_eq!(unlinked_open(&l, &rows).iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["j2"]);
+    }
+
+    #[test]
+    fn a_day_number_is_a_calendar_date() {
+        assert_eq!(civil_date(0), "1970-01-01");
+        assert_eq!(civil_date(100), "1970-04-11");
+        assert_eq!(civil_date(11_016), "2000-02-29");
+        assert_eq!(civil_date(20_732), "2026-10-06");
+        assert_eq!(civil_date(-1), "1969-12-31");
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod music;
 mod notes;
 mod notifs;
 mod pipe;
+mod pendientes;
 mod pomodoro;
 mod quick;
 mod platform;
@@ -478,16 +479,7 @@ fn shelf_open(path: Option<String>) -> Result<(), String> {
     Ok(())
 }
 
-// ── Hub: tasks and reminders (see tasks.rs) ───────────────────────────────────
-
-/// Jinx reads the list too (read-only), when sharing is on.
-fn tasks_shared(shared: &State<Shared>, list: Vec<tasks::Task>) -> Vec<tasks::Task> {
-    if let Some(host) = share_target(shared) {
-        let body = serde_json::json!({ "updated": tasks::now(), "tasks": &list });
-        share::schedule(&host, "tasks.json", serde_json::to_string_pretty(&body).unwrap_or_default());
-    }
-    list
-}
+// ── Hub: tasks and reminders (see tasks.rs), and their link with Jinx (see pendientes.rs) ──
 
 #[tauri::command]
 fn tasks_list() -> Vec<tasks::Task> {
@@ -495,22 +487,30 @@ fn tasks_list() -> Vec<tasks::Task> {
 }
 
 /// Adds a task; `text` may carry its own time ("llamar a mamá a las 17:30", "stretch in 20 min").
+/// With Jinx shared (a server set, sharing on) the task is also hers: her list gets it at the sync.
 #[tauri::command]
 fn tasks_add(shared: State<Shared>, text: String) -> Result<Vec<tasks::Task>, String> {
     let now = tasks::now();
     let (title, when) = tasks::parse_when(&text, now, &pomodoro::local_offset);
-    tasks::update(|l| tasks::add(l, &title, when, now)).map(|l| tasks_shared(&shared, l))
+    let to_jinx = share_target(&shared).is_some();
+    tasks::update(|l| {
+        tasks::add(l, &title, when, now)?;
+        if let Some(t) = l.last_mut() {
+            t.jinx = to_jinx;
+        }
+        Ok(())
+    })
 }
 
 #[tauri::command]
-fn tasks_done(shared: State<Shared>, id: String, done: bool) -> Result<Vec<tasks::Task>, String> {
-    tasks::update(|l| tasks::set_done(l, &id, done, tasks::now())).map(|l| tasks_shared(&shared, l))
+fn tasks_done(id: String, done: bool) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::set_done(l, &id, done, tasks::now()))
 }
 
 /// Moves a reminder to `until` (unix seconds).
 #[tauri::command]
-fn tasks_snooze(shared: State<Shared>, id: String, until: i64) -> Result<Vec<tasks::Task>, String> {
-    tasks::update(|l| tasks::snooze(l, &id, until)).map(|l| tasks_shared(&shared, l))
+fn tasks_snooze(id: String, until: i64) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::snooze(l, &id, until))
 }
 
 #[tauri::command]
@@ -518,18 +518,50 @@ fn tasks_notified(id: String) -> Result<Vec<tasks::Task>, String> {
     tasks::update(|l| tasks::mark_notified(l, &id))
 }
 
+/// Deleting a shared task dismisses her copy too (if she cannot be reached it stays on her side, and
+/// shows up in the Tasks tab among what she has, where it can be dismissed).
 #[tauri::command]
 fn tasks_delete(shared: State<Shared>, id: String) -> Result<Vec<tasks::Task>, String> {
-    tasks::update(|l| tasks::delete(l, &id)).map(|l| tasks_shared(&shared, l))
+    let jinx_id = tasks::load().into_iter().find(|t| t.id == id).and_then(|t| t.jinx_id);
+    let list = tasks::update(|l| tasks::delete(l, &id))?;
+    if let (Some(jid), Some(host)) = (jinx_id, share_target(&shared)) {
+        std::thread::spawn(move || {
+            let _ = pendientes::resolve(&host, &jid, "descartado");
+        });
+    }
+    Ok(list)
 }
 
 #[tauri::command]
-fn tasks_clear_done(shared: State<Shared>) -> Result<Vec<tasks::Task>, String> {
+fn tasks_clear_done() -> Result<Vec<tasks::Task>, String> {
     tasks::update(|l| {
         tasks::clear_done(l);
         Ok(())
     })
-    .map(|l| tasks_shared(&shared, l))
+}
+
+/// Shares one task with Jinx, or keeps it to Coucou.
+#[tauri::command]
+fn tasks_set_jinx(id: String, on: bool) -> Result<Vec<tasks::Task>, String> {
+    tasks::update(|l| tasks::set_jinx(l, &id, on))
+}
+
+/// One round with Jinx's pendientes: hands over what is hers to have, follows what was closed on
+/// either side, and returns the pendientes she holds that are not ours. Without a server it is
+/// just the local list.
+#[tauri::command]
+async fn tasks_sync(shared: State<'_, Shared>) -> Result<pendientes::SyncResult, String> {
+    let Some(host) = share_target(&shared) else {
+        return Ok(pendientes::SyncResult { tasks: tasks::load(), ..Default::default() });
+    };
+    tauri::async_runtime::spawn_blocking(move || pendientes::sync(&host)).await.map_err(|e| e.to_string())
+}
+
+/// Closes or dismisses one of Jinx's own pendientes ("hecho" | "descartado").
+#[tauri::command]
+async fn jinx_resolve(shared: State<'_, Shared>, id: String, action: String) -> Result<(), String> {
+    let host = share_target(&shared).ok_or("Jinx is not shared: set the server in Settings → Hub")?;
+    tauri::async_runtime::spawn_blocking(move || pendientes::resolve(&host, &id, &action)).await.map_err(|e| e.to_string())?
 }
 
 // ── Hub: workspaces (see workspaces.rs) ───────────────────────────────────────
@@ -843,6 +875,9 @@ pub fn run() {
             tasks_notified,
             tasks_delete,
             tasks_clear_done,
+            tasks_set_jinx,
+            tasks_sync,
+            jinx_resolve,
             workspaces_list,
             workspaces_save,
             workspaces_apps,
