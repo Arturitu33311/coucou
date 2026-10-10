@@ -109,9 +109,12 @@ export const STATE_SOUND: Partial<Record<BotStateName, string>> = {
   sleeping: "sleep", dizzy: "dizzy",
 };
 
+/** One dance sway, in seconds: shared with the phone's Mochi (Mochi.kt `beat`). */
+const DANCE_BEAT_S = 1.4;
+
 const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
   love: "heart", surprised: "dot", proud: "star", wink: "wink",
-  yawn: "tired", happy: "happy", annoyed: "line",
+  yawn: "tired", happy: "happy", annoyed: "line", dance: "happy",
 };
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -540,7 +543,14 @@ export class BotEngine {
       this.tgTilt = -0.06 + Math.sin(2 * Math.PI * 1.2 * wt) * 0.07;
     }
 
-    const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
+    // The dance: one sway every 1.4 s, hopping on each half-beat. Same tempo as the phone's Mochi,
+    // so a song makes both of them move together.
+    const dancing = this.permanentEmote === "dance";
+    const danceWave = dancing ? Math.sin((t / DANCE_BEAT_S) * 2 * Math.PI) : 0;
+    if (dancing && !this.locks.has("tilt")) this.tgTilt = danceWave * 0.15;
+    const bounce = dancing
+      ? -Math.abs(danceWave) * 0.09
+      : this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
     const kGen = 1 - Math.pow(0.0008, dt);
     if (!this.locks.has("oy")) this.oy += (bounce - this.oy) * kGen;
 

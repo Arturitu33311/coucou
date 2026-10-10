@@ -3,6 +3,7 @@
 // sends it here when it is on, and nothing is kept.
 
 import { onEvent } from "../core/bridge";
+import { reportLocalNews } from "../core/presence";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "../island/island";
@@ -20,6 +21,9 @@ export function registerNotificationPeek(island: Island) {
     if (State.pendingApproval || State.pendingQuestion || State.isPinned) return;
     const head = [n.app, n.summary].filter(Boolean).join(" — ");
     State.noteMessage = n.body ? `${head}: ${n.body}` : head;
+    // Mochi is startled, here and on the phone (whichever one he is drawn on).
+    island.mochi.triggerEmote("surprised", 1.8);
+    void reportLocalNews();
     Sound.play("pop");
     island.alert("note");
   });

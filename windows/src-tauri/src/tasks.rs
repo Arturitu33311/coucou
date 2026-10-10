@@ -2,6 +2,10 @@
 // through a temporary file), and the small parser that turns "llamar a mamá a las 17:30" or
 // "stretch in 20 min" into a title and a time. The reminders themselves are timed by the page
 // (one timeout, like the Pomodoro); this only remembers what is owed and what was announced.
+//
+// Each device works alone and the newest change wins when they meet (`merge`), the same rules as
+// the Android TaskLogic.kt; windows/scripts/phone/merge-vectors.json holds the cases both must pass.
+// A deletion is a tombstone (`deleted`) that travels to the other device and is forgotten later.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,12 +18,17 @@ use crate::settings;
 /// A to-do list, not a project manager.
 pub const MAX_TASKS: usize = 500;
 pub const MAX_TITLE: usize = 200;
+/// How long a deletion is remembered, so a device that was away for a while still learns of it.
+pub const TOMBSTONE_SECS: i64 = 30 * 86_400;
+/// A change stamped further ahead than this (a clock that is wrong) is taken as made now.
+pub const SKEW_SECS: i64 = 300;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub id: String,
     pub title: String,
+    #[serde(default)]
     pub done: bool,
     /// Unix seconds the reminder is due (None: no reminder).
     #[serde(default)]
@@ -27,6 +36,7 @@ pub struct Task {
     /// The reminder was announced: it is not announced again after a restart.
     #[serde(default)]
     pub notified: bool,
+    #[serde(default)]
     pub created: i64,
     #[serde(default)]
     pub completed_at: Option<i64>,
@@ -40,6 +50,17 @@ pub struct Task {
     /// a mark for these; they work like any other task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// When someone last changed it (unix seconds). 0: never changed by a person (taken in from Jinx).
+    #[serde(default)]
+    pub updated_at: i64,
+    /// Deleted: kept as a tombstone so the deletion travels to the other device (the screens never see it).
+    #[serde(default)]
+    pub deleted: bool,
+    /// Bookkeeping of the Android three-way sync with Jinx; carried, not used here.
+    #[serde(default)]
+    pub jinx_status: Option<String>,
+    #[serde(default)]
+    pub jinx_synced: i64,
 }
 
 /// One row of Jinx's pendientes, as far as the Hub needs it.
@@ -78,11 +99,38 @@ fn new_id(now: i64) -> String {
     format!("{:x}-{}", now, COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
-pub fn load() -> Vec<Task> {
-    std::fs::read_to_string(path())
+/// A file from before the stamps: what was made here counts from when it was made or finished; what was
+/// taken in from Jinx ("j-…") stays at 0, so any real change beats it. Same as Android's decode.
+fn legacy_stamp(t: &mut Task) {
+    if t.updated_at == 0 && !t.id.starts_with("j-") {
+        t.updated_at = t.completed_at.unwrap_or(t.created).max(t.created);
+    }
+}
+
+/// Everything on disk, tombstones included (what the sync and the merge work on).
+pub fn load_all() -> Vec<Task> {
+    let mut list: Vec<Task> = std::fs::read_to_string(path())
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    list.iter_mut().for_each(legacy_stamp);
+    list
+}
+
+/// What the screens see: the list without the tombstones.
+pub fn visible(list: &[Task]) -> Vec<Task> {
+    list.iter().filter(|t| !t.deleted).cloned().collect()
+}
+
+/// Forgets deletions older than `TOMBSTONE_SECS`. One that still has her pendiente linked is kept until the
+/// link is gone (see `reconcile`), so her copy is dismissed before the deletion is forgotten.
+pub fn purge_tombstones(list: &mut Vec<Task>, now: i64) {
+    list.retain(|t| !(t.deleted && t.jinx_id.is_none() && t.updated_at < now - TOMBSTONE_SECS));
+}
+
+/// What the screens see of the stored list.
+pub fn load() -> Vec<Task> {
+    visible(&load_all())
 }
 
 fn save(list: &[Task]) -> Result<(), String> {
@@ -100,13 +148,24 @@ fn save_to(p: &std::path::Path, list: &[Task]) -> Result<(), String> {
     std::fs::rename(&tmp, p).map_err(|e| e.to_string())
 }
 
-/// Reads the list, lets `f` change it, and saves it; one change at a time.
+/// Reads the whole list (tombstones included), lets `f` change it, and saves it; one change at a time.
+/// Returns what the screens see of it.
 pub fn update(f: impl FnOnce(&mut Vec<Task>) -> Result<(), String>) -> Result<Vec<Task>, String> {
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load();
+    run_update(f, true)
+}
+
+/// `notify`: tell a phone on the link at once (a change made here); not for what it just told us.
+fn run_update(f: impl FnOnce(&mut Vec<Task>) -> Result<(), String>, notify: bool) -> Result<Vec<Task>, String> {
+    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load_all();
     f(&mut list)?;
+    purge_tombstones(&mut list, now());
     save(&list)?;
-    Ok(list)
+    drop(guard);
+    if notify {
+        crate::remote::tasks_changed();
+    }
+    Ok(visible(&list))
 }
 
 // ── Changes (pure, so they can be tested) ─────────────────────────────────────────
@@ -119,28 +178,50 @@ pub fn add(list: &mut Vec<Task>, title: &str, remind_at: Option<i64>, now: i64) 
     if list.len() >= MAX_TASKS {
         return Err("Too many tasks: finish or clear some first".into());
     }
-    list.push(Task { id: new_id(now), title, done: false, remind_at, notified: false, created: now, completed_at: None, jinx: false, jinx_id: None, origin: None });
+    list.push(Task {
+        id: new_id(now),
+        title,
+        done: false,
+        remind_at,
+        notified: false,
+        created: now,
+        completed_at: None,
+        jinx: false,
+        jinx_id: None,
+        origin: None,
+        updated_at: now,
+        deleted: false,
+        jinx_status: None,
+        jinx_synced: 0,
+    });
     Ok(())
 }
 
+/// A task that is there for the person: a tombstone is gone.
 fn find<'a>(list: &'a mut [Task], id: &str) -> Result<&'a mut Task, String> {
-    list.iter_mut().find(|t| t.id == id).ok_or_else(|| "That task is gone".to_string())
+    list.iter_mut().find(|t| t.id == id && !t.deleted).ok_or_else(|| "That task is gone".to_string())
 }
 
 pub fn set_done(list: &mut [Task], id: &str, done: bool, now: i64) -> Result<(), String> {
     let t = find(list, id)?;
     t.done = done;
     t.completed_at = done.then_some(now);
+    t.updated_at = now;
     Ok(())
 }
 
 /// Moves the reminder to `until` and makes it announce again.
 pub fn snooze(list: &mut [Task], id: &str, until: i64) -> Result<(), String> {
+    snooze_at(list, id, until, now())
+}
+
+pub fn snooze_at(list: &mut [Task], id: &str, until: i64, now: i64) -> Result<(), String> {
     let t = find(list, id)?;
     t.remind_at = Some(until);
     t.notified = false;
     t.done = false;
     t.completed_at = None;
+    t.updated_at = now;
     Ok(())
 }
 
@@ -149,18 +230,27 @@ pub fn mark_notified(list: &mut [Task], id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn delete(list: &mut Vec<Task>, id: &str) -> Result<(), String> {
-    let before = list.len();
-    list.retain(|t| t.id != id);
-    if list.len() == before {
-        return Err("That task is gone".into());
-    }
+/// A deletion is a change like any other: stamped, and kept as a tombstone so the other device learns of it.
+pub fn delete(list: &mut [Task], id: &str) -> Result<(), String> {
+    delete_at(list, id, now())
+}
+
+pub fn delete_at(list: &mut [Task], id: &str, now: i64) -> Result<(), String> {
+    let t = find(list, id)?;
+    t.deleted = true;
+    t.updated_at = now;
     Ok(())
 }
 
 /// Shares a task with Jinx, or stops sharing it (her copy is then dismissed by the next sync).
 pub fn set_jinx(list: &mut [Task], id: &str, on: bool) -> Result<(), String> {
-    find(list, id)?.jinx = on;
+    set_jinx_at(list, id, on, now())
+}
+
+pub fn set_jinx_at(list: &mut [Task], id: &str, on: bool, now: i64) -> Result<(), String> {
+    let t = find(list, id)?;
+    t.jinx = on;
+    t.updated_at = now;
     Ok(())
 }
 
@@ -185,7 +275,7 @@ pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
     let mut plan = Plan::default();
     for t in list.iter_mut() {
         let Some(jid) = t.jinx_id.clone() else {
-            if t.jinx && !t.done {
+            if t.jinx && !t.done && !t.deleted {
                 plan.to_add.push(t.id.clone());
             }
             continue;
@@ -196,7 +286,16 @@ pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
             plan.changed = true;
             continue;
         };
-        if !t.jinx {
+        if t.deleted {
+            // A deletion dismisses her copy (asked again until it is done); once she has none open the
+            // link is let go, so the tombstone can be forgotten.
+            if row.open() {
+                plan.to_resolve.push((jid, "descartado"));
+            } else {
+                t.jinx_id = None;
+                plan.changed = true;
+            }
+        } else if !t.jinx {
             if row.open() {
                 plan.to_resolve.push((jid, "descartado"));
             }
@@ -205,6 +304,8 @@ pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
         } else if !row.open() && !t.done {
             t.done = true;
             t.completed_at = Some(now);
+            // Her closing is a change made now: the other device must take it over its older state.
+            t.updated_at = now.max(t.updated_at);
             plan.changed = true;
         } else if row.open() && t.done {
             plan.to_resolve.push((jid, "hecho"));
@@ -269,6 +370,11 @@ pub fn import_unlinked(list: &mut Vec<Task>, jinx: &[JinxRow], now: i64, offset:
             jinx: true,
             jinx_id: Some(r.id.clone()),
             origin: r.source.clone().filter(|s| s != "coucou"),
+            // Not a person's change: what a person does with it later beats this.
+            updated_at: 0,
+            deleted: false,
+            jinx_status: Some(r.status.clone()),
+            jinx_synced: 0,
         });
         taken += 1;
     }
@@ -289,8 +395,157 @@ pub fn civil_date(days: i64) -> String {
     format!("{:04}-{:02}-{:02}", if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-pub fn clear_done(list: &mut Vec<Task>) {
-    list.retain(|t| !t.done);
+pub fn clear_done(list: &mut [Task]) {
+    clear_done_at(list, now());
+}
+
+pub fn clear_done_at(list: &mut [Task], now: i64) {
+    for t in list.iter_mut().filter(|t| t.done && !t.deleted) {
+        t.deleted = true;
+        t.updated_at = now;
+    }
+}
+
+// ── Meeting the other device ────────────────────────────────────────────────────
+
+/// The newest of two versions: the later change; on a tie a fixed order, so both devices choose the same.
+fn newer(a: &Task, b: &Task) -> bool {
+    if a.updated_at != b.updated_at {
+        return a.updated_at > b.updated_at;
+    }
+    if a.deleted != b.deleted {
+        return a.deleted;
+    }
+    if a.done != b.done {
+        return a.done;
+    }
+    if a.title != b.title {
+        // Byte order of the UTF-8, as on the phone.
+        return a.title.as_bytes() > b.title.as_bytes();
+    }
+    // None is the smallest: a reminder beats none, a later one beats an earlier one.
+    a.remind_at > b.remind_at
+}
+
+/// The same id, or the same pendiente of Jinx's: one made here and taken in from her elsewhere is one task.
+fn same_task(local: &Task, remote: &Task) -> bool {
+    local.id == remote.id || (local.jinx_id.is_some() && local.jinx_id == remote.jinx_id)
+}
+
+/// Merges another device's list into ours: per task the newest change wins, a deletion is a change, and what
+/// the other has and we do not is added. Meeting twice, or in either order, gives the same list.
+/// Returns the new list and whether it changed.
+pub fn merge(local: &[Task], remote: &[Task], now: i64) -> (Vec<Task>, bool) {
+    let mut out: Vec<Task> = local.to_vec();
+    let mut changed = false;
+    for r0 in remote {
+        let mut r = r0.clone();
+        // A clock that is ahead must not win for ever.
+        r.updated_at = r.updated_at.min(now + SKEW_SECS);
+        let Some(i) = out.iter().position(|l| same_task(l, &r)) else {
+            if out.len() < MAX_TASKS * 2 && !(r.deleted && r.updated_at < now - TOMBSTONE_SECS) {
+                // A reminder still to come rings here too; one already past does not ring late.
+                r.notified = r.remind_at.is_some_and(|t| t <= now);
+                out.push(r);
+                changed = true;
+            }
+            continue;
+        };
+        if newer(&r, &out[i]) {
+            let l = &out[i];
+            r.notified = if l.remind_at == r.remind_at { l.notified || r.notified } else { r.notified };
+            r.id = l.id.clone();
+            r.jinx_id = l.jinx_id.clone().or(r.jinx_id);
+            r.jinx = l.jinx || r.jinx;
+            r.origin = l.origin.clone().or(r.origin);
+            r.jinx_status = l.jinx_status.clone();
+            r.jinx_synced = l.jinx_synced;
+            out[i] = r;
+            changed = true;
+        } else if out[i].jinx_id.is_none() && r.jinx_id.is_some() {
+            out[i].jinx_id = r.jinx_id;
+            changed = true;
+        }
+    }
+    (out, changed)
+}
+
+/// A task from another device is data, not trust: its text and its links are bounded before it is merged.
+/// None: not worth keeping.
+pub fn sanitize_remote(t: &Task) -> Option<Task> {
+    // Lengths count UTF-16 units, as Kotlin's do.
+    if t.id.is_empty() || t.id.encode_utf16().count() > 64 || t.id.chars().any(|c| c.is_control()) {
+        return None;
+    }
+    let title: String = t.title.chars().filter(|c| !c.is_control()).take(MAX_TITLE).collect();
+    let title = title.trim().to_string();
+    if title.is_empty() && !t.deleted {
+        return None;
+    }
+    let hex_ok = t.jinx_id.as_deref().map_or(true, |j| !j.is_empty() && j.len() <= 16 && j.bytes().all(|b| b.is_ascii_hexdigit()));
+    let origin = t.origin.clone().filter(|o| o.encode_utf16().count() <= 24 && o.chars().all(|c| c.is_alphanumeric() || c == '-'));
+    let mut s = t.clone();
+    s.title = title;
+    if !hex_ok {
+        s.jinx_id = None;
+    }
+    s.origin = origin;
+    // Bookkeeping about the other device's own link with her is not ours to take.
+    s.jinx_status = None;
+    s.jinx_synced = 0;
+    Some(s)
+}
+
+/// The whole list, tombstones included, in the shape the Android app writes (every key present).
+pub fn snapshot_json() -> String {
+    encode(&load_all())
+}
+
+fn encode(list: &[Task]) -> String {
+    let arr: Vec<serde_json::Value> = list
+        .iter()
+        .map(|t| {
+            let mut v = serde_json::to_value(t).unwrap_or(serde_json::Value::Null);
+            if let Some(o) = v.as_object_mut() {
+                o.entry("origin").or_insert(serde_json::Value::Null);
+            }
+            v
+        })
+        .collect();
+    serde_json::to_string(&arr).unwrap_or_else(|_| "[]".into())
+}
+
+/// Reads a list in the Android shape. An element that is not a task is skipped (it would not survive
+/// `sanitize_remote` either); a file from before the stamps gets its stamp as in `load_all`.
+fn decode(json: &str) -> Result<Vec<Task>, String> {
+    let values: Vec<serde_json::Value> = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    Ok(values
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<Task>(v).ok())
+        .map(|mut t| {
+            legacy_stamp(&mut t);
+            t
+        })
+        .collect())
+}
+
+/// Takes in the other device's list (the Android JSON shape): each task is bounded, then merged into the
+/// stored list under the same lock as every other change. Returns whether anything changed.
+pub fn merge_remote_json(json: &str) -> Result<bool, String> {
+    let remote: Vec<Task> = decode(json)?.iter().filter_map(sanitize_remote).collect();
+    let mut changed = false;
+    run_update(
+        |l| {
+            let (merged, ch) = merge(l, &remote, now());
+            if ch {
+                *l = merged;
+            }
+            changed = ch;
+            Ok(())
+        },
+        false,
+    )?;
+    Ok(changed)
 }
 
 // ── "when" in plain words ─────────────────────────────────────────────────────────
@@ -502,9 +757,9 @@ mod tests {
         let second = l[1].id.clone();
         set_done(&mut l, &second, true, NOW).unwrap();
         clear_done(&mut l);
-        assert_eq!(l.len(), 1);
+        assert_eq!(visible(&l).len(), 1);
         delete(&mut l, &id).unwrap();
-        assert!(l.is_empty());
+        assert!(visible(&l).is_empty());
         assert!(delete(&mut l, &id).is_err());
     }
 
@@ -608,6 +863,7 @@ mod tests {
             pend("e", "hook", None, "hecho"),                     // closed: not taken in
         ];
         assert_eq!(import_unlinked(&mut l, &rows, today, &|_| 0), 4);
+        assert!(l.iter().all(|t| t.updated_at == 0), "taken in from her: not a person's change");
         let by = |id: &str| l.iter().find(|t| t.jinx_id.as_deref() == Some(id)).unwrap();
         assert_eq!((by("a").remind_at, by("a").notified, by("a").origin.as_deref()), (Some(20_734 * DAY + 9 * 3600), false, Some("hook")));
         assert_eq!((by("b").remind_at, by("b").notified, by("b").origin.as_deref()), (Some(20_732 * DAY + 9 * 3600), true, Some("teams")));
@@ -624,6 +880,7 @@ mod tests {
         assert!(by_id(&l, "a").done);
         let id = l.iter().find(|t| t.jinx_id.as_deref() == Some("c")).unwrap().id.clone();
         set_done(&mut l, &id, true, today).unwrap();
+        assert_eq!(by_id(&l, "c").updated_at, today);
         assert_eq!(reconcile(&mut l, &rows2, today).to_resolve, vec![("c".to_string(), "hecho")]);
     }
 
@@ -659,6 +916,226 @@ mod tests {
         assert_eq!(back, l[..2]);
         assert!(!dir.join("tasks.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── each device works alone; the newest change wins ────────────────────────────
+
+    fn mk(id: &str, title: &str, updated: i64) -> Task {
+        Task {
+            id: id.into(),
+            title: title.into(),
+            done: false,
+            remind_at: None,
+            notified: false,
+            created: 1,
+            completed_at: None,
+            jinx: true,
+            jinx_id: None,
+            origin: None,
+            updated_at: updated,
+            deleted: false,
+            jinx_status: None,
+            jinx_synced: 0,
+        }
+    }
+
+    #[test]
+    fn a_change_is_stamped_and_a_deletion_is_a_tombstone_the_screens_do_not_see() {
+        let mut l = Vec::new();
+        add(&mut l, "a", None, 100).unwrap();
+        assert_eq!(l[0].updated_at, 100);
+        let id = l[0].id.clone();
+        set_done(&mut l, &id, true, 105).unwrap();
+        assert_eq!(l[0].updated_at, 105);
+        snooze_at(&mut l, &id, 900, 107).unwrap();
+        assert_eq!(l[0].updated_at, 107);
+        set_jinx_at(&mut l, &id, false, 108).unwrap();
+        assert_eq!(l[0].updated_at, 108);
+        delete_at(&mut l, &id, 109).unwrap();
+        assert!(l[0].deleted && l[0].updated_at == 109);
+        assert!(visible(&l).is_empty());
+        assert!(delete_at(&mut l, &id, 110).is_err(), "a tombstone is gone for the person");
+        assert!(set_done(&mut l, &id, true, 110).is_err());
+        let mut kept = l.clone();
+        purge_tombstones(&mut kept, 109 + TOMBSTONE_SECS - 1);
+        assert_eq!(kept.len(), 1);
+        purge_tombstones(&mut kept, 109 + TOMBSTONE_SECS + 1);
+        assert!(kept.is_empty());
+        // Clearing the finished ones is a deletion of each.
+        let mut l = vec![mk("a", "a", 1), mk("b", "b", 1)];
+        l[0].done = true;
+        clear_done_at(&mut l, 50);
+        assert!(l[0].deleted && l[0].updated_at == 50 && !l[1].deleted && l[1].updated_at == 1);
+    }
+
+    #[test]
+    fn a_tombstone_with_her_pendiente_linked_is_not_forgotten_before_she_is_told() {
+        let mut l = vec![mk("a", "a", 100)];
+        l[0].jinx_id = Some("j1".into());
+        delete_at(&mut l, "a", 100).unwrap();
+        // Old enough to be purged, but her copy is still open and linked: kept.
+        let mut kept = l.clone();
+        purge_tombstones(&mut kept, 100 + TOMBSTONE_SECS + 1);
+        assert_eq!(kept.len(), 1);
+        // The sync dismisses her copy (and asks again while it is open)...
+        let p = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "descartado")]);
+        assert!(p.to_add.is_empty());
+        assert_eq!(l[0].jinx_id.as_deref(), Some("j1"));
+        // ...and once she has none open, the link is let go and the tombstone can go.
+        let p = reconcile(&mut l, &[row("j1", "descartado")], NOW);
+        assert!(p.to_resolve.is_empty() && p.changed);
+        purge_tombstones(&mut l, 100 + TOMBSTONE_SECS + 1);
+        assert!(l.is_empty());
+        // A tombstone never gets handed to her.
+        let mut l = vec![mk("b", "b", 1)];
+        l[0].deleted = true;
+        assert!(reconcile(&mut l, &[], NOW).to_add.is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_the_stamps_loads_and_gets_its_stamp() {
+        let old = r#"[{"id":"x","title":"a","done":true,"created":50,"completedAt":80},
+                      {"id":"j-9","title":"b","done":false,"created":60},
+                      {"id":"y","title":"c","done":false,"created":70,"remindAt":null,"jinx":true}]"#;
+        let l = decode(old).unwrap();
+        assert_eq!(l.len(), 3);
+        assert_eq!(l[0].updated_at, 80);
+        assert_eq!(l[1].updated_at, 0, "taken in from Jinx stays at 0");
+        assert_eq!(l[2].updated_at, 70);
+        assert!(l.iter().all(|t| !t.deleted && t.jinx_status.is_none() && t.jinx_synced == 0));
+        // The plain serde path (what load_all uses) takes the file too.
+        let raw: Vec<Task> = serde_json::from_str(old).unwrap();
+        assert_eq!(raw.len(), 3);
+        // And the whole thing survives the Android shape both ways.
+        let again = decode(&encode(&l)).unwrap();
+        assert_eq!(again, l);
+        assert!(encode(&l).contains("\"origin\":null"));
+        assert!(encode(&l).contains("\"jinxStatus\":null") && encode(&l).contains("\"updatedAt\":80"));
+    }
+
+    #[test]
+    fn what_another_device_sends_is_bounded_before_it_is_merged() {
+        let mut t = mk("abc", "  hola\u{7}  ", 10);
+        t.jinx_id = Some("not hex!".into());
+        t.jinx_status = Some("hecho".into());
+        t.jinx_synced = 7;
+        t.origin = Some("hook".into());
+        let s = sanitize_remote(&t).unwrap();
+        assert_eq!(s.title, "hola");
+        assert_eq!(s.jinx_id, None);
+        assert_eq!((s.jinx_status, s.jinx_synced), (None, 0));
+        assert_eq!(s.origin.as_deref(), Some("hook"));
+        let mut ok = mk("abc", "x", 1);
+        ok.jinx_id = Some("00ff00ff".into());
+        ok.origin = Some("a b".into());
+        let s = sanitize_remote(&ok).unwrap();
+        assert_eq!(s.jinx_id.as_deref(), Some("00ff00ff"));
+        assert_eq!(s.origin, None, "an origin is a short word");
+        assert!(sanitize_remote(&mk("", "x", 1)).is_none());
+        assert!(sanitize_remote(&mk(&"x".repeat(65), "x", 1)).is_none());
+        assert!(sanitize_remote(&mk("a\nb", "x", 1)).is_none());
+        assert!(sanitize_remote(&mk("a", "   ", 1)).is_none());
+        assert_eq!(sanitize_remote(&mk("a", &"y".repeat(1000), 1)).unwrap().title.chars().count(), MAX_TITLE);
+        let mut tomb = mk("a", "", 1);
+        tomb.deleted = true;
+        assert!(sanitize_remote(&tomb).is_some(), "a tombstone needs no title");
+        let mut long = mk("a", "x", 1);
+        long.jinx_id = Some("0".repeat(17));
+        assert_eq!(sanitize_remote(&long).unwrap().jinx_id, None);
+    }
+
+    #[test]
+    fn the_newest_change_wins_whichever_way_round_they_meet() {
+        let mut phone = mk("x", "llamar", 100);
+        phone.done = true;
+        phone.updated_at = 200;
+        let mut laptop = mk("x", "llamar", 100);
+        laptop.remind_at = Some(500);
+        laptop.updated_at = 150;
+        let (a, a_changed) = merge(&[phone.clone()], &[laptop.clone()], 1_000);
+        let (b, b_changed) = merge(&[laptop], &[phone], 1_000);
+        assert!(!a_changed && b_changed);
+        assert_eq!(a, b);
+        assert!(a[0].done && a[0].updated_at == 200);
+        assert!(!merge(&a, &b, 1_000).1, "meeting again changes nothing");
+    }
+
+    #[test]
+    fn a_wrong_clock_does_not_win_for_ever() {
+        let mut future = mk("x", "future", 9_999_999);
+        future.done = true;
+        let (l, _) = merge(&[mk("x", "a", 1_000)], &[future], 2_000);
+        assert_eq!(l[0].updated_at, 2_000 + SKEW_SECS);
+        let (l2, _) = merge(&l, &[mk("x", "real", 2_400)], 2_400);
+        assert_eq!(l2[0].title, "real");
+    }
+
+    #[test]
+    fn a_reminder_still_to_come_rings_where_it_is_learnt_and_a_past_one_does_not() {
+        let mut soon = mk("s", "pronto", 100);
+        soon.remind_at = Some(1_000 + 600);
+        soon.notified = true;
+        let mut past = mk("p", "ya paso", 100);
+        past.remind_at = Some(1_000 - 600);
+        let (l, _) = merge(&[], &[soon, past], 1_000);
+        assert!(!l.iter().find(|t| t.id == "s").unwrap().notified);
+        assert!(l.iter().find(|t| t.id == "p").unwrap().notified);
+    }
+
+    #[test]
+    fn the_same_pendiente_under_two_ids_is_one_task() {
+        let mut here = mk("t-1", "a", 100);
+        here.jinx_id = Some("j1".into());
+        let mut there = mk("j-j1", "a", 200);
+        there.jinx_id = Some("j1".into());
+        there.done = true;
+        let (l, changed) = merge(&[here], &[there], 1_000);
+        assert!(changed);
+        assert_eq!(l.len(), 1);
+        assert_eq!((l[0].id.as_str(), l[0].done, l[0].updated_at), ("t-1", true, 200), "keeps our id");
+    }
+
+    fn project(l: &[Task]) -> Vec<String> {
+        let mut v: Vec<String> = l.iter().map(|t| format!("{}|{}|{}|{}|{}", t.id, t.title, t.done, t.deleted, t.updated_at)).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn the_merge_vectors_shared_with_the_phone_hold() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!("../../scripts/phone/merge-vectors.json")).unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(!cases.is_empty());
+        let read = |v: &serde_json::Value, created: bool| -> Vec<Task> {
+            let arr = v.as_array().unwrap();
+            let json = serde_json::Value::Array(
+                arr.iter()
+                    .cloned()
+                    .map(|mut o| {
+                        if created {
+                            o["created"] = 1.into();
+                        }
+                        o
+                    })
+                    .collect(),
+            )
+            .to_string();
+            let l = decode(&json).unwrap();
+            assert_eq!(l.len(), arr.len(), "every element of a vector is a task");
+            l
+        };
+        for c in cases {
+            let name = c["name"].as_str().unwrap();
+            let at = c["now"].as_i64().unwrap();
+            let local = read(&c["local"], false);
+            let remote = read(&c["remote"], false);
+            let want = project(&read(&c["expect"], true));
+            assert_eq!(want, project(&merge(&local, &remote, at).0), "{name}");
+            if c["symmetric"].as_bool().unwrap_or(false) {
+                assert_eq!(want, project(&merge(&remote, &local, at).0), "{name} (the other way round)");
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,138 @@
+{
+  "_doc": "Which device shows Mochi and Coucou. Same file, byte for byte, as windows/scripts/phone/presence-vectors.json in the PC repo: both sides must agree, or both (or neither) would show him. `idle` is seconds since the last input on that device, `age_ms` how long ago the peer's beat arrived. A peer older than 15 s is ignored.",
+  "cases": [
+    {
+      "name": "alone, no server: everything shows",
+      "me": {"device": "laptop", "idle": 500, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "link up, no server: the device used last wins (laptop's view)",
+      "me": {"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "link up, no server: the same moment seen from the phone",
+      "me": {"device": "s21", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "the laptop was touched last",
+      "me": {"device": "s21", "idle": 90, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "laptop", "idle": 1, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 500}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "a phone with its screen off never wins while the laptop is awake",
+      "me": {"device": "laptop", "idle": 600, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 0, "screen_on": false, "server_ok": false, "server_active": null, "age_ms": 500}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "a locked laptop gives way to the phone",
+      "me": {"device": "laptop", "idle": 0, "screen_on": false, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 300, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 500}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "both screens off: idle decides among all",
+      "me": {"device": "laptop", "idle": 100, "screen_on": false, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 20, "screen_on": false, "server_ok": false, "server_active": null, "age_ms": 500}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "everyone reaches the server and it names the phone, whatever the idle",
+      "me": {"device": "laptop", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21"},
+      "peers": [{"device": "s21", "idle": 500, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 500}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "mixed: the phone reaches the server, the laptop does not: idle decides (laptop's view)",
+      "me": {"device": "laptop", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 50, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 500}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "mixed, seen from the phone: the same answer",
+      "me": {"device": "s21", "idle": 50, "screen_on": true, "server_ok": true, "server_active": "s21"},
+      "peers": [{"device": "laptop", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 500}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "the server names something that is not ours: idle decides",
+      "me": {"device": "laptop", "idle": 5, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "s21", "idle": 60, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 500}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "the server answers but disagrees between the two: idle decides",
+      "me": {"device": "laptop", "idle": 5, "screen_on": true, "server_ok": true, "server_active": "laptop"},
+      "peers": [{"device": "s21", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 500}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "no peer, server reachable: the server decides alone",
+      "me": {"device": "laptop", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21"},
+      "peers": [],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "a peer that went quiet more than 15 s ago is not there",
+      "me": {"device": "laptop", "idle": 900, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 0, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 20000}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "a peer's idle keeps running while its beat ages",
+      "me": {"device": "laptop", "idle": 10, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 12000}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "a tie goes to the same device on both sides",
+      "me": {"device": "s21", "idle": 7, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "laptop", "idle": 7, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 0}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "hysteresis: a small lead does not steal the island",
+      "me": {"device": "laptop", "idle": 5, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 1, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 0}],
+      "previous": "laptop",
+      "expect": "laptop"
+    },
+    {
+      "name": "hysteresis: a clear lead does",
+      "me": {"device": "laptop", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 0, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 0}],
+      "previous": "laptop",
+      "expect": "s21"
+    },
+    {
+      "name": "hysteresis never keeps a device whose screen is off",
+      "me": {"device": "laptop", "idle": 1, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 0, "screen_on": false, "server_ok": false, "server_active": null, "age_ms": 0}],
+      "previous": "s21",
+      "expect": "laptop"
+    }
+  ]
+}

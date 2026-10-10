@@ -11,7 +11,7 @@
 // (the flag is kept in the file), so a restart does not repeat it; an overdue one is announced
 // when Coucou starts. The sync with Jinx runs once at start, then only while the panel is open.
 
-import { Bridge } from "../core/bridge";
+import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { h, clear } from "../views/dom";
@@ -152,6 +152,13 @@ export function registerTasks(island: Island) {
     onChange();
     State.notify();
   };
+  // The phone changed the list (it met this one over the link): look again, ring what is due now.
+  void onEvent<null>("tasks-changed", () => {
+    void reload().then(() => {
+      fire();
+      State.notify();
+    });
+  });
   // Overdue reminders are announced once, now; then one look at Jinx's list.
   void reload().then(() => {
     fire();

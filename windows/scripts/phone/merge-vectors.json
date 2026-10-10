@@ -1,0 +1,299 @@
+{
+ "about": "Cases both Coucou's tasks.rs and the Android TaskLogic must satisfy: merge(local, remote, now) gives `expect` (compared on id, title, done, deleted, updatedAt, sorted by id); when symmetric, merge(remote, local, now) gives the same.",
+ "cases": [
+  {
+   "name": "the later change wins",
+   "now": 1000,
+   "symmetric": true,
+   "local": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 100
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "b",
+     "done": true,
+     "created": 1,
+     "updatedAt": 200
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "b",
+     "done": true,
+     "deleted": false,
+     "updatedAt": 200
+    }
+   ]
+  },
+  {
+   "name": "an older change from the other side changes nothing",
+   "now": 1000,
+   "symmetric": true,
+   "local": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 200
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "b",
+     "done": false,
+     "created": 1,
+     "updatedAt": 100
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "deleted": false,
+     "updatedAt": 200
+    }
+   ]
+  },
+  {
+   "name": "a deletion beats an older edit",
+   "now": 1000,
+   "symmetric": true,
+   "local": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 100
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 150,
+     "deleted": true
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "deleted": true,
+     "updatedAt": 150
+    }
+   ]
+  },
+  {
+   "name": "a later edit beats a deletion",
+   "now": 1000,
+   "symmetric": true,
+   "local": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 150,
+     "deleted": true
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "a nueva",
+     "done": false,
+     "created": 1,
+     "updatedAt": 300
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "a nueva",
+     "done": false,
+     "deleted": false,
+     "updatedAt": 300
+    }
+   ]
+  },
+  {
+   "name": "what the other has is added",
+   "now": 1000,
+   "symmetric": true,
+   "local": [],
+   "remote": [
+    {
+     "id": "y",
+     "title": "b",
+     "done": false,
+     "created": 1,
+     "updatedAt": 200
+    }
+   ],
+   "expect": [
+    {
+     "id": "y",
+     "title": "b",
+     "done": false,
+     "deleted": false,
+     "updatedAt": 200
+    }
+   ]
+  },
+  {
+   "name": "a tombstone is carried on",
+   "now": 1000,
+   "symmetric": true,
+   "local": [],
+   "remote": [
+    {
+     "id": "z",
+     "title": "c",
+     "done": false,
+     "created": 1,
+     "updatedAt": 200,
+     "deleted": true
+    }
+   ],
+   "expect": [
+    {
+     "id": "z",
+     "title": "c",
+     "done": false,
+     "deleted": true,
+     "updatedAt": 200
+    }
+   ]
+  },
+  {
+   "name": "an ancient tombstone is not kept",
+   "now": 2592020,
+   "symmetric": false,
+   "local": [],
+   "remote": [
+    {
+     "id": "z",
+     "title": "c",
+     "done": false,
+     "created": 1,
+     "updatedAt": 10,
+     "deleted": true
+    }
+   ],
+   "expect": []
+  },
+  {
+   "name": "a tie is settled the same way on both sides",
+   "now": 1000,
+   "symmetric": true,
+   "local": [
+    {
+     "id": "x",
+     "title": "uno",
+     "done": true,
+     "created": 1,
+     "updatedAt": 100
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "dos",
+     "done": false,
+     "created": 1,
+     "updatedAt": 100
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "uno",
+     "done": true,
+     "deleted": false,
+     "updatedAt": 100
+    }
+   ]
+  },
+  {
+   "name": "a clock that is ahead is clamped",
+   "now": 2000,
+   "symmetric": false,
+   "local": [
+    {
+     "id": "x",
+     "title": "a",
+     "done": false,
+     "created": 1,
+     "updatedAt": 1000
+    }
+   ],
+   "remote": [
+    {
+     "id": "x",
+     "title": "future",
+     "done": true,
+     "created": 1,
+     "updatedAt": 9999999
+    }
+   ],
+   "expect": [
+    {
+     "id": "x",
+     "title": "future",
+     "done": true,
+     "deleted": false,
+     "updatedAt": 2300
+    }
+   ]
+  },
+  {
+   "name": "the same pendiente under two ids is one task",
+   "now": 1000,
+   "symmetric": false,
+   "local": [
+    {
+     "id": "j-j9",
+     "title": "pagar luz",
+     "done": false,
+     "created": 1,
+     "updatedAt": 0,
+     "jinxId": "j9"
+    }
+   ],
+   "remote": [
+    {
+     "id": "uuid-1",
+     "title": "pagar luz",
+     "done": true,
+     "created": 1,
+     "updatedAt": 100,
+     "jinxId": "j9"
+    }
+   ],
+   "expect": [
+    {
+     "id": "j-j9",
+     "title": "pagar luz",
+     "done": true,
+     "deleted": false,
+     "updatedAt": 100
+    }
+   ]
+  }
+ ]
+}

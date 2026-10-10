@@ -13,6 +13,7 @@
 import type { BotEmoteName } from "../core/layout";
 import type { BotEngine } from "./engine";
 import { State } from "../core/state";
+import { Presence, onPresence, reportLocalMusic } from "../core/presence";
 
 /** How long the celebration lasts after the list empties. */
 export const CELEBRATE_MS = 3_000;
@@ -40,7 +41,8 @@ export type MochiMood = "alert" | "tired" | "dancing" | "sleepy" | "idle";
 const MOOD_EMOTE: Record<Exclude<MochiMood, "idle">, BotEmoteName> = {
   alert: "annoyed",
   tired: "yawn",
-  dancing: "happy",
+  // A real dance now (engine.ts, same 1.4 s sway as the phone), not just a smile.
+  dancing: "dance",
   sleepy: "yawn",
 };
 
@@ -98,7 +100,8 @@ function readScene(dueTasks: number): MochiScene {
   const now = Date.now();
   const bat = State.sys.battery;
   return {
-    musicPlaying: State.music?.status === "Playing",
+    // Whichever device the song is on, he dances to it.
+    musicPlaying: State.music?.status === "Playing" || Presence.peerMusic,
     batteryLow: bat != null && !State.sys.plugged && bat <= LOW_BATTERY,
     attention: dueTasks > 0,
     celebrating: latch.showing(now),
@@ -113,10 +116,15 @@ function readScene(dueTasks: number): MochiScene {
  */
 export function startSceneSync(engine: BotEngine, openCount: OpenCounter, dueCount: OpenCounter) {
   if (timer) return;
+  // News on the other device startles him here too (he is only drawn on the one in use).
+  onPresence((p) => {
+    if (p.peerNews) engine.triggerEmote("surprised", 1.8);
+  });
   const beat = () => {
     const now = Date.now();
     const open = openCount();
     if (latch.update(open, now)) engine.triggerEmote("happy", CELEBRATE_MS / 1000);
+    void reportLocalMusic(State.music?.status === "Playing");
     const mood = moodOf(readScene(dueCount()), new Date().getHours());
     if (mood !== lastMood) {
       lastMood = mood;

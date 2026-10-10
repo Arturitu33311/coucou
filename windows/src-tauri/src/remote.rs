@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde_json::{json, Value};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -27,6 +27,8 @@ static BUS: OnceLock<broadcast::Sender<String>> = OnceLock::new();
 static PENDING: Mutex<Option<HashMap<String, Value>>> = Mutex::new(None);
 
 const MAX_DETAIL: usize = 300;
+/// A list of tasks from the phone: twice the app's own limit (tombstones travel too).
+const MAX_SYNC_TASKS: usize = crate::tasks::MAX_TASKS * 2;
 
 fn bus() -> &'static broadcast::Sender<String> {
     BUS.get_or_init(|| broadcast::channel(256).0)
@@ -179,6 +181,26 @@ fn publish(line: &Value) {
     }
 }
 
+/// This device's own beat, pushed now (a song started, news arrived) instead of at the phone's next beat.
+pub fn publish_peer() {
+    if on() && bus().receiver_count() > 0 {
+        publish(&crate::presence::reply_line());
+    }
+}
+
+/// The task list changed on this device: a phone on the link merges it at once.
+pub fn tasks_changed() {
+    if on() && bus().receiver_count() > 0 {
+        publish(&tasks_line());
+    }
+}
+
+/// The whole list (tombstones included), in the shape both sides merge.
+fn tasks_line() -> Value {
+    let tasks: Value = serde_json::from_str(&crate::tasks::snapshot_json()).unwrap_or_else(|_| json!([]));
+    json!({ "t": "tasks", "tasks": tasks })
+}
+
 /// A hook event that waits for nobody.
 pub fn publish_event(payload: &Value) {
     if on() && bus().receiver_count() > 0 {
@@ -225,6 +247,11 @@ pub enum Action {
     AnswerQuestion { id: String, answers: Value },
     Decline { id: String },
     Ping,
+    /// The phone's state beat (who is using it, whether it reaches the server, what it hears and sees).
+    /// State only: nothing it carries can be acted on.
+    Peer { beat: crate::presence::Beat, music: bool, news: bool },
+    /// The phone's whole task list, to be merged with this one (newest change wins, see tasks.rs).
+    TasksSync { tasks: Value },
     Reject(String),
 }
 
@@ -235,6 +262,15 @@ pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action
     let kind = pending.get(&id).and_then(|p| p.get("t")).and_then(Value::as_str);
     match v.get("op").and_then(Value::as_str) {
         Some("ping") => Action::Ping,
+        Some("peer") => match crate::presence::parse_peer(&v) {
+            Some((beat, music, news)) => Action::Peer { beat, music, news },
+            None => Action::Reject("not a phone beat".into()),
+        },
+        Some("tasks_sync") => match v.get("tasks") {
+            // Bounded here; each task is bounded again by tasks::sanitize_remote before it is merged.
+            Some(t) if t.as_array().map_or(false, |a| a.len() <= MAX_SYNC_TASKS) => Action::TasksSync { tasks: t.clone() },
+            _ => Action::Reject("tasks must be a list".into()),
+        },
         Some("answer") => match (kind, v.get("decision").and_then(Value::as_str)) {
             (Some("approval"), Some("allow")) => Action::Answer { id, decision: "allow" },
             (Some("approval"), Some("deny")) => Action::Answer { id, decision: "deny" },
@@ -365,6 +401,22 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
         let pending = PENDING.lock().unwrap().clone().unwrap_or_default();
         let reply = match parse_client_line(&line, &pending) {
             Action::Ping => json!({ "t": "pong" }),
+            Action::Peer { beat, music, news } => {
+                crate::presence::on_peer(&app, beat, music, news);
+                crate::presence::reply_line()
+            }
+            Action::TasksSync { tasks } => {
+                // Each device works alone; when they meet the newest change wins, then both have the same list.
+                match crate::tasks::merge_remote_json(&tasks.to_string()) {
+                    Ok(true) => {
+                        let _ = app.emit("tasks-changed", ());
+                        log::line("phone link: tasks merged");
+                    }
+                    Ok(false) => {}
+                    Err(e) => log::line(format!("phone link: tasks not merged ({e})")),
+                }
+                tasks_line()
+            }
             Action::Answer { id, decision } => {
                 log::line(format!("phone link: {decision} for id={id}"));
                 pipe::answer(&app, &id, decision);
@@ -387,6 +439,8 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
         }
     }
     writer.abort();
+    // A phone that left is not there: this device shows Mochi on its own again, at once.
+    crate::presence::on_link_down(&app, crate::presence::PHONE);
     log::line("phone link: the phone left");
 }
 
@@ -459,6 +513,16 @@ mod tests {
         assert_eq!(go(r#"{"op":"decline","request_id":"q1"}"#), Action::Decline { id: "q1".into() });
         assert!(matches!(go(r#"{"op":"decline","request_id":"zz"}"#), Action::Reject(_)));
         assert_eq!(go(r#"{"op":"ping"}"#), Action::Ping);
+        // A beat is state, and only the phone may send one.
+        assert!(matches!(go(r#"{"op":"peer","device":"s21","idle":3,"screen_on":true,"server_ok":false,"music":true}"#), Action::Peer { music: true, .. }));
+        assert!(matches!(go(r#"{"op":"peer","device":"laptop","idle":3}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"peer"}"#), Action::Reject(_)));
+        // Its task list is taken in as a list, and only as a bounded one.
+        assert!(matches!(go(r#"{"op":"tasks_sync","tasks":[{"id":"a","title":"x"}]}"#), Action::TasksSync { .. }));
+        assert!(matches!(go(r#"{"op":"tasks_sync","tasks":"x"}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"tasks_sync"}"#), Action::Reject(_)));
+        let too_many = format!(r#"{{"op":"tasks_sync","tasks":[{}]}}"#, vec!["{}"; MAX_SYNC_TASKS + 1].join(","));
+        assert!(matches!(go(&too_many), Action::Reject(_)));
         // Anything else is not a thing a phone can do.
         for bad in [r#"{"op":"run","cmd":"ls"}"#, r#"{"op":"allow_all"}"#, "no json", "[]", ""] {
             assert!(matches!(go(bad), Action::Reject(_)), "{bad}");

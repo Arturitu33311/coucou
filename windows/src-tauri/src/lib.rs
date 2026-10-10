@@ -19,6 +19,7 @@ mod notifs;
 mod opencode;
 mod pipe;
 mod pendientes;
+mod presence;
 mod pomodoro;
 mod remote;
 mod quick;
@@ -64,6 +65,25 @@ pub struct BootInfo {
     /// False where the OS has no global cursor (Wayland): the page then reports
     /// the cursor from its own mouse events.
     cursor_poll: bool,
+}
+
+/// Is this the device in use (and what the other one hears and sees)? The page paints Mochi and
+/// Coucou only while it is, and keeps asking nothing else of it.
+#[tauri::command]
+fn presence_state() -> serde_json::Value {
+    presence::state()
+}
+
+/// The page says whether this device is playing something: the other one's Mochi dances to it.
+#[tauri::command]
+fn presence_local_music(app: AppHandle, playing: bool) {
+    presence::set_local_music(&app, playing);
+}
+
+/// Something arrived on this device (a notification): the phone's Mochi is startled too.
+#[tauri::command]
+fn presence_local_news() {
+    presence::set_local_news();
 }
 
 #[tauri::command]
@@ -887,6 +907,9 @@ pub fn run() {
         .manage(jinx::Jinx::default())
         .invoke_handler(tauri::generate_handler![
             boot,
+            presence_state,
+            presence_local_music,
+            presence_local_news,
             save_settings,
             set_collapsed,
             set_island_rect,
@@ -997,6 +1020,8 @@ pub fn run() {
             );
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
+            // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
+            presence::start(&handle);
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);

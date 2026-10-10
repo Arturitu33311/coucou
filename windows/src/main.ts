@@ -19,6 +19,7 @@ import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 import { startSceneSync } from "./mochi/scene";
+import { startPresence } from "./core/presence";
 
 // A script error must not vanish into a webview nobody is looking at: it goes to the log.
 window.addEventListener("error", (e) => {
@@ -103,6 +104,7 @@ async function main() {
 
   island.launch();
   startSceneSync(island.mochi, openCount, dueCount);
+  void startPresence();
 
   // In a plain browser there is no wake strip behind the cursor: make the whole
   // page wake the island so the visuals can be checked with `npm run dev`.
