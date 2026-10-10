@@ -141,8 +141,11 @@ impl Live {
         }
     }
 
-    /// Recomputes and returns the payload for the page if it changed.
-    fn recompute(&mut self) -> Option<Value> {
+    /// Works out who has Mochi now and what the other device hears and sees. It does NOT say what the
+    /// page was told: whoever has an app handle publishes the change with `recompute`. (A reader that
+    /// settles without publishing, like the reply to a beat, must not use up the change: the page would
+    /// never hear that the island is back.)
+    fn settle(&mut self) {
         let now = Instant::now();
         let seen: Vec<Seen> = self
             .peers
@@ -156,6 +159,11 @@ impl Live {
         let alive = |p: &Peer| now.duration_since(p.at) <= Duration::from_millis(FRESH_MS);
         self.peer_music = self.peers.values().any(|p| alive(p) && p.music);
         self.peer_news = self.peers.values().any(|p| alive(p) && p.news && now.duration_since(p.at) <= NEWS_WINDOW);
+    }
+
+    /// Settles, and returns the payload for the page if it differs from what the page was last told.
+    fn recompute(&mut self) -> Option<Value> {
+        self.settle();
         let now_state = (self.active, self.peer_music, self.peer_news);
         if self.sent == Some(now_state) {
             return None;
@@ -171,6 +179,8 @@ impl Live {
 
 fn publish(app: &AppHandle, payload: Option<Value>) {
     if let Some(p) = payload {
+        // One line per change of who has Mochi, so a migration that does not happen can be read off the log.
+        crate::log::line(format!("presence: {p}"));
         let _ = app.emit("presence", p);
     }
 }
@@ -178,7 +188,7 @@ fn publish(app: &AppHandle, payload: Option<Value>) {
 /// What the page asks at start.
 pub fn state() -> Value {
     with(|l| {
-        l.recompute();
+        l.settle();
         l.payload()
     })
 }
@@ -222,7 +232,9 @@ pub fn on_link_down(app: &AppHandle, device: &str) {
 pub fn reply_line() -> Value {
     with(|l| {
         let b = l.my_beat();
-        l.recompute();
+        // Settle only: publishing the change to the page is the caller-with-a-handle's job (the clock),
+        // and consuming it here is exactly what kept the island hidden after coming back.
+        l.settle();
         json!({
             "t": "peer",
             "device": b.device,
@@ -454,6 +466,40 @@ mod tests {
         let odd = parse_peer(&json!({"device":"s21","idle":u64::MAX,"server_active":"vga"})).unwrap();
         assert_eq!(odd.0.server_active, None);
         assert_eq!(odd.0.idle_s, MAX_IDLE_S);
+    }
+
+    fn phone_beat(idle: u64) -> Peer {
+        Peer {
+            beat: Beat { device: PHONE.into(), idle_s: idle, screen_on: true, server_ok: false, server_active: None },
+            music: false,
+            news: false,
+            at: Instant::now(),
+        }
+    }
+
+    /// The reported bug: the person used the phone (island leaves), then came back to the laptop, and
+    /// the island stayed hidden because the reply to a beat had settled the change without publishing it.
+    #[test]
+    fn coming_back_to_the_laptop_is_published_even_if_a_reply_settled_it_first() {
+        let mut l = Live { active: true, ..Live::default() };
+        l.idle_s = 100;
+        l.idle_at = Some(Instant::now());
+        l.peers.insert(PHONE.into(), phone_beat(0));
+        let gone = l.recompute().expect("the island leaves when the phone is used");
+        assert_eq!(gone["active"], false);
+
+        // Back at the laptop: its idle falls, the phone has been quiet for a while.
+        l.idle_s = 0;
+        l.idle_at = Some(Instant::now());
+        l.peers.insert(PHONE.into(), phone_beat(40));
+        // The reply to a beat settles first (no handle to publish with)...
+        l.settle();
+        assert!(l.active);
+        // ...and the clock, which has the handle, must still have the change to publish.
+        let back = l.recompute().expect("the page must still be told the island is back");
+        assert_eq!(back["active"], true);
+        // Nothing new: nothing to publish.
+        assert!(l.recompute().is_none());
     }
 
     #[test]
