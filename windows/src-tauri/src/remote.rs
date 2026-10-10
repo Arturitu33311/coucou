@@ -11,6 +11,13 @@
 // really waiting (allow or deny), answer a question that is really waiting, or hand it back to the
 // terminal. It cannot start anything, read files or run commands. Claude Code is never slowed: the
 // events are copied after the island has them, and a phone that is slow or gone changes nothing.
+//
+// Two more things travel, and both are data, never commands: its state beat (`peer`: who is using it,
+// whether it reaches the presence server, what it hears; ids and numbers are checked and bounded) and
+// its task list (`tasks_sync`, merged by tasks.rs: every task bounded, control characters dropped, at
+// most twice the list limit, bookkeeping about the phone's own link with Jinx never taken). A phone
+// that is lost can therefore add or change reminders, which then follow the list to wherever it goes;
+// it still cannot make Coucou do anything else.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

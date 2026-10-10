@@ -24,8 +24,18 @@ use crate::platform::home_dir;
 /// Run opencode and read its stdout as JSON. Through a temp file, not a pipe:
 /// a piped stdout is cut at 256 KB, and a long session's export is bigger.
 fn capture_json(args: &[&str], dir: Option<&str>) -> Result<Value, String> {
-    let path = std::env::temp_dir().join(format!("coucou-op-{}.json", std::process::id()));
-    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    // Not in the shared /tmp with a name anyone can guess (a planted symlink would be followed): a
+    // private folder of ours, a name used once, and a file that must not exist yet.
+    let private = crate::settings::local_dir().join("tmp");
+    crate::platform::ensure_private_dir(&private).map_err(|e| e.to_string())?;
+    let path = private.join(format!("op-{}-{}.json", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
     let mut cmd = Command::new(opencode_bin()?);
     cmd.args(args).stdin(Stdio::null()).stdout(file).stderr(Stdio::null());
     if let Some(d) = dir {
