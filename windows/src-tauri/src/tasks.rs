@@ -73,6 +73,9 @@ pub struct JinxRow {
     pub categoria: Option<String>,
     pub source: Option<String>,
     pub status: String,
+    /// When her store last changed the row (unix seconds), if her gateway says; without it a conflict
+    /// is not told by time.
+    pub updated_at: Option<i64>,
 }
 
 impl JinxRow {
@@ -261,7 +264,7 @@ pub fn set_jinx_at(list: &mut [Task], id: &str, on: bool, now: i64) -> Result<()
 pub struct Plan {
     /// Local tasks (ids) to hand to her: shared, not yet hers.
     pub to_add: Vec<String>,
-    /// (her id, "hecho" | "descartado") to apply there.
+    /// (her id, "hecho" | "descartado" | "reabrir") to apply there.
     pub to_resolve: Vec<(String, &'static str)>,
     /// The local list changed (and must be saved).
     pub changed: bool,
@@ -301,17 +304,92 @@ pub fn reconcile(list: &mut [Task], jinx: &[JinxRow], now: i64) -> Plan {
             }
             t.jinx_id = None;
             plan.changed = true;
-        } else if !row.open() && !t.done {
-            t.done = true;
-            t.completed_at = Some(now);
-            // Her closing is a change made now: the other device must take it over its older state.
-            t.updated_at = now.max(t.updated_at);
-            plan.changed = true;
-        } else if row.open() && t.done {
-            plan.to_resolve.push((jid, "hecho"));
+        } else if row.open() == !t.done {
+            // Agreement: remember it, so the next change on either side is told from this one.
+            if t.jinx_status.as_deref() != Some(row.status.as_str()) || t.jinx_synced != t.updated_at {
+                t.jinx_status = Some(row.status.clone());
+                t.jinx_synced = t.updated_at;
+                plan.changed = true;
+            }
+        } else {
+            // They differ. Each side keeps working alone, so both may have changed: what each change
+            // is told from is the status she had when we last agreed and the stamp then on both sides.
+            // Only one changed: it is copied to the other. Both: the later stamp wins; her row has a
+            // stamp only when her gateway reports one, and without it she wins. (Same rules as the
+            // phone's TaskLogic.reconcile.)
+            let known = t.jinx_status.is_some();
+            let she_changed = !known || t.jinx_status.as_deref() != Some(row.status.as_str());
+            let we_changed = !known || t.updated_at > t.jinx_synced;
+            let take_hers = if !known {
+                // An old link with no memory: she is followed when she closed it, and told when we did.
+                !row.open()
+            } else if she_changed && !we_changed {
+                true
+            } else if !she_changed {
+                false
+            } else {
+                row.updated_at.map(|u| u > t.updated_at).unwrap_or(true)
+            };
+            if take_hers {
+                // Her change is a change made now: the other device must take it over its older state.
+                let stamp = row.updated_at.unwrap_or_else(|| now.max(t.updated_at));
+                if row.open() {
+                    t.done = false;
+                    t.completed_at = None;
+                } else {
+                    t.done = true;
+                    t.completed_at = Some(now);
+                }
+                t.updated_at = stamp;
+                t.jinx_status = Some(row.status.clone());
+                t.jinx_synced = stamp;
+                plan.changed = true;
+            } else {
+                plan.to_resolve.push((jid, if t.done { "hecho" } else { "reabrir" }));
+            }
         }
     }
     plan
+}
+
+/// "2026-10-06T19:30:42.27+00:00" (or with Z, or without a zone: UTC) to unix seconds; None if it is
+/// not a date. How the gateway's `updated_at` is read (the phone's `TaskLogic.isoToUnix`).
+pub fn iso_to_unix(s: &str) -> Option<i64> {
+    let b = s.trim().as_bytes();
+    let num = |from: usize, len: usize| -> Option<i64> {
+        let part = b.get(from..from + len)?;
+        part.iter().all(u8::is_ascii_digit).then(|| std::str::from_utf8(part).ok()?.parse().ok())?
+    };
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || !(b[10] == b'T' || b[10] == b' ') || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let (y, mo, d, h, mi, se) = (num(0, 4)?, num(5, 2)?, num(8, 2)?, num(11, 2)?, num(14, 2)?, num(17, 2)?);
+    let mut t = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se;
+    let mut i = 19;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let digits = b[i..].iter().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        i += digits;
+    }
+    match b.get(i) {
+        None => {}
+        Some(b'Z') if i + 1 == b.len() => {}
+        Some(&sign @ (b'+' | b'-')) => {
+            let rest: Vec<u8> = b[i + 1..].iter().copied().filter(|c| *c != b':').collect();
+            if rest.len() != 4 || !rest.iter().all(u8::is_ascii_digit) {
+                return None;
+            }
+            let hh: i64 = std::str::from_utf8(&rest[..2]).ok()?.parse().ok()?;
+            let mm: i64 = std::str::from_utf8(&rest[2..]).ok()?.parse().ok()?;
+            let off = hh * 3600 + mm * 60;
+            t -= if sign == b'+' { off } else { -off };
+        }
+        Some(_) => return None,
+    }
+    Some(t)
 }
 
 /// Her open pendientes that are not one of our shared tasks (the ones to show beside ours).
@@ -785,7 +863,7 @@ mod tests {
     }
 
     fn row(id: &str, status: &str) -> JinxRow {
-        JinxRow { id: id.into(), titulo: "x".into(), due: None, categoria: None, source: Some("coucou".into()), status: status.into() }
+        JinxRow { id: id.into(), titulo: "x".into(), due: None, categoria: None, source: Some("coucou".into()), status: status.into(), updated_at: None }
     }
     fn shared(title: &str, jinx_id: Option<&str>) -> Task {
         let mut l = Vec::new();
@@ -819,12 +897,87 @@ mod tests {
         let p = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
         assert_eq!(p.to_resolve, vec![("j1".to_string(), "hecho")]);
         assert!(!p.changed);
-        // Both open, or both closed: nothing to do.
+        // Both open, or both closed: nothing to do on her side; the first meeting is remembered, the
+        // next one has nothing to say.
         let mut l = vec![shared("a", Some("j1"))];
+        let first = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert!(first.to_add.is_empty() && first.to_resolve.is_empty());
+        assert_eq!(l[0].jinx_status.as_deref(), Some("pendiente"));
         assert_eq!(reconcile(&mut l, &[row("j1", "pendiente")], NOW), Plan::default());
         let mut l = vec![shared("a", Some("j1"))];
         l[0].done = true;
+        reconcile(&mut l, &[row("j1", "hecho")], NOW);
         assert_eq!(reconcile(&mut l, &[row("j1", "hecho")], NOW), Plan::default());
+    }
+
+    /// A shared task that both sides last agreed on as open, at the stamp `synced`.
+    fn agreed(updated: i64, synced: i64) -> Task {
+        let mut t = shared("a", Some("j1"));
+        t.updated_at = updated;
+        t.jinx_status = Some("pendiente".into());
+        t.jinx_synced = synced;
+        t
+    }
+
+    #[test]
+    fn a_change_on_one_side_only_is_copied_to_the_other() {
+        // Only she closed it: we follow her.
+        let mut l = vec![agreed(100, 100)];
+        let p = reconcile(&mut l, &[row("j1", "hecho")], NOW);
+        assert!(l[0].done && p.changed && p.to_resolve.is_empty());
+        // Only we closed it (stamped after the agreement): she is told, and we keep it.
+        let mut l = vec![agreed(200, 100)];
+        l[0].done = true;
+        let p = reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert!(l[0].done);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "hecho")]);
+        // We reopened a task she had closed: she is told to reopen it.
+        let mut l = vec![agreed(200, 100)];
+        l[0].jinx_status = Some("hecho".into());
+        l[0].done = false;
+        let p = reconcile(&mut l, &[row("j1", "hecho")], NOW);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "reabrir")]);
+    }
+
+    #[test]
+    fn when_both_changed_the_later_stamp_wins_and_without_a_stamp_she_does() {
+        // We closed it at 300; she reopened a closed one at 250 (her gateway says so): ours is later.
+        let mut l = vec![agreed(300, 100)];
+        l[0].jinx_status = Some("hecho".into());
+        l[0].done = true;
+        let mut r = row("j1", "pendiente");
+        r.updated_at = Some(250);
+        let p = reconcile(&mut l, &[r], NOW);
+        assert!(l[0].done);
+        assert_eq!(p.to_resolve, vec![("j1".to_string(), "hecho")]);
+        // Hers is later: we follow her, and take her stamp.
+        let mut l = vec![agreed(300, 100)];
+        l[0].jinx_status = Some("hecho".into());
+        l[0].done = true;
+        let mut r = row("j1", "pendiente");
+        r.updated_at = Some(400);
+        let p = reconcile(&mut l, &[r], NOW);
+        assert!(!l[0].done && l[0].updated_at == 400 && l[0].jinx_synced == 400 && p.to_resolve.is_empty());
+        // No stamp from her gateway: she wins.
+        let mut l = vec![agreed(300, 100)];
+        l[0].jinx_status = Some("hecho".into());
+        l[0].done = true;
+        reconcile(&mut l, &[row("j1", "pendiente")], NOW);
+        assert!(!l[0].done);
+    }
+
+    #[test]
+    fn her_timestamps_are_read_in_every_shape_the_gateway_writes() {
+        assert_eq!(iso_to_unix("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(iso_to_unix("2026-10-06T19:30:42+00:00"), Some(1_791_315_042));
+        assert_eq!(iso_to_unix("2026-10-06T19:30:42.27+00:00"), Some(1_791_315_042));
+        assert_eq!(iso_to_unix("2026-10-06 19:30:42"), Some(1_791_315_042));
+        // A zone moves it: 21:30 at +02:00 is 19:30 UTC.
+        assert_eq!(iso_to_unix("2026-10-06T21:30:42+02:00"), Some(1_791_315_042));
+        assert_eq!(iso_to_unix("2026-10-06T14:30:42-0500"), Some(1_791_315_042));
+        for bad in ["", "yesterday", "2026-10-06", "2026-10-06T19:30", "2026-10-06T19:30:42+9"] {
+            assert_eq!(iso_to_unix(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -869,7 +1022,7 @@ mod tests {
     }
 
     fn pend(id: &str, source: &str, due: Option<&str>, status: &str) -> JinxRow {
-        JinxRow { id: id.into(), titulo: format!("pend {id}"), due: due.map(String::from), categoria: None, source: Some(source.into()), status: status.into() }
+        JinxRow { id: id.into(), titulo: format!("pend {id}"), due: due.map(String::from), categoria: None, source: Some(source.into()), status: status.into(), updated_at: None }
     }
 
     #[test]

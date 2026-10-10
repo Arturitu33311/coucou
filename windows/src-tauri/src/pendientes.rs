@@ -55,6 +55,8 @@ pub fn parse_rows(json: &str) -> Vec<JinxRow> {
                         categoria: i["categoria"].as_str().map(str::to_string),
                         source: i["source"].as_str().map(str::to_string),
                         status: i["status"].as_str().unwrap_or("pendiente").to_string(),
+                        // Her gateway v2 says when the row last changed; older ones do not.
+                        updated_at: i["updated_at"].as_str().and_then(crate::tasks::iso_to_unix),
                     })
                 })
                 .collect()
