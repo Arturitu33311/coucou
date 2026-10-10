@@ -197,6 +197,10 @@ export class BotEngine {
   permanentEye: EyeShape | null = null;
   permanentEmote: BotEmoteName | null = null;
   miniNextBehavior = 0;
+  /** Dictation is on: he leans toward it. */
+  listening = false;
+  /** Until when he keeps watching the pill after news (seconds, `now()` clock). */
+  glanceUntil = 0;
 
   badge: Badge | null = null;
   private badgeKey = "none";
@@ -361,6 +365,15 @@ export class BotEngine {
     this.waveUntil = 0;
     this.waveStart = 0;
     this.anim("hands", [[0, 150, Ease.inOut]]);
+  }
+
+  setListening(on: boolean) {
+    this.listening = on;
+  }
+
+  /** Watches the pill for `seconds` (news arrived): the phone's Mochi does the same. */
+  glance(seconds = 4) {
+    this.glanceUntil = now() + seconds;
   }
 
   setPermanentEmote(emote: BotEmoteName | null) {
@@ -532,6 +545,13 @@ export class BotEngine {
       }
       ty = this.miniLookTarget.x * 0.62;
       tp = this.miniLookTarget.y * 0.5;
+    }
+
+    // Listening (dictation on) leans toward the pill that says so; a glance follows news for a few
+    // seconds. Both are what the phone's Mochi does (MochiMood.Listening / Glance).
+    if ((this.listening || n < this.glanceUntil) && !this.cfg.scans && this.state !== "sleeping" && this.state !== "dizzy") {
+      ty = this.listening ? 0.35 : 0.5;
+      tp = -0.04;
     }
 
     this.tgYaw = ty;

@@ -118,12 +118,17 @@ export function startSceneSync(engine: BotEngine, openCount: OpenCounter, dueCou
   if (timer) return;
   // News on the other device startles him here too (he is only drawn on the one in use).
   onPresence((p) => {
-    if (p.peerNews) engine.triggerEmote("surprised", 1.8);
+    if (p.peerNews) {
+      engine.triggerEmote("surprised", 1.8);
+      engine.glance(4);
+    }
   });
   const beat = () => {
     const now = Date.now();
     const open = openCount();
     if (latch.update(open, now)) engine.triggerEmote("happy", CELEBRATE_MS / 1000);
+    // Dictating: he leans toward the pill that says so (the phone's Listening).
+    engine.setListening(State.dictation !== "off");
     void reportLocalMusic(State.music?.status === "Playing");
     void reportLocalLimit(State.tasks.some((t) => t.state === "ratelimit"));
     const mood = moodOf(readScene(dueCount()), new Date().getHours());

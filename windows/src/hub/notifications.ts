@@ -23,6 +23,7 @@ export function registerNotificationPeek(island: Island) {
     State.noteMessage = n.body ? `${head}: ${n.body}` : head;
     // Mochi is startled, here and on the phone (whichever one he is drawn on).
     island.mochi.triggerEmote("surprised", 1.8);
+    island.mochi.glance(4);
     void reportLocalNews();
     Sound.play("pop");
     island.alert("note");

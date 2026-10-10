@@ -86,6 +86,8 @@ finally:
     out = subprocess.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout
     for line in out.splitlines()[1:]:
         pid, _, args = line.strip().partition(" ")
-        if str(TMP) in args and "migrate_xvfb" not in args:
+        # The session helpers that outlive the bus (gvfs, portals, at-spi) live under TMP; never end
+        # a process that is this script or the shell that launched it.
+        if str(TMP) in args and "e2e-migration" not in args and "python3" not in args and int(pid) != os.getpid():
             try: os.kill(int(pid), signal.SIGTERM)
             except Exception: pass
