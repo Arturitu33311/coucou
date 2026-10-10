@@ -48,6 +48,21 @@ export async function reportLocalMusic(playing: boolean) {
   }
 }
 
+let lastLimit: boolean | null = null;
+
+/** Tells Rust whether Claude Code is rate-limited here (the phone's Mochi is tired with it). */
+export async function reportLocalLimit(limited: boolean) {
+  if (!IS_TAURI || limited === lastLimit) return;
+  lastLimit = limited;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("presence_local_limit", { limited });
+  } catch (err) {
+    lastLimit = null;
+    console.error("[coucou] presence_local_limit failed", err);
+  }
+}
+
 /** Something arrived on this device (a notification): the phone's Mochi is startled too. */
 export async function reportLocalNews() {
   if (!IS_TAURI) return;

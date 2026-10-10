@@ -13,7 +13,7 @@
 import type { BotEmoteName } from "../core/layout";
 import type { BotEngine } from "./engine";
 import { State } from "../core/state";
-import { Presence, onPresence, reportLocalMusic } from "../core/presence";
+import { Presence, onPresence, reportLocalLimit, reportLocalMusic } from "../core/presence";
 
 /** How long the celebration lasts after the list empties. */
 export const CELEBRATE_MS = 3_000;
@@ -125,6 +125,7 @@ export function startSceneSync(engine: BotEngine, openCount: OpenCounter, dueCou
     const open = openCount();
     if (latch.update(open, now)) engine.triggerEmote("happy", CELEBRATE_MS / 1000);
     void reportLocalMusic(State.music?.status === "Playing");
+    void reportLocalLimit(State.tasks.some((t) => t.state === "ratelimit"));
     const mood = moodOf(readScene(dueCount()), new Date().getHours());
     if (mood !== lastMood) {
       lastMood = mood;

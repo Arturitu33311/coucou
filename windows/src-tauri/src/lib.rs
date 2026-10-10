@@ -80,6 +80,12 @@ fn presence_local_music(app: AppHandle, playing: bool) {
     presence::set_local_music(&app, playing);
 }
 
+/// Claude Code is (or is no longer) rate-limited here: the phone's Mochi is tired with it.
+#[tauri::command]
+fn presence_local_limit(limited: bool) {
+    presence::set_local_limit(limited);
+}
+
 /// Something arrived on this device (a notification): the phone's Mochi is startled too.
 #[tauri::command]
 fn presence_local_news() {
@@ -910,6 +916,7 @@ pub fn run() {
             presence_state,
             presence_local_music,
             presence_local_news,
+            presence_local_limit,
             save_settings,
             set_collapsed,
             set_island_rect,

@@ -108,6 +108,8 @@ struct Live {
     sent: Option<(bool, bool, bool)>,
     /// This device is playing something (the page says so).
     music: bool,
+    /// Claude Code is rate-limited here (the page says so): the phone's Mochi is tired too.
+    limit: bool,
     /// Something just arrived here (a notification): the phone's Mochi is startled until then.
     news_until: Option<Instant>,
     active: bool,
@@ -230,6 +232,7 @@ pub fn reply_line() -> Value {
             "server_active": b.server_active,
             "music": l.music,
             "news": l.news_until.map(|t| Instant::now() < t).unwrap_or(false),
+            "limit": l.limit,
             "active": l.active,
         })
     })
@@ -244,6 +247,18 @@ pub fn set_local_music(app: &AppHandle, music: bool) {
     });
     publish(app, out);
     // The phone hears it now, not at its next beat.
+    if changed {
+        crate::remote::publish_peer();
+    }
+}
+
+/// The page says whether Claude Code is rate-limited here: the phone's Mochi follows.
+pub fn set_local_limit(limited: bool) {
+    let changed = with(|l| {
+        let changed = l.limit != limited;
+        l.limit = limited;
+        changed
+    });
     if changed {
         crate::remote::publish_peer();
     }
