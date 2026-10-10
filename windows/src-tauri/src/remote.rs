@@ -466,6 +466,23 @@ mod tests {
         assert!(long.ends_with('…') && !long.contains('\n'));
     }
 
+    /// The phone's own test reads this same file: what each side writes, the other reads.
+    #[test]
+    fn the_wire_fixtures_are_read_and_written_the_same_way_on_both_sides() {
+        let doc: Value = serde_json::from_str(include_str!("../../scripts/phone/wire-fixtures.json")).unwrap();
+        let none = HashMap::new();
+        for key in ["peer", "tasks_sync"] {
+            let line = doc["phone_to_laptop"][key].to_string();
+            assert!(!matches!(parse_client_line(&line, &none), Action::Reject(_)), "{key} is read");
+        }
+        let keys = |v: &Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        assert_eq!(keys(&crate::presence::reply_line()), keys(&doc["laptop_to_phone"]["peer"]), "the laptop's beat has the keys the phone reads");
+    }
+
     #[test]
     fn an_event_carries_the_project_the_tool_and_never_the_prompt() {
         let e = event_line(&json!({

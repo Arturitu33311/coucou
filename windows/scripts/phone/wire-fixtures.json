@@ -1,0 +1,11 @@
+{
+  "_doc": "One line of each kind the phone link carries for state and tasks, as each side really writes it. Same file, byte for byte, as app/src/test/resources/wire-fixtures.json in the phone repo: each side must read the other's lines and write lines with the same keys.",
+  "phone_to_laptop": {
+    "peer": {"op":"peer","device":"s21","idle":4,"screen_on":true,"server_ok":false,"server_active":null,"music":true,"news":false},
+    "tasks_sync": {"op":"tasks_sync","tasks":[{"id":"t-1","title":"leche","done":false,"remindAt":null,"notified":false,"created":1,"completedAt":null,"jinx":false,"jinxId":null,"origin":null,"updatedAt":5,"deleted":false,"jinxStatus":null,"jinxSynced":0}]}
+  },
+  "laptop_to_phone": {
+    "peer": {"t":"peer","device":"laptop","idle":0,"screen_on":true,"server_ok":false,"server_active":null,"music":false,"news":false,"active":true},
+    "tasks": {"t":"tasks","tasks":[{"id":"t-1","title":"leche","done":true,"remindAt":null,"notified":false,"created":1,"completedAt":9,"jinx":false,"jinxId":null,"origin":null,"updatedAt":9,"deleted":false,"jinxStatus":null,"jinxSynced":0}]}
+  }
+}

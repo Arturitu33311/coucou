@@ -698,6 +698,27 @@ mod tests {
         parse_when(s, NOW, &|_| 0)
     }
 
+    /// The phone's tests read the same fixture: both sides write a task with the same keys and read the other's.
+    #[test]
+    fn a_task_on_the_wire_has_the_keys_the_phone_writes_and_reads() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!("../../scripts/phone/wire-fixtures.json")).unwrap();
+        let keys = |v: &serde_json::Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        let theirs = &doc["phone_to_laptop"]["tasks_sync"]["tasks"][0];
+        let mut mine = Vec::new();
+        add(&mut mine, "leche", None, 1).unwrap();
+        let encoded: serde_json::Value = serde_json::from_str(&encode(&mine)).unwrap();
+        assert_eq!(keys(&encoded[0]), keys(theirs));
+        // And theirs, as the phone writes it, is a task here.
+        let read = decode(&serde_json::json!([theirs]).to_string()).unwrap();
+        assert_eq!((read[0].id.as_str(), read[0].title.as_str(), read[0].updated_at), ("t-1", "leche", 5));
+        let back = decode(&serde_json::json!([doc["laptop_to_phone"]["tasks"]["tasks"][0]]).to_string()).unwrap();
+        assert!(back[0].done && back[0].updated_at == 9);
+    }
+
     #[test]
     fn a_relative_time_is_taken_out_of_the_title() {
         assert_eq!(p("tomar agua en 20 min"), ("tomar agua".into(), Some(NOW + 1200)));
