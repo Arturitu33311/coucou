@@ -12,20 +12,36 @@
   min-width: 0;
 }
 
-.mq > span {
-  display: inline-block;
+/* The loop: text twice with a gap, sliding one copy past and jumping back while
+   the twin takes over — the GNOME extension's pill, including its edge fade. */
+.mq-track {
+  display: inline-flex;
+  align-items: center;
 }
 
-.mq.scroll > span {
-  animation: mq-slide var(--dur, 8s) ease-in-out infinite alternate;
+.mq-gap {
+  flex: 0 0 30px;
 }
 
-@keyframes mq-slide {
+.mq:not(.scroll) .mq-dup,
+.mq:not(.scroll) .mq-gap {
+  display: none;
+}
+
+.mq.scroll {
+  mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+
+.mq.scroll > .mq-track {
+  animation: mq-loop var(--dur, 8s) linear infinite;
+}
+
+@keyframes mq-loop {
   0%,
-  12% {
+  10% {
     transform: translateX(0);
   }
-  88%,
+  90%,
   100% {
     transform: translateX(var(--dx, 0));
   }
@@ -344,18 +360,18 @@
 }
 
 .cm-title {
-  font: 600 10.5px/13px var(--font);
+  font: 600 12px/14px var(--font);
   color: var(--ink);
 }
 
 /* The small line under the main one: "Title • Artist" while a lyric is being sung
    (the lyric takes the main line from the title, as in the extension). */
 .cm-lyric {
-  min-height: 12px;
+  min-height: 13px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  font: 500 9px/12px var(--font);
+  font: 500 10px/13px var(--font);
   color: var(--dim-2);
 }
 

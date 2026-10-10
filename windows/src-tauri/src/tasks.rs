@@ -420,6 +420,18 @@ pub fn parse_when(text: &str, now: i64, offset: &dyn Fn(i64) -> i64) -> (String,
     (title, when)
 }
 
+/// A day picked on the calendar (epoch seconds of its local midnight) plus a time: the time
+/// of day the sentence carried ("viernes a las 17:30" → Friday 17:30), or `default_hour`
+/// when it carried none. Ported from TaskParser.withDay (Android): two passes so a
+/// daylight-saving jump inside the day still lands on the right wall time.
+pub fn with_day(day_start: i64, parsed_when: Option<i64>, default_hour: i64, offset: &dyn Fn(i64) -> i64) -> i64 {
+    let at_min = parsed_when
+        .map(|w| (w + offset(w)).rem_euclid(86_400) / 60)
+        .unwrap_or(default_hour * 60);
+    let t = day_start + at_min * 60 - offset(day_start + 12 * 3600);
+    day_start + at_min * 60 - offset(t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,5 +659,14 @@ mod tests {
         assert_eq!(back, l[..2]);
         assert!(!dir.join("tasks.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_picked_day_wins_over_the_sentence_keeping_its_time() {
+        let off = &|_| 0;
+        // "viernes a las 17:30" on Friday → Friday 17:30.
+        assert_eq!(with_day(104 * DAY, Some(100 * DAY + 17 * 3600 + 1800), 9, off), 104 * DAY + 17 * 3600 + 1800);
+        // No time in the sentence → the default hour on the picked day.
+        assert_eq!(with_day(104 * DAY, None, 9, off), 104 * DAY + 9 * 3600);
     }
 }

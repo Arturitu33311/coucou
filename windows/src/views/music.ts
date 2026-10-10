@@ -33,28 +33,31 @@ function rgba(hex: string, a: number): string {
 
 // ── Pieces ────────────────────────────────────────────────────────────────────
 
-/** A line of text that slides back and forth when it doesn't fit. */
+/**
+ * A line of text that loops like the GNOME extension's pill when it doesn't fit:
+ * the text twice with a gap, sliding one copy past at a steady 30 px per second,
+ * holding still at each end. Measured like before (a view still fading in has no
+ * width yet, and would make every line look too long).
+ */
 function marquee(cls: string): { el: HTMLElement; set(text: string): void } {
-  const inner = h("span", {});
-  const el = h("div", { class: `mq ${cls}` }, inner);
+  const first = h("span", {});
+  const second = h("span", { class: "mq-dup", text: "" });
+  const track = h("div", { class: "mq-track" }, first, h("span", { class: "mq-gap" }), second);
+  const el = h("div", { class: `mq ${cls}` }, track);
   let last = "";
   let measuredFor = "";
 
-  /**
-   * Slide only if the text doesn't fit. It is measured whenever the line is laid
-   * out with a real width — a view that is still fading in has none, and would
-   * make every line look too long — and again if the width or the text changes.
-   */
   function measure() {
     const width = el.clientWidth;
     if (width === 0) return; // not laid out yet: try again on the next sync
     const key = `${width}|${last}`;
     if (key === measuredFor) return;
     measuredFor = key;
-    const overflow = inner.scrollWidth - width;
+    const overflow = first.scrollWidth - width;
     if (overflow > 2) {
-      el.style.setProperty("--dx", `-${overflow + 12}px`);
-      el.style.setProperty("--dur", `${Math.max(6, (overflow + 12) / 22)}s`);
+      const distance = first.scrollWidth + 30; // one copy and the gap, like the extension
+      el.style.setProperty("--dx", `-${distance}px`);
+      el.style.setProperty("--dur", `${2 + distance / 30}s`); // 1 s holds + 30 px/s of travel
       el.classList.add("scroll");
     } else {
       el.classList.remove("scroll");
@@ -70,7 +73,8 @@ function marquee(cls: string): { el: HTMLElement; set(text: string): void } {
     set(text) {
       if (text !== last) {
         last = text;
-        inner.textContent = text;
+        first.textContent = text;
+        second.textContent = text;
         el.classList.remove("scroll");
         measuredFor = "";
       }

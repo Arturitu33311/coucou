@@ -186,6 +186,11 @@ export function dueCount(): number {
   return list.filter((t) => !t.done && t.remindAt != null && t.remindAt <= now).length;
 }
 
+/** How many tasks are open (for Mochi's celebration when the list empties). */
+export function openCount(): number {
+  return list.filter((t) => !t.done).length;
+}
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** "17:30", "tomorrow 09:00", "Mon 09:00", or how late it is. */
@@ -218,12 +223,87 @@ function build(): HubHost {
     type: "text", class: "sh-add", spellcheck: "false", maxlength: "200",
     placeholder: "Add a task… (“llamar a mamá a las 17:30”, “stretch in 20 min”, “mañana 9:00”)",
   }) as HTMLInputElement;
+  // A day picked on the calendar wins over the sentence's day, keeping its time
+  // of day (port of WhenPickerPanel, Android): null means the sentence decides alone.
+  let pickedDay: number | null = null;
+  let pickedHour = 9;
+  let picking = false;
+  const calBtn = h("button", { class: "hub-btn sm", text: "📅", title: "Pick a day" });
+  const panel = h("div", { class: "tk-when", style: "display:none" });
+  const addRow = h("div", { class: "tk-addrow" }, input, calBtn);
   const rows = h("div", { class: "sh-list" });
   const foot = h("div", { class: "tk-foot" });
   const err = h("div", { class: "hub-err", text: "" });
   // Why Jinx could not be reached: its own line, so it goes away when she can be again.
   const syncNote = h("div", { class: "hub-err", text: "" });
-  const el = h("div", { class: "sh" }, input, err, syncNote, rows, foot);
+  const el = h("div", { class: "sh" }, addRow, panel, err, syncNote, rows, foot);
+
+  const HOURS = [8, 9, 10, 12, 14, 16, 18, 20];
+  function strip(): { start: number; num: string; wd: string; today: boolean }[] {
+    const out: { start: number; num: string; wd: string; today: boolean }[] = [];
+    for (let i = 0; i < 14; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      d.setHours(0, 0, 0, 0);
+      out.push({
+        start: Math.floor(d.getTime() / 1000),
+        num: String(d.getDate()),
+        wd: i === 0 ? "hoy" : (d.toLocaleDateString([], { weekday: "short" }).slice(0, 1) ?? "").toUpperCase(),
+        today: i === 0,
+      });
+    }
+    return out;
+  }
+  function summary(): string {
+    if (pickedDay == null) return "";
+    const d = new Date(pickedDay * 1000);
+    const date = d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+    return `⏰ ${date} · ${String(pickedHour).padStart(2, "0")}:00`;
+  }
+  function renderPanel() {
+    clear(panel);
+    panel.style.display = picking ? "" : "none";
+    calBtn.classList.toggle("on", pickedDay != null);
+    if (!picking) return;
+    const days = h("div", { class: "tk-days" });
+    for (const d of strip()) {
+      const on = pickedDay === d.start;
+      const b = h("button", { class: `tk-day${on ? " on" : ""}` },
+        h("span", { class: "tk-wd", text: d.wd }), h("span", { class: "tk-num", text: d.num }));
+      b.addEventListener("click", () => {
+        pickedDay = on ? null : d.start;
+        renderPanel();
+      });
+      days.append(b);
+    }
+    panel.append(days);
+    if (pickedDay != null) {
+      const hours = h("div", { class: "tk-hours" });
+      for (const hh of HOURS) {
+        const b = h("button", {
+          class: `hub-btn sm${hh === pickedHour ? " on" : ""}`,
+          text: `${String(hh).padStart(2, "0")}:00`,
+        });
+        b.addEventListener("click", () => {
+          pickedHour = hh;
+          renderPanel();
+        });
+        hours.append(b);
+      }
+      const sum = h("span", { class: "hub-hint", text: summary() });
+      const clr = h("button", { class: "hub-btn sm", text: "×", title: "Clear day" });
+      clr.addEventListener("click", () => {
+        pickedDay = null;
+        pickedHour = 9;
+        renderPanel();
+      });
+      panel.append(hours, h("div", { class: "tk-sum" }, sum, clr));
+    }
+  }
+  calBtn.addEventListener("click", () => {
+    picking = !picking;
+    renderPanel();
+  });
 
   let settle: number | null = null;
   /** A local change is done at once; Jinx hears of it a moment later (one round for a burst of them). */
@@ -250,8 +330,14 @@ function build(): HubHost {
     e.stopPropagation(); // typing must never reach the island's own keys
     if (e.key === "Enter" && input.value.trim()) {
       const text = input.value;
+      const day = pickedDay;
+      const hour = pickedHour;
       input.value = "";
-      void run(Bridge.tasksAdd(text));
+      pickedDay = null;
+      pickedHour = 9;
+      picking = false;
+      renderPanel();
+      void run(Bridge.tasksAdd(text, day, hour));
     }
   });
 

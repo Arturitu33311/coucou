@@ -134,7 +134,7 @@ fn transcript_path(projects: &Path, session_id: &str) -> Option<PathBuf> {
     })
 }
 
-fn clip(mut s: String) -> String {
+pub(crate) fn clip(mut s: String) -> String {
     if s.len() > MAX_MESSAGE {
         let mut end = MAX_MESSAGE;
         while !s.is_char_boundary(end) {

@@ -10,8 +10,9 @@ import {
   type IslandMode, type IslandViewName,
 } from "../core/layout";
 import { Sound } from "../core/sound";
-import { INTEGRATION_AGENTS, JINX_ID, State } from "../core/state";
+import { INTEGRATION_AGENTS, JINX_ID, BACKEND_MOCHI, State } from "../core/state";
 import { answerJinxApproval } from "./jinx";
+import { selectedAgent } from "./agents";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
@@ -81,6 +82,8 @@ export class Island {
   /** How far the island has stepped aside for the buttons of a window behind it (see dodge.ts). */
   private dodge = new Tracked(0);
   private dodgeTarget = 0;
+  /** Mochi's current tint; eased toward its target so covers crossfade. */
+  private mochiTint: [number, number, number] | null = null;
   private dodger = new Dodger();
   private dodgeTimer: number | null = null;
   private lastWantsKeys = false;
@@ -357,6 +360,11 @@ export class Island {
 
   launch() {
     this.fsm.launch();
+  }
+
+  /** Mochi's face, for whoever reads the room (see mochi/scene.ts). */
+  get mochi(): BotEngine {
+    return this.engine;
   }
 
   // ── Mode / view ─────────────────────────────────────────────────────────────
@@ -1149,12 +1157,16 @@ export class Island {
       if (State.mode === "expanded" && State.view === "music") body = hexToRGB(State.music.accent);
       else if (State.mode === "compact" && State.musicStrip() && quiet) body = hexToRGB(State.music.accent);
     }
-    // In the chat he wears the colour of who he is talking to: Claude Code's orange for a
-    // session or a new agent, Jinx's green, and plain white for Mochi's own API chat.
+    // In the chat he wears the colour of who he is talking to: each CLI's own
+    // Mochi for a session (or the picked backend for a new one), Jinx's green,
+    // and plain white for Mochi's own API chat.
     if (State.mode === "expanded" && State.view === "prompt") {
+      const agent = State.chatTarget === "agent" ? selectedAgent() : undefined;
+      const backend = agent ? (agent.kind === "opencode" ? "opencode" : "claude")
+        : State.chatTarget === "new" ? State.chatBackend : null;
       const who = State.chatTarget === "jinx" ? JINX_ID : State.chatTarget === "mochi" ? null : "integration_claude";
       const proto = who ? INTEGRATION_AGENTS.find((t) => t.id === who) : null;
-      body = proto ? hexToRGB(proto.color) : null;
+      body = backend ? hexToRGB(BACKEND_MOCHI[backend].color) : proto ? hexToRGB(proto.color) : null;
     }
     // A recording, a reminder, news or the Pomodoro tint him too (a recording in any view).
     const kind = State.pillKind();
@@ -1162,7 +1174,18 @@ export class Island {
       const tint = pillTint(kind);
       if (tint) body = hexToRGB(tint);
     }
-    this.engine.bodyColor = body;
+    // Crossfade, not a jump: a new cover's colour eases in over a fraction of
+    // a second, the way the mobile island crossfades between tracks.
+    if (!body) {
+      this.mochiTint = null;
+    } else if (!this.mochiTint) {
+      this.mochiTint = [body[0], body[1], body[2]];
+    } else {
+      const k = Math.min(1, dt * 5);
+      const c = this.mochiTint;
+      this.mochiTint = [c[0] + (body[0] - c[0]) * k, c[1] + (body[1] - c[1]) * k, c[2] + (body[2] - c[2]) * k];
+    }
+    this.engine.bodyColor = this.mochiTint;
     this.engine.particleOverhang = BOT_OVERHANG;
     this.engine.lookX = this.lookX();
     this.engine.lookY = this.lookY();

@@ -40,6 +40,12 @@ export interface QuestionItem {
   multiSelect: boolean;
 }
 
+/** Each CLI's own Mochi: the colour he wears for that backend's sessions. */
+export const BACKEND_MOCHI = {
+  claude: { color: "#D97757", name: "Claude Code" },
+  opencode: { color: "#22C55E", name: "OpenCode" },
+} as const;
+
 /** An AskUserQuestion call waiting on the island, one question at a time. */
 export interface QuestionInfo {
   requestId: string;
@@ -64,14 +70,15 @@ export interface LimitWindow {
   resetsAt: number | null;
 }
 
-/** A running Claude Code session, as `claude agents` lists it. */
+/** A running agent session: Claude Code (as `claude agents` lists it) or OpenCode. */
 export interface AgentSession {
   id: string;
   name: string;
   cwd: string;
+  /** "claude" | "opencode" (Claude Code kinds pass through untouched). */
   kind: string;
   status: string;
-  /** working | done | blocked */
+  /** working | done | blocked (OpenCode only reports working | done). */
   state: string;
   sessionId: string;
   waitingFor?: string | null;
@@ -321,7 +328,9 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   /** Who the chat talks to: Mochi (Claude's API) or Jinx (Hermes). Each keeps its own thread. */
   chatTarget: "mochi" | "jinx" | "agent" | "new" = "mochi";
-  /** The running Claude Code sessions, the selected one, and what has been read of each. */
+  /** Which backend a new agent starts on — and which Mochi answers while it is picked. */
+  chatBackend: "claude" | "opencode" = "claude";
+  /** The running agent sessions (Claude Code and OpenCode), the selected one, and what has been read of each. */
   agents: AgentSession[] = [];
   agentId: string | null = null;
   agentThreads: Record<string, { offset: number; msgs: ChatMessage[] }> = {};
