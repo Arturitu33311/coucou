@@ -101,6 +101,8 @@ struct Live {
     idle_at: Option<Instant>,
     locked: bool,
     server: Option<(String, Instant)>,
+    /// The presence server's address and key are in the keyring (so it is worth asking).
+    server_configured: bool,
     previous: Option<String>,
     /// What the page was last told.
     sent: Option<(bool, bool, bool)>,
@@ -114,6 +116,9 @@ struct Live {
 }
 
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
+
+/// Wakes the clock when something changes who is there (a phone arrives, the server answers).
+static WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
 
 fn with<R>(f: impl FnOnce(&mut Live) -> R) -> R {
     let mut g = LIVE.lock().unwrap_or_else(|e| e.into_inner());
@@ -178,8 +183,25 @@ pub fn state() -> Value {
 
 /// A beat from the phone arrived over the link.
 pub fn on_peer(app: &AppHandle, beat: Beat, music: bool, news: bool) {
+    // The first beat of a link: own idle may never have been read (the clock sleeps while alone), and
+    // the reply must not claim "just used". One quick read, here.
+    #[cfg(target_os = "linux")]
+    if with(|l| l.idle_at.is_none() || l.peers.is_empty()) {
+        let (idle, locked) = (read_idle_s(), read_locked());
+        with(|l| {
+            if let Some(idle) = idle {
+                l.idle_s = idle;
+                l.idle_at = Some(Instant::now());
+            }
+            l.locked = locked;
+        });
+    }
     let out = with(|l| {
+        let first = !l.peers.contains_key(&beat.device);
         l.peers.insert(beat.device.clone(), Peer { beat, music, news, at: Instant::now() });
+        if first {
+            WAKE.notify_one();
+        }
         l.recompute()
     });
     publish(app, out);
@@ -319,22 +341,35 @@ pub fn start(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         loop {
+            // Nobody to arbitrate with (no phone on the link, no server set up): this device is the
+            // one in use whatever its idle says, so the clock only ticks now and then.
+            let alone = with(|l| l.peers.is_empty() && !l.server_configured);
             #[cfg(target_os = "linux")]
-            {
+            if !alone {
                 let read = tauri::async_runtime::spawn_blocking(|| (read_idle_s(), read_locked())).await;
                 if let Ok((idle, locked)) = read {
-                    with(|l| {
+                    // Touched since the last look (its idle fell): the phone hears it now, so Mochi
+                    // follows the person at once instead of at the phone's next beat.
+                    let touched = with(|l| {
+                        let before = l.my_beat().idle_s;
+                        let fell = idle.map_or(false, |i| i + 1 < before);
                         if let Some(idle) = idle {
                             l.idle_s = idle;
                             l.idle_at = Some(Instant::now());
                         }
                         l.locked = locked;
+                        fell
                     });
+                    if touched {
+                        crate::remote::publish_peer();
+                    }
                 }
             }
             let out = with(|l| l.recompute());
             publish(&app, out);
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            let wait = if alone { Duration::from_secs(10) } else { Duration::from_secs(2) };
+            // A phone arriving wakes the clock at once (on_peer notifies).
+            let _ = tokio::time::timeout(wait, WAKE.notified()).await;
         }
     });
     // The server is its own loop: a slow or absent one must not hold up the clock above.
@@ -344,8 +379,15 @@ pub fn start(app: &AppHandle) {
                 let b = l.my_beat();
                 (b.idle_s, b.screen_on)
             });
-            let answer = server_heartbeat(idle, screen_on).await;
-            with(|l| l.server = answer.map(|a| (a, Instant::now())));
+            let configured = crate::secrets::present("presence-url") && crate::secrets::present("presence-key");
+            let answer = if configured { server_heartbeat(idle, screen_on).await } else { None };
+            with(|l| {
+                l.server_configured = configured;
+                l.server = answer.map(|a| (a, Instant::now()));
+            });
+            if configured {
+                WAKE.notify_one();
+            }
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
