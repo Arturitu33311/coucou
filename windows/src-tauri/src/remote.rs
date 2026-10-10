@@ -576,4 +576,28 @@ mod tests {
         assert!(line.contains("answered"));
         ENABLED.store(false, Ordering::Relaxed);
     }
+
+    /// The immediate path of a change made on the laptop: the list goes out on the bus at once (the
+    /// phone merges it as `t: tasks`), and a beat pushed on a music change reaches it too, without
+    /// waiting for the phone's periodic sync.
+    #[test]
+    fn a_change_on_the_laptop_is_pushed_to_the_phone_at_once() {
+        let _g = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+        ENABLED.store(true, Ordering::Relaxed);
+        let mut rx = bus().subscribe();
+        let started = std::time::Instant::now();
+        tasks_changed();
+        let line = rx.try_recv().expect("the list is on the bus the moment it changes");
+        assert!(started.elapsed() < std::time::Duration::from_millis(250));
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["t"], "tasks");
+        assert!(v["tasks"].is_array());
+        publish_peer();
+        let beat: Value = serde_json::from_str(&rx.try_recv().expect("the beat is pushed too")).unwrap();
+        assert_eq!(beat["t"], "peer");
+        // With no phone listening nothing is built or sent.
+        drop(rx);
+        tasks_changed();
+        ENABLED.store(false, Ordering::Relaxed);
+    }
 }
