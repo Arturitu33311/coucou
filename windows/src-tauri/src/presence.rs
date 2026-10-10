@@ -25,7 +25,7 @@ const KNOWN: [&str; 2] = [PHONE, LAPTOP];
 /// A peer silent for longer than this is not there.
 pub const FRESH_MS: u64 = 15_000;
 /// How much more recently another device must have been touched to take the island from the one that has it.
-pub const HYSTERESIS_S: u64 = 8;
+pub const HYSTERESIS_S: u64 = 2;
 /// A week: past that an idle value means nothing, and an absurd one must not outlast a real one.
 pub const MAX_IDLE_S: u64 = 7 * 24 * 3600;
 /// How long the server's answer counts: the heartbeat is every 30 s, with one missed.
@@ -180,7 +180,11 @@ impl Live {
 fn publish(app: &AppHandle, payload: Option<Value>) {
     if let Some(p) = payload {
         // One line per change of who has Mochi, so a migration that does not happen can be read off the log.
-        crate::log::line(format!("presence: {p}"));
+        let at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        crate::log::line(format!("presence: {p} @{at_ms}ms"));
         let _ = app.emit("presence", p);
     }
 }
@@ -312,9 +316,39 @@ pub fn parse_peer(v: &Value) -> Option<(Beat, bool, bool)> {
 
 // ── Own signals ───────────────────────────────────────────────────────────────────
 
-/// Seconds since the last keyboard or pointer input, from GNOME's idle monitor.
+/// Seconds since the last keyboard or pointer input, from GNOME's idle monitor: asked over one kept
+/// D-Bus connection (cheap enough to look four times a second). Where that is not there, `gdbus` is
+/// tried at most every two seconds.
 #[cfg(target_os = "linux")]
 fn read_idle_s() -> Option<u64> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+
+    static CONN: OnceLock<Option<zbus::blocking::Connection>> = OnceLock::new();
+    static LAST_FALLBACK_MS: AtomicU64 = AtomicU64::new(0);
+
+    if let Some(conn) = CONN.get_or_init(|| zbus::blocking::Connection::session().ok()) {
+        let reply = conn.call_method(
+            Some("org.gnome.Mutter.IdleMonitor"),
+            "/org/gnome/Mutter/IdleMonitor/Core",
+            Some("org.gnome.Mutter.IdleMonitor"),
+            "GetIdletime",
+            &(),
+        );
+        if let Ok(msg) = reply {
+            if let Ok(ms) = msg.body().deserialize::<u64>() {
+                return Some(ms / 1000);
+            }
+        }
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if now_ms.saturating_sub(LAST_FALLBACK_MS.load(Ordering::Relaxed)) < 2_000 {
+        return None;
+    }
+    LAST_FALLBACK_MS.store(now_ms, Ordering::Relaxed);
     let out = std::process::Command::new("gdbus")
         .args([
             "call", "--session", "--dest", "org.gnome.Mutter.IdleMonitor",
@@ -367,24 +401,33 @@ async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<String> {
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut tick: u64 = 0;
         loop {
             // Nobody to arbitrate with (no phone on the link, no server set up): this device is the
             // one in use whatever its idle says, so the clock only ticks now and then.
             let alone = with(|l| l.peers.is_empty() && !l.server_configured);
             #[cfg(target_os = "linux")]
             if !alone {
-                let read = tauri::async_runtime::spawn_blocking(|| (read_idle_s(), read_locked())).await;
+                // The idle monitor is asked over one kept D-Bus connection (no process per look), four
+                // times a second; the lock hint is a process, so it is read every two seconds.
+                let look_at_lock = tick % 8 == 0;
+                let read = tauri::async_runtime::spawn_blocking(move || {
+                    (read_idle_s(), if look_at_lock { Some(read_locked()) } else { None })
+                })
+                .await;
                 if let Ok((idle, locked)) = read {
                     // Touched since the last look (its idle fell): the phone hears it now, so Mochi
                     // follows the person at once instead of at the phone's next beat.
                     let touched = with(|l| {
                         let before = l.my_beat().idle_s;
-                        let fell = idle.map_or(false, |i| i + 1 < before);
+                        let fell = idle.map_or(false, |i| i < before);
                         if let Some(idle) = idle {
                             l.idle_s = idle;
                             l.idle_at = Some(Instant::now());
                         }
-                        l.locked = locked;
+                        if let Some(locked) = locked {
+                            l.locked = locked;
+                        }
                         fell
                     });
                     if touched {
@@ -394,7 +437,8 @@ pub fn start(app: &AppHandle) {
             }
             let out = with(|l| l.recompute());
             publish(&app, out);
-            let wait = if alone { Duration::from_secs(10) } else { Duration::from_secs(2) };
+            tick = tick.wrapping_add(1);
+            let wait = if alone { Duration::from_secs(10) } else { Duration::from_millis(250) };
             // A phone arriving wakes the clock at once (on_peer notifies).
             let _ = tokio::time::timeout(wait, WAKE.notified()).await;
         }

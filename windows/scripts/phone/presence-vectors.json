@@ -115,7 +115,7 @@
     },
     {
       "name": "hysteresis: a small lead does not steal the island",
-      "me": {"device": "laptop", "idle": 5, "screen_on": true, "server_ok": false, "server_active": null},
+      "me": {"device": "laptop", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null},
       "peers": [{"device": "s21", "idle": 1, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 0}],
       "previous": "laptop",
       "expect": "laptop"

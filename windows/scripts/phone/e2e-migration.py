@@ -69,7 +69,7 @@ try:
     log = (TMP / "home/.local/share/coucou/coucou.log").read_text()
     lines = [l for l in log.splitlines() if "presence:" in l]
     print("\n".join(lines))
-    acts = [json.loads(l.split("presence: ",1)[1])["active"] for l in lines]
+    acts = [json.loads(l.split("presence: ",1)[1].split(" @",1)[0])["active"] for l in lines]
     # leaves when the phone is used, and COMES BACK when the person returns to the laptop
     ok = False in acts and acts[-1] is True and acts.index(False) < len(acts) - 1
     print("RESULT:", "OK island leaves and comes back" if ok else "PROBLEM", acts)
