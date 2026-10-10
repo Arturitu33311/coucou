@@ -60,7 +60,7 @@ fn main() {
     if std::env::args().skip(1).any(|a| a == "--remote") {
         unix::run_remote();
     }
-    let Some(Event { payload, name: event, ask }) = read_event() else { std::process::exit(0) };
+    let Some(Event { payload, name: event, ask, agent }) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest" || ask.is_some();
     let budget = if ask.is_some() {
@@ -80,19 +80,48 @@ fn main() {
         let _ = tx.send(talk(&payload, waits_for_answer));
     });
 
+    let mut output = None;
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        let output = match &ask {
+        output = match &ask {
             Some(questions) => answer_json(&decision, questions),
             None => decision_json(&decision),
         };
-        if let Some(json) = output {
-            let mut out = std::io::stdout();
-            let _ = writeln!(out, "{json}");
-            let _ = out.flush();
-        }
     }
-    // Nothing printed: Claude Code asks in the terminal, as if we were not here.
+    // Nothing to print: Claude Code asks in the terminal, as if we were not here.
+    // Some other agents want a JSON reply regardless (see `silent_reply`).
+    if let Some(json) = output.or_else(|| silent_reply(&agent, &event)) {
+        let mut out = std::io::stdout();
+        let _ = writeln!(out, "{json}");
+        let _ = out.flush();
+    }
     std::process::exit(0);
+}
+
+/// The event names other agents use, in Claude Code's. Anything else (all of
+/// Claude Code's own) passes through unchanged. Same table as upstream's relay.
+fn normalize_event(name: &str) -> String {
+    match name {
+        "BeforeTool" | "BeforeToolSelection" | "pre_tool_use" => "PreToolUse",
+        "AfterTool" | "AfterModel" | "PostInvocation" | "post_tool_use" => "PostToolUse",
+        "BeforeAgent" | "PreInvocation" | "user_prompt_submit" => "UserPromptSubmit",
+        "AfterAgent" => "Stop",
+        "startup" | "session_start" => "SessionStart",
+        "exit" | "session_end" => "SessionEnd",
+        other => other,
+    }
+    .to_string()
+}
+
+/// What an agent other than Claude Code needs on stdout when the island has no
+/// decision: Gemini CLI, Antigravity and Muse Code read an empty JSON object as
+/// "no opinion"; Copilot CLI fails closed on a PermissionRequest, so it must be
+/// told to ask in its own terminal. Claude Code (and anyone else) gets silence.
+fn silent_reply(agent: &str, event: &str) -> Option<String> {
+    match agent {
+        "copilot" if event == "PermissionRequest" => Some(r#"{"permissionDecision":"ask"}"#.into()),
+        "gemini" | "antigravity" | "muse" => Some("{}".into()),
+        _ => None,
+    }
 }
 
 /// The documented PermissionRequest output. Anything we do not recognise prints
@@ -151,6 +180,8 @@ struct Event {
     /// `Some(questions)` for the `--ask` hook on an `AskUserQuestion` call: the
     /// original, untruncated list, to be echoed back next to the answers.
     ask: Option<serde_json::Value>,
+    /// The `--agent` name, empty for Claude Code.
+    agent: String,
 }
 
 /// Reads stdin and returns the payload to forward plus the event name.
@@ -188,7 +219,7 @@ fn read_event() -> Option<Event> {
     // Which agent this hook was installed for. Absent means Claude Code,
     // so existing hook commands keep working unchanged.
     if !agent.is_empty() {
-        map.insert("coucou_agent".into(), serde_json::Value::String(agent));
+        map.insert("coucou_agent".into(), serde_json::Value::String(agent.clone()));
     }
     let event = map
         .get("hook_event_name")
@@ -196,6 +227,8 @@ fn read_event() -> Option<Event> {
         .map(str::to_string)
         .filter(|s| !s.is_empty())
         .unwrap_or(arg_event);
+    // Other agents name their events differently; the app only knows Claude Code's.
+    let event = normalize_event(&event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
 
     // `--ask` is registered with the matcher "AskUserQuestion", but a hook that
@@ -256,7 +289,7 @@ fn read_event() -> Option<Event> {
 
     let mut line = payload.to_string();
     line.push('\n');
-    Some(Event { payload: line, name: event, ask })
+    Some(Event { payload: line, name: event, ask, agent })
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -380,6 +413,31 @@ mod tests {
         assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":3}}"#, &q).is_none());
         let not_a_list = serde_json::json!({});
         assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":"a"}}"#, &not_a_list).is_none());
+    }
+
+    #[test]
+    fn other_agents_event_names_become_claude_codes() {
+        assert_eq!(normalize_event("pre_tool_use"), "PreToolUse");
+        assert_eq!(normalize_event("BeforeAgent"), "UserPromptSubmit");
+        assert_eq!(normalize_event("exit"), "SessionEnd");
+        // Claude Code's own names are never touched.
+        for n in ["PreToolUse", "PermissionRequest", "Stop", "Notification", "SessionStart"] {
+            assert_eq!(normalize_event(n), n);
+        }
+    }
+
+    #[test]
+    fn only_the_agents_that_need_a_reply_get_one() {
+        assert_eq!(silent_reply("muse", "Stop").as_deref(), Some("{}"));
+        assert_eq!(silent_reply("gemini", "PreToolUse").as_deref(), Some("{}"));
+        assert_eq!(
+            silent_reply("copilot", "PermissionRequest").as_deref(),
+            Some(r#"{"permissionDecision":"ask"}"#)
+        );
+        assert!(silent_reply("copilot", "Stop").is_none());
+        // Claude Code (no --agent) and unknown agents: silence, as before.
+        assert!(silent_reply("", "PermissionRequest").is_none());
+        assert!(silent_reply("opencode", "Stop").is_none());
     }
 
     #[test]
