@@ -335,6 +335,11 @@ class AppState {
   mochiApi: boolean | null = null;
   /** Claude Code's usage limits (percent used), when known. */
   limits: { five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null = null;
+  /**
+   * The user clicked inside the Hub's panel: the island takes the keyboard (for ← → and 1–9) until
+   * the pointer leaves, the view changes or the island closes. Never taken on hover.
+   */
+  hubEngaged = false;
   /** The Hub's sub-tab in front (remembered). */
   hubTab: string = (() => {
     try {

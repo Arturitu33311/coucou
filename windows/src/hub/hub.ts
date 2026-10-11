@@ -82,6 +82,17 @@ export function buildHub(actions: ViewActions): ViewHost {
   const el = h("div", { class: "view hub" }, h("div", { class: "hub-wrap" }, tabs, body));
   let tabsKey = "";
   let mounted = "";
+  // A click inside the panel is the user saying "I am here": the island takes the keyboard so
+  // ← → and 1–9 work (island.ts releases it when the pointer leaves).
+  el.addEventListener(
+    "pointerdown",
+    () => {
+      if (State.hubEngaged) return;
+      State.hubEngaged = true;
+      State.notify();
+    },
+    true,
+  );
   // The strip scrolls sideways and its scrollbar is hidden: the ordinary mouse wheel (up and down)
   // moves it, as a touchpad's sideways swipe already does.
   tabs.addEventListener(

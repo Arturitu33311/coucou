@@ -934,6 +934,10 @@ export class Island {
       this.homeCollapseAt = null;
     }
     if (!inIsland && this.wasInIsland) {
+      if (State.hubEngaged) {
+        State.hubEngaged = false; // the keyboard goes back to whatever the user is working in
+        State.notify();
+      }
       this.applyLeaveDelay();
       this.fsm.mouseLeft();
       if (this.fsm.state === "home" && !State.isPinned) {
@@ -1246,7 +1250,8 @@ export class Island {
     // The chat is the only view with a text field, so it is the only time the
     // island is allowed to take keyboard focus.
     // The chat, and a Hub tool with a text field (Notes), are the only times it is.
-    const wantsKeys = State.view === "prompt" || (State.view === "tool" && hubTyping());
+    if (State.view !== "tool" || State.mode !== "expanded") State.hubEngaged = false;
+    const wantsKeys = State.view === "prompt" || (State.view === "tool" && (hubTyping() || State.hubEngaged));
     if (this.lastSyncedView !== State.view || this.lastWantsKeys !== wantsKeys) {
       const hadKeys = this.lastWantsKeys;
       this.lastSyncedView = State.view;

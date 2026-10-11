@@ -441,10 +441,42 @@ fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
     }
 }
 
+/// The window that had the keyboard before the island took it (an X11 window id, as text).
+static PREVIOUS_ACTIVE: Mutex<Option<String>> = Mutex::new(None);
+
+/// What `xdotool` prints for `args`, trimmed; None without xdotool or on any failure.
+fn xdotool(args: &[&str]) -> Option<String> {
+    let out = Command::new("xdotool").args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Remembers who has the keyboard before the island takes it, and gives it back when the island
+/// lets go — but only if the island is still the active window then: if the user went elsewhere in
+/// the meantime they are left there. Needs `xdotool`; without it nothing is remembered or restored.
+fn keep_keyboard_owner(activating: bool) {
+    if activating {
+        let active = xdotool(&["getactivewindow"]);
+        let mine = active.as_deref().and_then(|id| xdotool(&["getwindowpid", id])).and_then(|p| p.parse::<u32>().ok());
+        // Already the island's own window: keep the owner remembered from before.
+        if mine != Some(std::process::id()) {
+            *PREVIOUS_ACTIVE.lock().unwrap() = active;
+        }
+    } else if let Some(prev) = PREVIOUS_ACTIVE.lock().unwrap().take() {
+        let active = xdotool(&["getactivewindow"]);
+        let mine = active.as_deref().and_then(|id| xdotool(&["getwindowpid", id])).and_then(|p| p.parse::<u32>().ok());
+        if mine == Some(std::process::id()) {
+            let _ = xdotool(&["windowactivate", &prev]);
+        }
+    }
+}
+
 /// Temporarily allow keyboard focus so a text field inside the island can be
 /// typed in.
 pub fn set_activating(win: &WebviewWindow, activating: bool) {
     let Ok(gw) = win.gtk_window() else { return };
+    if !LAYER_SURFACE.load(Ordering::Relaxed) {
+        keep_keyboard_owner(activating);
+    }
     // The island is created `focusable: false` (tauri.linux.conf.json), so GTK
     // refuses focus until we say otherwise — on a layer surface too.
     gw.set_accept_focus(activating);
