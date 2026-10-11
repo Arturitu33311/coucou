@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { AgentSession, LimitWindow, LyricLine, MusicTrack, Settings } from "./state";
+import type { AgentSession, LimitWindow, LyricLine, MusicTrack, Peripheral, Settings } from "./state";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -131,6 +131,8 @@ export const Bridge = {
   tasksNotified: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_notified", { id }),
   tasksDelete: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_delete", { id }),
   tasksClearDone: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_clear_done"),
+  /** The batteries of paired and plugged devices (UPower); empty where there are none. */
+  peripherals: () => call<Peripheral[] | null>("peripherals_list"),
   /** Battery, mains power and internet, as the system last said; null where it cannot say. */
   sysState: () => call<{ battery: number | null; plugged: boolean; charging: boolean; online: boolean } | null>("sys_state"),
   workspacesList: () => callOrThrow<unknown[]>("workspaces_list"),

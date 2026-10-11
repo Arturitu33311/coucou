@@ -16,6 +16,7 @@ import { registerTasks } from "./hub/tasks";
 import { registerDictation } from "./hub/dictation";
 import { registerSysState } from "./island/sysstate";
 import { registerMic } from "./island/mic";
+import { registerPeripherals } from "./island/peripherals";
 import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
@@ -47,6 +48,14 @@ async function main() {
     // ?mic=Zoom,Chromium pretends those programs record the microphone.
     const mic = new URLSearchParams(window.location.search).get("mic");
     if (mic) State.micApps = mic.split(",");
+    // ?devices=headphones:WH-1000XM4:87,gamepad:DualSense:15 pretends those batteries.
+    const dev = new URLSearchParams(window.location.search).get("devices");
+    if (dev) {
+      State.peripherals = dev.split(",").map((s, i) => {
+        const [kind, name, pct] = s.split(":");
+        return { id: `fake${i}`, kind, name, percent: Number(pct), charging: false };
+      });
+    }
   }
   island.applySettings();
   State.loadIntegrationTasks();
@@ -108,6 +117,7 @@ async function main() {
   registerDictation(island);
   registerSysState(island);
   registerMic(island);
+  registerPeripherals(island);
   registerNotificationPeek(island);
 
   island.launch();

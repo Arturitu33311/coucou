@@ -5,6 +5,7 @@
 import { Bridge } from "../core/bridge";
 import { State } from "../core/state";
 import { h, clear } from "../views/dom";
+import { iconOf } from "../island/peripherals";
 import type { CalEvent } from "./calendar";
 import { pomodoroStatsNow, refreshStats } from "./pomodoro";
 import { ensureTasksLoaded, openTasks } from "./tasks";
@@ -60,7 +61,9 @@ function build(): HubHost {
   const grid = h("div", { class: "hub-grid g3" }, nextTile.el, tasksTile.el, focusTile.el);
   const list = h("div", { class: "td-list" });
   const wx = h("div", { class: "td-wx hub-hint" });
-  const el = h("div", { class: "td" }, title, grid, list, wx);
+  // Batteries of paired devices: shown when there are any (a low one is coloured).
+  const dev = h("div", { class: "td-dev" });
+  const el = h("div", { class: "td" }, title, grid, list, wx, dev);
 
   let events: CalEvent[] = [];
   let timer: number | null = null;
@@ -114,6 +117,11 @@ function build(): HubHost {
           h("span", { class: "cal-what", text: it.text }),
         ),
       );
+    }
+    clear(dev);
+    for (const d of State.peripherals) {
+      const low = !d.charging && d.percent <= 20;
+      dev.append(h("span", { class: `td-bat${low ? " low" : ""}`, title: d.name, text: `${iconOf(d.kind)} ${d.name} ${d.percent}%${d.charging ? " ⚡" : ""}` }));
     }
     if (items.length === 0) {
       const undated = open.filter((t) => t.remindAt == null).slice(0, 4);

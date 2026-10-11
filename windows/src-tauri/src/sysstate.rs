@@ -74,6 +74,11 @@ fn proxy<'a>(conn: &'a Connection, dest: &'a str, path: &'a str, iface: &'a str)
         .ok()
 }
 
+/// A proxy for one UPower device object (peripherals.rs reads the other devices through it).
+pub fn device_proxy<'a>(conn: &'a Connection, path: &'a str, iface: &'a str) -> Option<zbus::blocking::Proxy<'a>> {
+    proxy(conn, UPOWER, path, iface)
+}
+
 fn read(conn: &Connection) -> Sys {
     let mut s = Sys::default();
     if let Some(up) = proxy(conn, UPOWER, UPOWER_PATH, UPOWER_DEVICE) {

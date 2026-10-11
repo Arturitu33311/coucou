@@ -27,6 +27,8 @@ mod settings;
 mod share;
 mod sysmon;
 #[cfg(target_os = "linux")]
+mod peripherals;
+#[cfg(target_os = "linux")]
 mod sysstate;
 mod tasks;
 mod tray;
@@ -585,6 +587,19 @@ fn sys_state() -> serde_json::Value {
     }
 }
 
+/// The batteries of paired and plugged devices (see peripherals.rs); empty where there are none.
+#[tauri::command]
+fn peripherals_list() -> serde_json::Value {
+    #[cfg(target_os = "linux")]
+    {
+        serde_json::to_value(peripherals::current()).unwrap_or(serde_json::Value::Null)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        serde_json::json!([])
+    }
+}
+
 // ── Hub: workspaces (see workspaces.rs) ───────────────────────────────────────
 
 #[tauri::command]
@@ -897,6 +912,7 @@ pub fn run() {
             tasks_delete,
             tasks_clear_done,
             sys_state,
+            peripherals_list,
             tasks_set_jinx,
             tasks_sync,
             jinx_resolve,
@@ -963,6 +979,9 @@ pub fn run() {
             // Battery, mains power and internet, announced by the system itself (no polling).
             #[cfg(target_os = "linux")]
             sysstate::start(&handle);
+            // Bluetooth devices' and controllers' batteries, announced by UPower (no polling).
+            #[cfg(target_os = "linux")]
+            peripherals::start(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())

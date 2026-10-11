@@ -278,6 +278,15 @@ export interface Flash {
   tone: "" | "ok" | "warn" | "crit";
 }
 
+/** A paired or plugged device with a battery (headphones, mouse, game controller…). */
+export interface Peripheral {
+  id: string;
+  name: string;
+  kind: string;
+  percent: number;
+  charging: boolean;
+}
+
 /** The battery, the mains and the internet, as the system last said. */
 export interface SysInfo {
   battery: number | null;
@@ -368,6 +377,9 @@ class AppState {
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
+
+  /** Devices with a battery, as the system last said (peripherals.rs). */
+  peripherals: Peripheral[] = [];
 
   /** The programs recording the microphone right now (names only; Handy and Coucou's bars excluded). */
   micApps: string[] = [];
