@@ -1180,13 +1180,19 @@ export class Island {
     }
     const pomo = pomodoroPill();
     const calm = this.engine.state === "idle" || this.engine.state === "working" || this.engine.state === "thinking" || this.engine.state === "searching";
-    this.engine.outfit = pickOutfit(State.settings.mochiOutfit, {
-      sleeping: State.effectiveState === "sleeping",
-      musicPlaying: State.music?.status === "Playing",
-      focusing: pomo.phase === "focus" && pomo.running,
-      eyesBusy: !calm || this.engine.eyeOverride != null || this.engine.permanentEmote != null,
-      date: new Date(),
-    });
+    // As on the Mac: with another pill in focus in the open island he is that pill, not himself.
+    const showOutfit = State.mode !== "expanded" || !focus?.isIntegration;
+    this.engine.setOutfit(
+      showOutfit
+        ? pickOutfit(State.settings.mochiOutfit, {
+            sleeping: State.effectiveState === "sleeping",
+            musicPlaying: State.music?.status === "Playing",
+            focusing: pomo.phase === "focus" && pomo.running,
+            eyesBusy: !calm || this.engine.eyeOverride != null || this.engine.permanentEmote != null,
+            date: new Date(),
+          })
+        : null,
+    );
     this.engine.update(dt);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, hCss);
