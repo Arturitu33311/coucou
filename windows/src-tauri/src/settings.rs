@@ -99,6 +99,9 @@ pub struct Settings {
     /// A dot on the island, with the program's name, while something records the microphone.
     #[serde(default = "default_true")]
     pub mic_indicator: bool,
+    /// The Hub keeps what was copied (in memory only; pinned items on disk). Off until turned on.
+    #[serde(default)]
+    pub clipboard_history: bool,
 }
 
 fn default_outfit() -> String {
@@ -193,6 +196,7 @@ impl Default for Settings {
             remote_enabled: false,
             mochi_outfit: default_outfit(),
             mic_indicator: true,
+            clipboard_history: false,
         }
     }
 }

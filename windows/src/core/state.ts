@@ -225,6 +225,8 @@ export interface Settings {
   mochiOutfit: string;
   /** A dot on the island, with the program's name, while something records the microphone. */
   micIndicator: boolean;
+  /** The Hub's Clipboard keeps what was copied (memory only; pins on disk). Off until turned on. */
+  clipboardHistory: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -264,6 +266,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteEnabled: false,
   mochiOutfit: "auto",
   micIndicator: true,
+  clipboardHistory: false,
 };
 
 type Listener = () => void;

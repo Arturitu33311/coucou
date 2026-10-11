@@ -3,6 +3,7 @@
 mod agents;
 mod bars;
 mod calendar;
+mod clipboard;
 mod claude;
 mod drive;
 #[cfg(target_os = "linux")]
@@ -98,6 +99,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
     notifs::sync_enabled(&app, settings.notification_peek);
     remote::sync_enabled(&app, settings.remote_enabled);
+    clipboard::sync_enabled(&app, settings.clipboard_history);
     if autostart_changed {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
@@ -587,6 +589,33 @@ fn sys_state() -> serde_json::Value {
     }
 }
 
+// ── Hub: clipboard history (see clipboard.rs; off until turned on in Settings) ──
+
+#[tauri::command]
+fn clipboard_list() -> Vec<clipboard::Entry> {
+    clipboard::list()
+}
+
+#[tauri::command]
+fn clipboard_pin(id: u64, pinned: bool) -> Result<Vec<clipboard::Entry>, String> {
+    clipboard::pin(id, pinned)
+}
+
+#[tauri::command]
+fn clipboard_delete(id: u64) -> Vec<clipboard::Entry> {
+    clipboard::delete(id)
+}
+
+#[tauri::command]
+fn clipboard_clear() -> Vec<clipboard::Entry> {
+    clipboard::clear()
+}
+
+#[tauri::command]
+fn clipboard_copy(app: AppHandle, id: u64) -> Result<(), String> {
+    clipboard::copy_back(&app, id)
+}
+
 /// The batteries of paired and plugged devices (see peripherals.rs); empty where there are none.
 #[tauri::command]
 fn peripherals_list() -> serde_json::Value {
@@ -913,6 +942,11 @@ pub fn run() {
             tasks_clear_done,
             sys_state,
             peripherals_list,
+            clipboard_list,
+            clipboard_pin,
+            clipboard_delete,
+            clipboard_clear,
+            clipboard_copy,
             tasks_set_jinx,
             tasks_sync,
             jinx_resolve,
@@ -973,6 +1007,7 @@ pub fn run() {
             );
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
+            clipboard::sync_enabled(&handle, loaded.clipboard_history);
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);

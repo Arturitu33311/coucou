@@ -131,6 +131,11 @@ export const Bridge = {
   tasksNotified: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_notified", { id }),
   tasksDelete: (id: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_delete", { id }),
   tasksClearDone: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_clear_done"),
+  clipboardList: () => callOrThrow<import("../hub/clipboard").Entry[]>("clipboard_list"),
+  clipboardPin: (id: number, pinned: boolean) => callOrThrow<import("../hub/clipboard").Entry[]>("clipboard_pin", { id, pinned }),
+  clipboardDelete: (id: number) => callOrThrow<import("../hub/clipboard").Entry[]>("clipboard_delete", { id }),
+  clipboardClear: () => callOrThrow<import("../hub/clipboard").Entry[]>("clipboard_clear"),
+  clipboardCopy: (id: number) => callOrThrow<void>("clipboard_copy", { id }),
   /** The batteries of paired and plugged devices (UPower); empty where there are none. */
   peripherals: () => call<Peripheral[] | null>("peripherals_list"),
   /** Battery, mains power and internet, as the system last said; null where it cannot say. */

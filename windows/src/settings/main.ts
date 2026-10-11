@@ -643,6 +643,12 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Let your phone follow Claude Code and answer its permission requests and questions. It listens to a private " +
         "socket that only an ssh key restricted to `coucou-hook --remote` can reach; nothing is opened on the network." })),
+    h("div", { class: "row" }, h("label", { text: "Clipboard history" }),
+      toggle(settings.clipboardHistory === true, (v) => { settings.clipboardHistory = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Keep the text you copy, to put back with a click (Hub → Clipboard). Off until you turn it on: passwords pass " +
+        "through the clipboard. Kept in memory only (gone when Coucou quits) — pinned items are saved on this computer; " +
+        "items marked secret by a password manager are never kept; never shared with Jinx or sent anywhere." })),
     h("div", { class: "row" }, h("label", { text: "Weather" }),
       toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
       h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),

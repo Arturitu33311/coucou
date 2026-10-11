@@ -7,9 +7,13 @@ import { shelfTool } from "./shelf";
 import { tasksTool } from "./tasks";
 import { workspacesTool } from "./workspaces";
 import { notesTool } from "./notes";
+import { clipboardTool } from "./clipboard";
 import { calendarTool } from "./calendar";
 import { weatherTool } from "./weather";
 import { quickTool } from "./quick";
 import { todayTool } from "./today";
 
-export const TOOLS: HubTool[] = [todayTool, systemTool, serverTool, pomodoroTool, tasksTool, workspacesTool, notesTool, calendarTool, weatherTool, quickTool, shelfTool];
+export const TOOLS: HubTool[] = [
+  todayTool, systemTool, serverTool, pomodoroTool, tasksTool, workspacesTool, notesTool, clipboardTool,
+  calendarTool, weatherTool, quickTool, shelfTool,
+];
