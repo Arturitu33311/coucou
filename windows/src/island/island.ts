@@ -1181,7 +1181,8 @@ export class Island {
     const pomo = pomodoroPill();
     const calm = this.engine.state === "idle" || this.engine.state === "working" || this.engine.state === "thinking" || this.engine.state === "searching";
     // As on the Mac: with another pill in focus in the open island he is that pill, not himself.
-    const showOutfit = State.mode !== "expanded" || !focus?.isIntegration;
+    // Claude Code is the main pill here (it is the focus by default), so he keeps his outfit there.
+    const showOutfit = State.mode !== "expanded" || !focus?.isIntegration || focus.id === "integration_claude";
     this.engine.setOutfit(
       showOutfit
         ? pickOutfit(State.settings.mochiOutfit, {

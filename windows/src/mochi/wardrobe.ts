@@ -405,7 +405,8 @@ function drawPartyHat(x: Ctx, H: MochiH, simplified: boolean) {
     if (q.x < left.x) left = q;
     if (q.x > right.x) right = q;
   }
-  const h = H.ry * 1.6;
+  // On the 32 px strip (a small Mochi) the full cone would poke out of the screen: a stubbier one.
+  const h = H.ry * (simplified ? 0.95 : 1.6);
   const apex = { x: c.x + Math.sin(lean) * h, y: c.y - Math.cos(lean) * h };
   const front = frontSilhouetteArc(rg);
 
@@ -596,9 +597,9 @@ function drawWitchHatFront(x: Ctx, H: MochiH, bodyPath: Path2D) {
   x.fill(rrect(bkx - bw / 2 + bw * 0.24, bky - bh / 2 + bh * 0.28, bw * 0.52, bh * 0.44, bh * 0.1));
 }
 
-function drawBunnyEars(x: Ctx, H: MochiH, rollProgress: number) {
+function drawBunnyEars(x: Ctx, H: MochiH, rollProgress: number, simplified: boolean) {
   const R = H.R;
-  const earH = R * 0.85;
+  const earH = R * (simplified ? 0.6 : 0.85);
   for (const sd of [-1, 1]) {
     const root = proj(H, [sd * 0.45, 0.92, 0]);
     const rl = proj(H, [sd * 0.45 - 0.22, 0.92, 0]);
@@ -971,7 +972,7 @@ export function drawOutfitBehind(x: Ctx, w: WardrobeState) {
   };
   switch (outfit) {
     case "bunnyEars":
-      layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawBunnyEars(c, H, rolling ? u : 0); c.restore(); }));
+      layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawBunnyEars(c, H, rolling ? u : 0, simplified); c.restore(); }));
       break;
     case "crown":
       layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawCrownPart(c, H, -1, simplified); c.restore(); }));

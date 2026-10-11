@@ -39,6 +39,11 @@ async function main() {
   if (boot) {
     State.settings = { ...State.settings, ...boot.settings };
   }
+  // `npm run dev` in a plain browser: ?outfit=witchHat tries an outfit on the island.
+  if (!IS_TAURI) {
+    const outfit = new URLSearchParams(window.location.search).get("outfit");
+    if (outfit) State.settings.mochiOutfit = outfit;
+  }
   island.applySettings();
   State.loadIntegrationTasks();
   if (boot && !boot.cursorPoll) island.followPageCursor();
