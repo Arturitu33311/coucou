@@ -81,14 +81,6 @@ pub fn parse_layout(s: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// Does `pactl list source-outputs` show a program recording that is not Coucou's own
-/// visualizer (which declares itself as pavucontrol so the desktop shows no indicator)?
-/// The same reading as the island's microphone indicator (dictation.rs), so the two always agree:
-/// Coucou's bars, Handy, monitors and paused streams do not count.
-pub fn mic_in_use(listing: &str) -> bool {
-    !crate::dictation::mic_apps(listing).is_empty()
-}
-
 // ── Reading and setting ───────────────────────────────────────────────────────
 
 pub fn read() -> Quick {
@@ -100,7 +92,8 @@ pub fn read() -> Quick {
         q.sink_muted = Some(muted);
     }
     q.mic_muted = run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]).and_then(|s| parse_volume(&s)).map(|(_, m)| m);
-    q.mic_in_use = run("pactl", &["list", "source-outputs"]).is_some_and(|s| mic_in_use(&s));
+    // The same reading as the island's microphone indicator (dictation.rs), so the two agree.
+    q.mic_in_use = crate::dictation::mic_apps_now().is_some_and(|apps| !apps.is_empty());
     q.layout = run("gsettings", &["get", "org.gnome.desktop.input-sources", "mru-sources"])
         .and_then(|s| parse_layout(&s))
         .or_else(|| run("gsettings", &["get", "org.gnome.desktop.input-sources", "sources"]).and_then(|s| parse_layout(&s)));
@@ -162,16 +155,6 @@ mod tests {
         assert_eq!(parse_layout("[('xkb', 'us')]\n").as_deref(), Some("us"));
         assert_eq!(parse_layout("[('xkb', 'latam'), ('xkb', 'us')]").as_deref(), Some("latam"));
         assert_eq!(parse_layout("@a(ss) []"), None);
-    }
-
-    #[test]
-    fn only_other_programs_recording_count_as_the_microphone_in_use() {
-        let cava = "Source Output #5\n\tProperties:\n\t\tapplication.id = \"org.PulseAudio.pavucontrol\"\n\t\tapplication.process.binary = \"cava\"\n";
-        let zoom = "Source Output #9\n\tProperties:\n\t\tapplication.name = \"zoom\"\n";
-        assert!(!mic_in_use(cava));
-        assert!(mic_in_use(zoom));
-        assert!(mic_in_use(&format!("{cava}{zoom}")));
-        assert!(!mic_in_use(""));
     }
 
     #[test]
