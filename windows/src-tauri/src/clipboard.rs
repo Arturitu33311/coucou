@@ -129,6 +129,18 @@ pub fn is_secret(targets: &[String]) -> bool {
     })
 }
 
+/// May what the clipboard holds be kept? Only when its kinds of data could be read, it says it is
+/// text, and no password manager marked it secret — an unreadable or empty list is "no".
+pub fn may_keep(targets: &[String]) -> bool {
+    if targets.is_empty() || is_secret(targets) {
+        return false;
+    }
+    targets.iter().any(|t| {
+        let t = t.to_lowercase();
+        t == "utf8_string" || t == "string" || t == "text" || t.starts_with("text/plain")
+    })
+}
+
 fn now_secs() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -251,8 +263,10 @@ mod linux {
                 // First what kinds of data it holds (a password manager says so here), then,
                 // only if it is not secret, the text. Both asynchronous.
                 cb.request_contents(&gdk::Atom::intern("TARGETS"), move |cb, data| {
-                    let names: Vec<String> = data.targets().unwrap_or_default().iter().map(|a| a.name().to_string()).collect();
-                    if is_secret(&names) {
+                    // If what it holds cannot be read, nothing is kept: the filter fails closed.
+                    let Some(atoms) = data.targets() else { return };
+                    let names: Vec<String> = atoms.iter().map(|a| a.name().to_string()).collect();
+                    if !may_keep(&names) {
                         return;
                     }
                     let app = app.clone();
@@ -363,5 +377,15 @@ mod tests {
         assert!(is_secret(&["X-KDE-PasswordManagerHint".to_string()]));
         assert!(!is_secret(&["text/plain".to_string(), "UTF8_STRING".to_string()]));
         assert!(!is_secret(&[]));
+    }
+
+    #[test]
+    fn the_filter_fails_closed() {
+        let t = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(may_keep(&t(&["UTF8_STRING", "text/plain;charset=utf-8"])));
+        assert!(may_keep(&t(&["TARGETS", "text/plain"])));
+        assert!(!may_keep(&[]), "the kinds of data could not be read");
+        assert!(!may_keep(&t(&["image/png"])), "not text");
+        assert!(!may_keep(&t(&["text/plain", "x-kde-passwordManagerHint"])), "marked secret");
     }
 }
