@@ -15,6 +15,7 @@ import { registerPomodoro } from "./hub/pomodoro";
 import { registerTasks } from "./hub/tasks";
 import { registerDictation } from "./hub/dictation";
 import { registerSysState } from "./island/sysstate";
+import { registerMic } from "./island/mic";
 import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
@@ -43,6 +44,9 @@ async function main() {
   if (!IS_TAURI) {
     const outfit = new URLSearchParams(window.location.search).get("outfit");
     if (outfit) State.settings.mochiOutfit = outfit;
+    // ?mic=Zoom,Chromium pretends those programs record the microphone.
+    const mic = new URLSearchParams(window.location.search).get("mic");
+    if (mic) State.micApps = mic.split(",");
   }
   island.applySettings();
   State.loadIntegrationTasks();
@@ -103,6 +107,7 @@ async function main() {
   registerTasks(island);
   registerDictation(island);
   registerSysState(island);
+  registerMic(island);
   registerNotificationPeek(island);
 
   island.launch();

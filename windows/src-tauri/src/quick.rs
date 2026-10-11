@@ -83,21 +83,10 @@ pub fn parse_layout(s: &str) -> Option<String> {
 
 /// Does `pactl list source-outputs` show a program recording that is not Coucou's own
 /// visualizer (which declares itself as pavucontrol so the desktop shows no indicator)?
+/// The same reading as the island's microphone indicator (dictation.rs), so the two always agree:
+/// Coucou's bars, Handy, monitors and paused streams do not count.
 pub fn mic_in_use(listing: &str) -> bool {
-    listing
-        .split("Source Output #")
-        .skip(1)
-        .any(|block| {
-            let lower = block.to_lowercase();
-            // Coucou's own visualizer, and Handy (the user's own dictation, which the island shows itself).
-            let ours = block.contains("org.PulseAudio.pavucontrol")
-                || block.contains("application.process.binary = \"cava\"")
-                || block.contains("application.name = \"cava\"")
-                || lower.contains("application.process.binary = \"handy\"")
-                || lower.contains("application.name = \"handy\"");
-            let monitor = block.contains("node.passive = \"true\"") || block.contains("stream.monitor = \"true\"");
-            !ours && !monitor
-        })
+    !crate::dictation::mic_apps(listing).is_empty()
 }
 
 // ── Reading and setting ───────────────────────────────────────────────────────

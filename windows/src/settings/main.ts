@@ -403,6 +403,13 @@ function mochiSection(): HTMLElement {
         "sunglasses in summer, party hat at New Year), plus a night cap when he sleeps, headphones while music " +
         "plays and sunglasses during a Pomodoro focus period. Or pick one to keep it on." }),
     ),
+    h("div", { class: "row" },
+      h("label", { text: "Microphone indicator" }),
+      toggle(settings.micIndicator !== false, (v) => { settings.micIndicator = v; void save(); }),
+      h("span", { class: "hint", text:
+        "A small orange dot on the island, with the program's name, while something other than Handy " +
+        "records the microphone. It reads only the sound server's list of programs, never audio." }),
+    ),
   );
 }
 

@@ -70,6 +70,7 @@ export class Island {
   private hair!: HTMLElement;
   private hairFill!: HTMLElement;
   private netDot!: HTMLElement;
+  private micDot!: HTMLElement;
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -299,6 +300,15 @@ export class Island {
     this.hairFill = h("i");
     this.hair = h("div", { id: "sys-hair" }, this.hairFill);
     this.netDot = h("div", { id: "net-dot", title: "No internet" }, svg("M2 8.5a14 14 0 0 1 20 0 M5.5 12a9 9 0 0 1 13 0 M9 15.5a4.5 4.5 0 0 1 6 0 M12 19.2v.01 M3 3l18 18", 12, { stroke: 2 }));
+    this.micDot = h("button", { id: "mic-dot", title: "Microphone in use" }, svg("M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v4", 12, { stroke: 2.2 }));
+    // It has its own action: the island must not open (or fold) because it was pressed.
+    this.micDot.addEventListener("mousedown", (e) => e.stopPropagation());
+    this.micDot.addEventListener("click", (e) => {
+      e.stopPropagation();
+      Sound.play("blip");
+      selectTool("quick");
+      this.alert("tool");
+    });
     this.islandEl = h(
       "div",
       { id: "island" },
@@ -309,6 +319,7 @@ export class Island {
       this.pill.el,
       this.hair,
       this.netDot,
+      this.micDot,
       this.miniGrid,
       this.countdown,
     );
@@ -328,7 +339,8 @@ export class Island {
   private wireFsm() {
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     // With the Music pill showing a track, the minimised island stays up.
-    this.fsm.keepCompact = () => State.stripWanted();
+    // A program recording the microphone keeps it up too: it is the only place that says so.
+    this.fsm.keepCompact = () => State.stripWanted() || State.micOn();
     this.fsm.onTransition = (from, to) => {
       switch (to) {
         case "hidden":
@@ -485,7 +497,7 @@ export class Island {
   /** The pill (Music, recording, reminder, news, Pomodoro) appeared or went: resize, reveal, settle. */
   refreshStrip() {
     if (State.mode === "compact") this.animateGeometry(false);
-    if (State.stripWanted()) {
+    if (State.stripWanted() || State.micOn()) {
       if (State.mode === "hidden") this.fsm.reveal();
     } else {
       this.fsm.settle();
@@ -722,6 +734,10 @@ export class Island {
     // The offline mark: in a corner of the minimised island, beside the header's buttons when open.
     this.netDot.style.top = State.mode === "expanded" ? "11px" : "3px";
     this.netDot.style.left = State.mode === "expanded" ? `${w - 96}px` : `${w - 18}px`;
+    // The microphone dot sits just inside it.
+    // (Minimised: the free corner opposite the mini pills, beside Mochi.)
+    this.micDot.style.top = State.mode === "expanded" ? "9px" : "8px";
+    this.micDot.style.left = State.mode === "expanded" ? `${w - 124}px` : "4px";
     this.greetingCanvas.style.left = `${(w - EXPANDED_W) / 2}px`;
     this.uploadCanvas.el.style.left = `${(w - EXPANDED_W) / 2}px`;
 
@@ -1329,6 +1345,10 @@ export class Island {
     this.hair.className = on ? cls : "";
     this.hairFill.style.width = `${Math.max(4, pct)}%`;
     this.netDot.style.opacity = on && !s.online ? "0.85" : "0";
+    const mic = on && State.micOn();
+    this.micDot.style.opacity = mic ? "1" : "0";
+    this.micDot.style.pointerEvents = mic ? "auto" : "none";
+    this.micDot.title = mic ? `Microphone in use: ${State.micApps.join(", ")}` : "";
   }
 
   /** Applies settings coming from Rust at boot. */

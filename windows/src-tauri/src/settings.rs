@@ -96,6 +96,9 @@ pub struct Settings {
     /// What Mochi wears: "auto", "none", or one of headphones / nightcap / party / shades / bow.
     #[serde(default = "default_outfit")]
     pub mochi_outfit: String,
+    /// A dot on the island, with the program's name, while something records the microphone.
+    #[serde(default = "default_true")]
+    pub mic_indicator: bool,
 }
 
 fn default_outfit() -> String {
@@ -189,6 +192,7 @@ impl Default for Settings {
             notification_peek: false,
             remote_enabled: false,
             mochi_outfit: default_outfit(),
+            mic_indicator: true,
         }
     }
 }

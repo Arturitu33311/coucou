@@ -106,6 +106,26 @@
 #sys-hair.dict i { background: #ff5a5f; animation: sp-breathe 1.2s ease-in-out infinite; }
 @keyframes sp-breathe { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
 
+/* The microphone: a small orange dot with a mic, breathing; a button (it opens the Quick tab). */
+#mic-dot {
+  position: absolute;
+  z-index: 5;
+  width: 16px;
+  height: 16px;
+  padding: 2px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 50%;
+  background: #ff9f0a;
+  color: #1a1100;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+}
+#mic-dot svg { display: block; width: 100%; height: 100%; }
+#mic-dot:hover { opacity: 1; }
+
 #net-dot {
   position: absolute;
   z-index: 4;

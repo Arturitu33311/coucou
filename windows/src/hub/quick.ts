@@ -3,6 +3,8 @@
 // other than Coucou's own visualizer is recording the microphone.
 
 import { Bridge } from "../core/bridge";
+import { State } from "../core/state";
+import { names } from "../island/mic";
 import { h, clear } from "../views/dom";
 import type { HubHost, HubTool } from "./types";
 
@@ -63,7 +65,10 @@ function build(): HubHost {
     }
     volume.disabled = q.volume == null;
     clear(info);
-    if (q.micInUse) info.append(h("div", { class: "qk-warn", text: "🎙 A program is recording the microphone" }));
+    if (q.micInUse) {
+      const apps = State.micApps.length > 0 ? names(State.micApps) : "A program";
+      info.append(h("div", { class: "qk-warn", text: `🎙 ${apps} ${State.micApps.length > 1 ? "are" : "is"} recording the microphone` }));
+    }
     for (const d of q.bluetooth) info.append(h("div", { class: "qk-bt", text: `🎧 ${d.name}${d.battery != null ? ` · ${d.battery}%` : ""}` }));
     if (q.layout) info.append(h("div", { class: "dim", text: `Keyboard: ${q.layout}` }));
   }

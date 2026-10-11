@@ -223,6 +223,8 @@ export interface Settings {
   remoteEnabled: boolean;
   /** What Mochi wears: "auto" (headphones with music, a night cap asleep, shades while focusing), "none" or one of them. */
   mochiOutfit: string;
+  /** A dot on the island, with the program's name, while something records the microphone. */
+  micIndicator: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -261,6 +263,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationPeek: false,
   remoteEnabled: false,
   mochiOutfit: "auto",
+  micIndicator: true,
 };
 
 type Listener = () => void;
@@ -365,6 +368,14 @@ class AppState {
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
+
+  /** The programs recording the microphone right now (names only; Handy and Coucou's bars excluded). */
+  micApps: string[] = [];
+
+  /** Is the microphone indicator on show (something records and the user has not turned it off)? */
+  micOn(): boolean {
+    return !this.paused && this.settings.micIndicator !== false && this.micApps.length > 0;
+  }
 
   private listeners = new Set<Listener>();
 

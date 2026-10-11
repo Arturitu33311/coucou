@@ -1,11 +1,14 @@
-// The dictation indicator: when Handy (the speech-to-text app) starts recording, the island says
-// so, and says when it stops. Handy has no way to tell another program what it is doing, but
-// recording shows in the sound server as a program capturing the microphone, so the island
-// listens to the server's own announcements (`pactl subscribe`) and looks at who is capturing
+// What is capturing the microphone, in two readings of the same sound-server listing:
+//
+//   * dictation: Handy (the speech-to-text app) is recording, so the island says "Listening…";
+//   * the microphone indicator: some other program is recording, so the island shows a small dot
+//     with the program's name (the top bar, where GNOME puts it, is hidden on this desktop).
+//
+// Both come from the sound server's own announcements (`pactl subscribe`): the listing is read
 // only when something about a capture changes. Nothing polls: while nobody starts or stops a
 // capture the process is asleep in a read and costs nothing.
 //
-// Only the fact "Handy is capturing" is sent to the page; no audio is ever opened or read here.
+// Only program names are sent to the page; no audio is ever opened or read here.
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -24,26 +27,97 @@ pub struct Dictation {
     pub recording: bool,
 }
 
-/// Is a block of `pactl list source-outputs` a capture by Handy? (Its monitor streams, which only
-/// listen to what is playing, do not count.)
-fn is_handy(block: &str) -> bool {
-    let b = block.to_lowercase();
-    let handy = b.contains("application.process.binary = \"handy\"") || b.contains("application.name = \"handy\"");
-    let monitor = b.contains("node.passive = \"true\"") || b.contains("stream.monitor = \"true\"");
-    handy && !monitor
+/// The programs recording the microphone, other than Handy.
+#[derive(Serialize, Clone, Debug, PartialEq, Default)]
+pub struct Mic {
+    pub apps: Vec<String>,
+}
+
+/// One `Source Output` block of `pactl list source-outputs`.
+struct Block<'a>(&'a str);
+
+impl Block<'_> {
+    fn lower(&self) -> String {
+        self.0.to_lowercase()
+    }
+
+    /// The value of `key = "value"` in the block's properties.
+    fn prop(&self, key: &str) -> Option<String> {
+        self.0.lines().find_map(|l| {
+            let (k, v) = l.trim().split_once('=')?;
+            (k.trim() == key).then(|| v.trim().trim_matches('"').to_string())
+        })
+    }
+
+    fn is_handy(&self) -> bool {
+        let b = self.lower();
+        b.contains("application.process.binary = \"handy\"") || b.contains("application.name = \"handy\"")
+    }
+
+    /// Coucou's own real-time bars (declared as pavucontrol so the desktop shows no indicator).
+    fn is_ours(&self) -> bool {
+        let b = self.lower();
+        self.0.contains("org.PulseAudio.pavucontrol")
+            || b.contains("application.process.binary = \"cava\"")
+            || b.contains("application.name = \"cava\"")
+    }
+
+    /// A monitor only listens to what is playing; it is not a microphone.
+    fn is_monitor(&self) -> bool {
+        self.0.contains("node.passive = \"true\"") || self.0.contains("stream.monitor = \"true\"")
+    }
+
+    /// A paused stream: many apps (a browser with a call tab, Discord) keep one open and idle.
+    fn is_corked(&self) -> bool {
+        self.0.lines().any(|l| l.trim().eq_ignore_ascii_case("corked: yes"))
+    }
+
+    fn app_name(&self) -> String {
+        let raw = self
+            .prop("application.name")
+            .or_else(|| self.prop("application.process.binary"))
+            .unwrap_or_default();
+        let clean = raw.trim();
+        if clean.is_empty() {
+            "an app".to_string()
+        } else {
+            clean.to_string()
+        }
+    }
+}
+
+fn blocks(listing: &str) -> impl Iterator<Item = Block<'_>> {
+    listing.split("Source Output #").skip(1).map(Block)
 }
 
 /// Does the listing show Handy recording?
 pub fn handy_recording(listing: &str) -> bool {
-    listing.split("Source Output #").skip(1).any(is_handy)
+    blocks(listing).any(|b| b.is_handy() && !b.is_monitor() && !b.is_corked())
 }
 
-/// Whether a line of `pactl subscribe` is about a capture starting, stopping or changing.
+/// The programs (other than Handy and Coucou's own bars) that are recording the microphone,
+/// each once, in the order the server lists them.
+pub fn mic_apps(listing: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for b in blocks(listing) {
+        if b.is_handy() || b.is_ours() || b.is_monitor() || b.is_corked() {
+            continue;
+        }
+        let name = b.app_name();
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
+/// Whether a line of `pactl subscribe` is about a capture starting, stopping or changing
+/// (a stream being corked or uncorked is a "change").
 fn about_a_capture(line: &str) -> bool {
     line.contains("source-output")
 }
 
-fn recording_now() -> bool {
+fn listing() -> Option<String> {
     Command::new("pactl")
         .args(["list", "source-outputs"])
         .stdin(Stdio::null())
@@ -51,7 +125,7 @@ fn recording_now() -> bool {
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .is_some_and(|o| handy_recording(&String::from_utf8_lossy(&o.stdout)))
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
 /// Starts watching (once). Without `pactl` there is nothing to watch and it quietly gives up.
@@ -63,8 +137,13 @@ pub fn start(app: &AppHandle) {
     std::thread::spawn(move || watch(app));
 }
 
+struct Last {
+    handy: bool,
+    mic: Vec<String>,
+}
+
 fn watch(app: AppHandle) {
-    let mut last = false;
+    let mut last = Last { handy: false, mic: Vec::new() };
     loop {
         let child = Command::new("pactl")
             .arg("subscribe")
@@ -75,43 +154,54 @@ fn watch(app: AppHandle) {
         let mut child = match child {
             Ok(c) => c,
             Err(_) => {
-                log::line("dictation indicator: pactl is not installed");
+                log::line("capture indicators: pactl is not installed");
                 STARTED.store(false, Ordering::SeqCst);
                 return;
             }
         };
         if let Some(out) = child.stdout.take() {
             // A capture that was already on when the island started.
-            last = report(&app, last, recording_now());
+            report(&app, &mut last, listing().as_deref().unwrap_or(""));
             for line in BufReader::new(out).lines().map_while(Result::ok) {
                 if about_a_capture(&line) {
-                    last = report(&app, last, recording_now());
+                    report(&app, &mut last, listing().as_deref().unwrap_or(""));
                 }
             }
         }
         let _ = child.wait();
         // The sound server went away (a restart, a logout): look again in a little while.
-        last = report(&app, last, false);
+        report(&app, &mut last, "");
         std::thread::sleep(std::time::Duration::from_secs(5));
     }
 }
 
-/// Tells the page when the state changed; returns the state now.
-fn report(app: &AppHandle, was: bool, now: bool) -> bool {
-    if now != was {
-        let _ = app.emit_to(WINDOW_LABEL, "dictation", Dictation { recording: now });
+/// Tells the page what changed since last time.
+fn report(app: &AppHandle, last: &mut Last, listing: &str) {
+    let handy = handy_recording(listing);
+    if handy != last.handy {
+        last.handy = handy;
+        let _ = app.emit_to(WINDOW_LABEL, "dictation", Dictation { recording: handy });
     }
-    now
+    let mic = mic_apps(listing);
+    if mic != last.mic {
+        last.mic = mic.clone();
+        let _ = app.emit_to(WINDOW_LABEL, "mic", Mic { apps: mic });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const HANDY: &str = "Source Output #77\n\tDriver: PipeWire\n\tProperties:\n\t\tapplication.name = \"Handy\"\n\t\tapplication.process.binary = \"handy\"\n\t\tnode.name = \"alsa_capture.handy\"\n";
+    const HANDY: &str = "Source Output #77\n\tDriver: PipeWire\n\tCorked: no\n\tProperties:\n\t\tapplication.name = \"Handy\"\n\t\tapplication.process.binary = \"handy\"\n\t\tnode.name = \"alsa_capture.handy\"\n";
     const CAVA: &str = "Source Output #78\n\tProperties:\n\t\tapplication.name = \"cava\"\n\t\tapplication.process.binary = \"cava\"\n";
+    const PAVU: &str = "Source Output #81\n\tProperties:\n\t\tapplication.id = \"org.PulseAudio.pavucontrol\"\n\t\tapplication.name = \"Peak detect\"\n";
     const HANDY_MONITOR: &str = "Source Output #79\n\tProperties:\n\t\tapplication.name = \"Handy\"\n\t\tstream.monitor = \"true\"\n";
     const OTHER: &str = "Source Output #80\n\tProperties:\n\t\tapplication.name = \"Handyman Planner\"\n\t\tapplication.process.binary = \"handyman\"\n";
+    const ZOOM: &str = "Source Output #90\n\tDriver: PipeWire\n\tCorked: no\n\tProperties:\n\t\tapplication.name = \"ZOOM VoiceEngine\"\n\t\tapplication.process.binary = \"zoom\"\n";
+    const MEET_IDLE: &str = "Source Output #91\n\tDriver: PipeWire\n\tCorked: yes\n\tProperties:\n\t\tapplication.name = \"Chromium input\"\n\t\tapplication.process.binary = \"chromium\"\n";
+    const MEET_LIVE: &str = "Source Output #92\n\tDriver: PipeWire\n\tCorked: no\n\tProperties:\n\t\tapplication.name = \"Chromium input\"\n\t\tapplication.process.binary = \"chromium\"\n";
+    const NAMELESS: &str = "Source Output #93\n\tCorked: no\n\tProperties:\n\t\tmedia.name = \"x\"\n";
 
     #[test]
     fn only_handy_capturing_counts() {
@@ -124,9 +214,27 @@ mod tests {
     }
 
     #[test]
+    fn the_microphone_indicator_names_the_other_programs() {
+        assert_eq!(mic_apps(ZOOM), vec!["ZOOM VoiceEngine"]);
+        assert_eq!(mic_apps(&format!("{HANDY}{CAVA}{PAVU}{HANDY_MONITOR}")), Vec::<String>::new(), "Handy, the bars and monitors are not it");
+        assert_eq!(mic_apps(&format!("{ZOOM}{MEET_LIVE}")), vec!["ZOOM VoiceEngine", "Chromium input"]);
+        assert_eq!(mic_apps(&format!("{MEET_LIVE}{MEET_LIVE}")), vec!["Chromium input"], "each program once");
+        assert_eq!(mic_apps(OTHER), vec!["Handyman Planner"]);
+        assert_eq!(mic_apps(NAMELESS), vec!["an app"]);
+        assert!(mic_apps("").is_empty());
+    }
+
+    #[test]
+    fn a_paused_stream_is_not_recording() {
+        assert!(mic_apps(MEET_IDLE).is_empty(), "a call tab that is open but muted keeps an idle stream");
+        assert_eq!(mic_apps(&format!("{MEET_IDLE}{ZOOM}")), vec!["ZOOM VoiceEngine"]);
+    }
+
+    #[test]
     fn only_capture_announcements_are_looked_at() {
         assert!(about_a_capture("Event 'new' on source-output #77"));
         assert!(about_a_capture("Event 'remove' on source-output #77"));
+        assert!(about_a_capture("Event 'change' on source-output #77"));
         assert!(!about_a_capture("Event 'change' on sink #3"));
         assert!(!about_a_capture("Event 'change' on server"));
     }
