@@ -156,12 +156,19 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
 - **Today** is the Hub's first tab: the next event (and how long until it), what is due or late,
   the focus minutes so far, the day's calendar and reminders on one timeline, and the weather if it
   is on. It reads what the other tabs keep and stores nothing of its own.
-- **Keys.** With the Hub on screen and no text field focused, **←** / **→** move along the tabs
-  and **1**–**9** pick one.
-- **Outfits.** Mochi wears things drawn in code: headphones while a player is playing, a night cap
-  when he sleeps, shades during a Pomodoro focus period. Settings → Mochi → Outfit keeps one on
-  (night cap, party hat, shades, bow, headphones) or takes them all off. Mini Mochis never wear
-  any. `windows/dev/outfits-preview.html` shows them all in a browser (`npx vite`).
+- **Keys.** While the island window has the keyboard and no text field does, **←** / **→** move
+  along the Hub's tabs and **1**–**9** pick one. The island is deliberately non-activating, so it only
+  has the keyboard where your desktop gives it focus on a click; where it does not, use the mouse
+  (the wheel scrolls the tab strip).
+- **Outfits.** The Mac app's wardrobe (`MochiWardrobe.swift`) draws its outfits in 3-D, and that is
+  not ported. This build draws flat ones under the same ids (`partyHat`, `santaHat`, `witchHat`,
+  `bunnyEars`, `sunglasses`, `bow`) and follows the Mac's seasons for "auto" (party hat Dec 31–Jan 2,
+  Santa hat Dec 1–26, witch hat Oct 1–Nov 1, bunny ears around Easter, sunglasses Jun 21–Aug 31).
+  The Mac's `beanie`, `crown`, `roundGlasses`, `scarf` and `pumpkin` are not drawn here and read as
+  "none". Only on the PC, and only where no season applies: a night cap while he sleeps, headphones
+  while a player plays, sunglasses during a Pomodoro focus period (they come off while his eyes say
+  something, e.g. an approval). Settings → Mochi → Outfit fixes one or takes them all off. Mini
+  Mochis never wear any. `windows/dev/outfits-preview.html` shows them all in a browser (`npx vite`).
 
 ## The pill and the quiet details (Linux)
 

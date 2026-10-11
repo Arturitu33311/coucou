@@ -399,8 +399,9 @@ function mochiSection(): HTMLElement {
       h("label", { text: "Outfit" }),
       outfit,
       h("span", { class: "hint", text:
-        "Automatic: headphones while music plays, a night cap when he sleeps, shades during a Pomodoro focus period. " +
-        "Or pick one to keep it on." }),
+        "Automatic: the Mac app's seasons (Santa hat in December, witch hat in October, bunny ears at Easter, " +
+        "sunglasses in summer, party hat at New Year), plus a night cap when he sleeps, headphones while music " +
+        "plays and sunglasses during a Pomodoro focus period. Or pick one to keep it on." }),
     ),
   );
 }
