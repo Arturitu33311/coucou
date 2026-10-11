@@ -82,6 +82,27 @@
 /* The server's activities: the ring fills with the work done; amber when something went wrong. */
 .sp-ring.act .fg { stroke: #5bc0ff; }
 #status-pill.warn .sp-ring.act .fg { stroke: #f5a524; }
+/* On the Music strip: at its end, just inside the mini pills. */
+#act-chip {
+  position: absolute;
+  z-index: 5;
+  right: 76px;
+  top: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 99px;
+  border: 1px solid rgba(91, 192, 255, 0.4);
+  background: rgba(20, 30, 40, 0.88);
+  color: rgba(255, 255, 255, 0.92);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.25s ease;
+}
+#act-chip:hover { background: rgba(91, 192, 255, 0.25); }
 .sp-chip { background: rgba(91, 192, 255, 0.14); border-color: rgba(91, 192, 255, 0.35); font-variant-numeric: tabular-nums; }
 #status-pill.paused .sp-ring .fg, #status-pill.paused .sp-time { opacity: 0.55; }
 

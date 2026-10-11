@@ -198,7 +198,11 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
 - **Server activity** (Settings → Hub; off until turned on, needs a server). Downloads and a
   backup that is late, on the pill ("3 downloads · 41 %", amber when something failed) and as rows in
   Today. When another pill owns the slot (a recording, a reminder, the Pomodoro) the activities
-  become a small chip at its end, so neither hides the other. This is the one reader that looks
+  become a small chip at its end, and they never take the Music pill's place: on the Music strip
+  they ride as a chip too ("⬇ 2 · 61 %"), so neither hides the other. Only what runs or waits holds
+  the pill; something that went wrong (a late backup) is said once, as a flash, and stays as a row in
+  Today, so a stale backup never keeps the island up for days. A click on any of it opens Today.
+  This is the one reader that looks
   while the island is minimised: a fixed script (`src-tauri/src/activities.py`, sent on stdin, nothing
   installed) over the shared ssh connection every 30 s while something runs, every 5 min when nothing
   does, every 10 min while the server cannot be reached, never while paused. Nothing is guessed:

@@ -289,9 +289,12 @@ export interface Activity {
   detail: string;
 }
 
-/** The activities worth the pill: running, waiting, or gone wrong (a finished one is not news). */
+/**
+ * The activities that hold the pill: running or waiting. One that went wrong is not here — a late
+ * backup would keep the island up for days; it is said once (a flash) and stays as a row in Today.
+ */
 export function pillActivities(list: Activity[]): Activity[] {
-  return list.filter((a) => a.state === "active" || a.state === "queued" || a.state === "error");
+  return list.filter((a) => a.state === "active" || a.state === "queued");
 }
 
 /** A few seconds of news in the pill ("Plugged in", "Back online"). */
@@ -554,7 +557,8 @@ class AppState {
     if (this.reminders.length > 0) return "reminder";
     if (this.flash) return "flash";
     if (this.pomodoroPhase !== "idle") return "pomodoro";
-    if (pillActivities(this.activities).length > 0) return "activities";
+    // The Music pill is the user's own: downloads never take its place (they ride on it as a chip).
+    if (!this.musicStrip() && pillActivities(this.activities).length > 0) return "activities";
     return null;
   }
 

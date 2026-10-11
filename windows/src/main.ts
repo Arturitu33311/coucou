@@ -49,6 +49,17 @@ async function main() {
     // ?mic=Zoom,Chromium pretends those programs record the microphone.
     const mic = new URLSearchParams(window.location.search).get("mic");
     if (mic) State.micApps = mic.split(",");
+    // ?music=1 pretends a track is playing (the Music pill is switched on for it).
+    if (new URLSearchParams(window.location.search).get("music")) {
+      if (!State.settings.activeIntegrations.includes("integration_music")) {
+        State.settings.activeIntegrations = [...State.settings.activeIntegrations.slice(0, 3), "integration_music"];
+      }
+      State.music = {
+        player: "mpris", identity: "Spotify", status: "Playing", title: "Dancing Queen", artists: ["ABBA"], album: "Arrival",
+        lengthMs: 230000, artUrl: "", positionMs: 60000, positionAt: Date.now(), canSeek: true, canNext: true,
+        canPrevious: true, volume: 0.5, key: "x", art: null, rgb: [200, 80, 120], accent: "#FA2D48", lyrics: null, lyricsState: "off",
+      };
+    }
     // ?acts=Show.S01E01:0.42:active,Movie:0.1:active,Backup:-:error pretends the server is busy.
     const acts = new URLSearchParams(window.location.search).get("acts");
     if (acts) {

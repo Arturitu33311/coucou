@@ -358,6 +358,18 @@ mod tests {
         assert_eq!(mic_apps(&snap(&out(1, 99, 56, "no", HANDY_P)), &exe), vec!["Handy"]);
     }
 
+    /// Prints how the REAL sound server's streams are classified (read-only):
+    /// `cargo test --lib real_capture_probe -- --ignored --nocapture` while something records.
+    #[test]
+    #[ignore]
+    fn real_capture_probe() {
+        let snap = snapshot().expect("pactl");
+        for s in streams(&snap, &exe_of_pid) {
+            println!("stream {:?} handy={} ours={} monitor={} corked={}", s.name, s.handy, s.ours, s.monitor, s.corked);
+        }
+        println!("mic_apps = {:?}, handy = {}", mic_apps(&snap, &exe_of_pid), handy_recording(&snap, &exe_of_pid));
+    }
+
     #[test]
     fn names_are_made_safe_to_show() {
         assert_eq!(clean_name("  Zoom \n\u{1b}[31mred"), "Zoom [31mred");

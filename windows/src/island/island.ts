@@ -26,6 +26,8 @@ import { Dodger, toBoxes, type Box } from "./dodge";
 import { hubKey, hubTyping, selectTool, syncHubRuntime } from "../hub/hub";
 import { buildStatusPill, pillTint, type PillHost } from "./pill";
 import { pickOutfit } from "../mochi/outfits";
+import { pillActivities } from "../core/state";
+import { summarize } from "./activities";
 import { pomodoroPill } from "../hub/pomodoro";
 
 const BOT_OVERHANG = 40;
@@ -71,6 +73,7 @@ export class Island {
   private hairFill!: HTMLElement;
   private netDot!: HTMLElement;
   private micDot!: HTMLElement;
+  private actChip!: HTMLElement;
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -313,6 +316,16 @@ export class Island {
       selectTool("quick");
       this.alert("tool");
     });
+    // The server's activities as a chip on the Music strip (the strip is the user's own: downloads
+    // never take its place). The status pill carries its own chip when another pill owns the slot.
+    this.actChip = h("button", { id: "act-chip" });
+    this.actChip.addEventListener("mousedown", (e) => e.stopPropagation());
+    this.actChip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      Sound.play("blip");
+      selectTool("today");
+      this.alert("tool");
+    });
     this.islandEl = h(
       "div",
       { id: "island" },
@@ -324,6 +337,7 @@ export class Island {
       this.hair,
       this.netDot,
       this.micDot,
+      this.actChip,
       this.miniGrid,
       this.countdown,
     );
@@ -1308,6 +1322,16 @@ export class Island {
     this.pill.sync();
     this.pill.el.style.opacity = showPill ? "1" : "0";
     this.pill.el.style.pointerEvents = showPill ? "auto" : "none";
+    // Server activity riding on the Music strip.
+    const running = pillActivities(State.activities);
+    const chip = showStrip && running.length > 0;
+    if (chip) {
+      const s = summarize(State.activities);
+      this.actChip.textContent = `⬇ ${s.count}${s.progress != null ? ` · ${Math.round(s.progress * 100)} %` : ""}`;
+      this.actChip.title = s.label;
+    }
+    this.actChip.style.opacity = chip ? "1" : "0";
+    this.actChip.style.pointerEvents = chip ? "auto" : "none";
     this.syncSys();
 
     // Compact mini grid

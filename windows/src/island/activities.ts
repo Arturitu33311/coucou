@@ -38,7 +38,7 @@ export function etaWords(seconds: number): string {
 
 /** What a list of activities comes to, for the pill. Pure. */
 export function summarize(list: Activity[]): Summary {
-  const items = pillActivities(list);
+  const items = list.filter((a) => a.state !== "done");
   const errors = items.filter((a) => a.state === "error");
   const running = items.filter((a) => a.state !== "error");
   const known = running.filter((a) => a.state === "active" && a.progress != null);
@@ -75,6 +75,29 @@ export function registerActivities(island: Island) {
   let timer: number | null = null;
   let failures = 0;
   let running = false;
+  /** Errors already said once (an error is a flash when it appears, then only a row in Today). */
+  const told = new Set<string>();
+  let flashClear: number | null = null;
+
+  /** Says, once, what newly went wrong — when the island is on screen already. */
+  const tellErrors = (list: Activity[], firstLook: boolean) => {
+    const errors = list.filter((a) => a.state === "error");
+    const fresh = errors.filter((a) => !told.has(a.id));
+    for (const id of [...told]) if (!errors.some((a) => a.id === id)) told.delete(id);
+    for (const a of errors) told.add(a.id);
+    if (firstLook || fresh.length === 0 || State.paused || State.mode === "hidden" || State.flash != null) return;
+    const e = fresh[0];
+    State.flash = { icon: "⚠", text: `${e.title}${e.detail ? ` · ${e.detail}` : ""}`, tone: "warn" };
+    island.refreshStrip();
+    if (flashClear != null) window.clearTimeout(flashClear);
+    flashClear = window.setTimeout(() => {
+      State.flash = null;
+      flashClear = null;
+      island.refreshStrip();
+      State.notify();
+    }, 5000);
+  };
+  let looked = false;
 
   const schedule = (ms: number) => {
     if (timer != null) window.clearTimeout(timer);
@@ -97,6 +120,8 @@ export function registerActivities(island: Island) {
       const list = await Bridge.activities();
       failures = 0;
       State.activities = list;
+      tellErrors(list, !looked);
+      looked = true;
       next = pillActivities(list).some((a) => a.state === "active") ? BUSY_MS : IDLE_MS;
     } catch (e) {
       failures += 1;
