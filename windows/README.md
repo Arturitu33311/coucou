@@ -151,6 +151,18 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
   started through their own launcher; folders and links through `gio open`. Nothing runs through a
   shell, and a launched app does not inherit what Coucou's own launcher sets.
 
+## Today, keys and outfits (Linux)
+
+- **Today** is the Hub's first tab: the next event (and how long until it), what is due or late,
+  the focus minutes so far, the day's calendar and reminders on one timeline, and the weather if it
+  is on. It reads what the other tabs keep and stores nothing of its own.
+- **Keys.** With the Hub on screen and no text field focused, **←** / **→** move along the tabs
+  and **1**–**9** pick one.
+- **Outfits.** Mochi wears things drawn in code: headphones while a player is playing, a night cap
+  when he sleeps, shades during a Pomodoro focus period. Settings → Mochi → Outfit keeps one on
+  (night cap, party hat, shades, bow, headphones) or takes them all off. Mini Mochis never wear
+  any. `windows/dev/outfits-preview.html` shows them all in a browser (`npx vite`).
+
 ## The pill and the quiet details (Linux)
 
 With no panel on screen, the minimised island is all there is, so it widens, in the Music pill's

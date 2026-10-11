@@ -7,6 +7,7 @@
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
 import type { BotEmoteName, BotStateName } from "../core/layout";
+import { drawOutfit, type Outfit } from "./outfits";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,9 @@ export class BotEngine {
 
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
+
+  /** What he is wearing (see outfits.ts); never drawn on mini bots or while he is a box. */
+  outfit: Outfit | null = null;
 
   /** Extra canvas height above the body so hearts can fly out without clipping. */
   particleOverhang = 0;
@@ -673,6 +677,7 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    if (this.outfit && !this.isMini && this.morph < 0.05) drawOutfit(x, this.outfit, R, rx, ry, now() - this.t0);
 
     x.restore();
 

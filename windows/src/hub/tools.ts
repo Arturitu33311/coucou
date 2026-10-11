@@ -10,5 +10,6 @@ import { notesTool } from "./notes";
 import { calendarTool } from "./calendar";
 import { weatherTool } from "./weather";
 import { quickTool } from "./quick";
+import { todayTool } from "./today";
 
-export const TOOLS: HubTool[] = [systemTool, serverTool, pomodoroTool, tasksTool, workspacesTool, notesTool, calendarTool, weatherTool, quickTool, shelfTool];
+export const TOOLS: HubTool[] = [todayTool, systemTool, serverTool, pomodoroTool, tasksTool, workspacesTool, notesTool, calendarTool, weatherTool, quickTool, shelfTool];

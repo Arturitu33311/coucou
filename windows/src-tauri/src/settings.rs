@@ -93,6 +93,13 @@ pub struct Settings {
     /// Let a phone follow Claude Code and answer its requests, through ssh (off until turned on).
     #[serde(default)]
     pub remote_enabled: bool,
+    /// What Mochi wears: "auto", "none", or one of headphones / nightcap / party / shades / bow.
+    #[serde(default = "default_outfit")]
+    pub mochi_outfit: String,
+}
+
+fn default_outfit() -> String {
+    "auto".into()
 }
 
 fn default_drive_remote() -> String {
@@ -181,6 +188,7 @@ impl Default for Settings {
             weather_city2: String::new(),
             notification_peek: false,
             remote_enabled: false,
+            mochi_outfit: default_outfit(),
         }
     }
 }

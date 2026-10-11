@@ -56,6 +56,25 @@ export function selectTool(id: string) {
   State.notify();
 }
 
+/**
+ * Keys for the Hub's tab strip while its panel is on screen: ← / → move along it, 1–9 pick a tab.
+ * Ignored with a modifier, and while a text field has the keyboard (a tool's panel owns its keys).
+ * True when the key was used.
+ */
+export function hubKey(e: KeyboardEvent): boolean {
+  if (!hubShown() || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const t = e.target as HTMLElement | null;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return false;
+  const at = TOOLS.findIndex((x) => x.id === State.hubTab);
+  let to = -1;
+  if (e.key === "ArrowRight") to = Math.min(TOOLS.length - 1, at + 1);
+  else if (e.key === "ArrowLeft") to = Math.max(0, at - 1);
+  else if (/^[1-9]$/.test(e.key)) to = Number(e.key) - 1;
+  if (to < 0 || to >= TOOLS.length) return false;
+  if (to !== at) selectTool(TOOLS[to].id);
+  return true;
+}
+
 export function buildHub(actions: ViewActions): ViewHost {
   context = { actions };
   const tabs = h("div", { class: "hub-tabs" });

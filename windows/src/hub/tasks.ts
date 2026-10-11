@@ -180,6 +180,16 @@ export function reminderSnooze(id: string, seconds: number) {
   void Bridge.tasksSnooze(id, nowSec() + seconds).then(set).catch(() => {});
 }
 
+/** The open tasks as they stand (reminders first, by time), for views that only read the list. */
+export function openTasks(): Task[] {
+  return list.filter((t) => !t.done).sort((a, b) => (a.remindAt ?? Infinity) - (b.remindAt ?? Infinity) || a.created - b.created);
+}
+
+/** Reads the list from disk once, if nothing has yet (Today may be the first panel opened). */
+export async function ensureTasksLoaded() {
+  if (!loaded) await reload();
+}
+
 /** How many open tasks are due or overdue (for whoever wants a badge). */
 export function dueCount(): number {
   const now = nowSec();

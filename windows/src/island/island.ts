@@ -23,8 +23,10 @@ import { setBarsWanted } from "./music";
 import { h, svg } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { Dodger, toBoxes, type Box } from "./dodge";
-import { hubTyping, selectTool, syncHubRuntime } from "../hub/hub";
+import { hubKey, hubTyping, selectTool, syncHubRuntime } from "../hub/hub";
 import { buildStatusPill, pillTint, type PillHost } from "./pill";
+import { pickOutfit } from "../mochi/outfits";
+import { pomodoroPill } from "../hub/pomodoro";
 
 const BOT_OVERHANG = 40;
 /** Seconds the island stays open after the pointer leaves it, with the Music pill. */
@@ -843,6 +845,7 @@ export class Island {
 
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && State.mode === "expanded" && !State.isPinned) this.collapse();
+      else if (hubKey(e)) e.preventDefault();
       State.lastActivity = performance.now();
     });
 
@@ -1175,6 +1178,12 @@ export class Island {
         this.engine.slotHVel = 0;
       }
     }
+    const pomo = pomodoroPill();
+    this.engine.outfit = pickOutfit(State.settings.mochiOutfit, {
+      sleeping: State.effectiveState === "sleeping",
+      musicPlaying: State.music?.status === "Playing",
+      focusing: pomo.phase === "focus" && pomo.running,
+    });
     this.engine.update(dt);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, hCss);

@@ -221,6 +221,8 @@ export interface Settings {
   notificationPeek: boolean;
   /** Let a phone follow Claude Code and answer its requests, through ssh (off until turned on). */
   remoteEnabled: boolean;
+  /** What Mochi wears: "auto" (headphones with music, a night cap asleep, shades while focusing), "none" or one of them. */
+  mochiOutfit: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -258,6 +260,7 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherCity2: "",
   notificationPeek: false,
   remoteEnabled: false,
+  mochiOutfit: "auto",
 };
 
 type Listener = () => void;
@@ -335,9 +338,9 @@ class AppState {
   /** The Hub's sub-tab in front (remembered). */
   hubTab: string = (() => {
     try {
-      return window.localStorage.getItem("coucou.hubTab") || "system";
+      return window.localStorage.getItem("coucou.hubTab") || "today";
     } catch {
-      return "system";
+      return "today";
     }
   })();
   /** The chat has chosen its first target for this opening. */

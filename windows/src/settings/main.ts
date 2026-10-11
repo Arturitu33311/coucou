@@ -6,6 +6,7 @@ import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
+import { OUTFIT_CHOICES } from "../mochi/outfits";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -380,6 +381,30 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
 }
 
+// ── Mochi section ─────────────────────────────────────────────────────────────
+
+function mochiSection(): HTMLElement {
+  const outfit = h("select", {}) as HTMLSelectElement;
+  for (const c of OUTFIT_CHOICES) outfit.append(h("option", { value: c.value, text: c.label }));
+  outfit.value = settings.mochiOutfit;
+  outfit.addEventListener("change", () => {
+    settings.mochiOutfit = outfit.value;
+    void save();
+  });
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Mochi" })),
+    h("div", { class: "row" },
+      h("label", { text: "Outfit" }),
+      outfit,
+      h("span", { class: "hint", text:
+        "Automatic: headphones while music plays, a night cap when he sleeps, shades during a Pomodoro focus period. " +
+        "Or pick one to keep it on." }),
+    ),
+  );
+}
+
 // ── Music section ─────────────────────────────────────────────────────────────
 
 function musicSection(): HTMLElement {
@@ -737,6 +762,7 @@ async function main() {
     claudeSection(status),
     apiSection(hasKey),
     integrationsSection(present),
+    mochiSection(),
     musicSection(),
     hubSection(),
     generalSection(),
