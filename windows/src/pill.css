@@ -79,6 +79,10 @@
 .sp-ring .bg { fill: none; stroke: rgba(255, 255, 255, 0.15); stroke-width: 3; }
 .sp-ring .fg { fill: none; stroke: #f4505e; stroke-width: 3; stroke-linecap: round; transition: stroke-dashoffset 1s linear; }
 #status-pill.break .sp-ring .fg { stroke: #4ade80; }
+/* The server's activities: the ring fills with the work done; amber when something went wrong. */
+.sp-ring.act .fg { stroke: #5bc0ff; }
+#status-pill.warn .sp-ring.act .fg { stroke: #f5a524; }
+.sp-chip { background: rgba(91, 192, 255, 0.14); border-color: rgba(91, 192, 255, 0.35); font-variant-numeric: tabular-nums; }
 #status-pill.paused .sp-ring .fg, #status-pill.paused .sp-time { opacity: 0.55; }
 
 /* The quiet details: a hairline along the island's lower edge, and a small mark when offline. */

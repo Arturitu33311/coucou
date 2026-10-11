@@ -6,7 +6,8 @@
 // Everything that moves here is a CSS animation (they cost the page nothing), and the only
 // clock is a one-second timer that runs while a timer is on show.
 
-import { State, type PillKind } from "../core/state";
+import { State, pillActivities, type PillKind } from "../core/state";
+import { etaWords, summarize } from "./activities";
 import { h } from "../views/dom";
 import { dropReminder, reminderDone, reminderSnooze } from "../hub/tasks";
 import { pomodoroPill, startPause } from "../hub/pomodoro";
@@ -14,6 +15,8 @@ import { pomodoroPill, startPause } from "../hub/pomodoro";
 export interface PillActions {
   /** The Pomodoro's own panel in the Hub. */
   openPomodoro(): void;
+  /** The Today tab, where every activity has its row. */
+  openActivities(): void;
   blip(): void;
 }
 
@@ -169,14 +172,65 @@ export function buildStatusPill(a: PillActions): PillHost {
     };
   }
 
+  /** The server's activities as the pill's own content: a ring of the overall progress and one line. */
+  function buildActivities() {
+    const s = summarize(State.activities);
+    const NS = "http://www.w3.org/2000/svg";
+    const ring = document.createElementNS(NS, "svg");
+    ring.setAttribute("class", "sp-ring act");
+    ring.setAttribute("viewBox", "0 0 24 24");
+    ring.setAttribute("width", "24");
+    ring.setAttribute("height", "24");
+    const circle = (cls: string) => {
+      const c = document.createElementNS(NS, "circle");
+      c.setAttribute("class", cls);
+      c.setAttribute("cx", "12");
+      c.setAttribute("cy", "12");
+      c.setAttribute("r", String(RING_R));
+      return c;
+    };
+    const fg = circle("fg");
+    fg.setAttribute("transform", "rotate(-90 12 12)");
+    fg.setAttribute("stroke-dasharray", RING_C.toFixed(2));
+    // The ring fills as the work gets done (unknown progress: a quarter).
+    fg.style.strokeDashoffset = String(RING_C * (1 - (s.progress ?? 0.25)));
+    ring.append(circle("bg"), fg);
+    const failing = s.errors > 0 && s.count === s.errors;
+    el.classList.add("clickable");
+    if (failing) el.classList.add("warn");
+    el.append(
+      ring,
+      h("span", { class: `sp-text sp-grow${failing ? " tone-warn" : ""}`, text: s.label, title: s.label }),
+      s.eta != null ? h("span", { class: "sp-time", text: etaWords(s.eta) }) : h("span"),
+    );
+    el.onclick = (e) => {
+      e.stopPropagation();
+      a.openActivities();
+    };
+  }
+
+  /** At the end of another pill: the activities as a small chip ("⬇ 2 · 41 %"), so neither hides the other. */
+  function addChip() {
+    const s = summarize(State.activities);
+    const text = `${s.errors > 0 && s.errors === s.count ? "⚠" : "⬇"} ${s.count}${s.progress != null ? ` · ${Math.round(s.progress * 100)} %` : ""}`;
+    const chip = button(text, s.label, () => a.openActivities());
+    chip.classList.add("sp-chip");
+    chip.style.marginLeft = "auto";
+    el.append(chip);
+  }
+
   function sync() {
     const kind = State.pillKind();
+    const act = pillActivities(State.activities);
+    // The activities' own part of the key moves in 5 % steps, so the pill is not rebuilt every poll.
+    const actKey = act.map((x) => `${x.id}${x.state}${x.progress == null ? "" : Math.round(x.progress * 20)}`).join(",");
     const key =
-      kind === "dictation" ? `d:${State.dictation}`
+      (kind === "dictation" ? `d:${State.dictation}`
       : kind === "reminder" ? `r:${State.reminders.map((r) => r.id).join(",")}`
       : kind === "flash" ? `f:${State.flash?.text}`
       : kind === "pomodoro" ? `p:${State.pomodoroPhase}`
-      : "";
+      : kind === "activities" ? "a"
+      : "") + (kind ? `|${actKey}` : "");
     if (key !== shownKey) {
       shownKey = key;
       stopTick();
@@ -197,7 +251,12 @@ export function buildStatusPill(a: PillActions): PillHost {
         case "pomodoro":
           buildPomodoro();
           break;
+        case "activities":
+          buildActivities();
+          break;
       }
+      // Something else owns the pill and the server is busy too: a chip, so both are seen.
+      if (kind && kind !== "activities" && act.length > 0) addChip();
       update();
       // One second is all a clock needs; the pill's other motion is CSS.
       if (kind === "dictation" || kind === "pomodoro") tick = window.setInterval(() => update(), 1000);

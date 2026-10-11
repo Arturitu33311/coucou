@@ -102,6 +102,10 @@ pub struct Settings {
     /// The Hub keeps what was copied (in memory only; pinned items on disk). Off until turned on.
     #[serde(default)]
     pub clipboard_history: bool,
+    /// Look at the server's downloads and backups (over ssh, every 30 s while something runs, every
+    /// 5 minutes otherwise) for the pill and the Today tab. Off until turned on; needs a server.
+    #[serde(default)]
+    pub activities_on: bool,
 }
 
 fn default_outfit() -> String {
@@ -197,6 +201,7 @@ impl Default for Settings {
             mochi_outfit: default_outfit(),
             mic_indicator: true,
             clipboard_history: false,
+            activities_on: false,
         }
     }
 }

@@ -17,6 +17,7 @@ import { registerDictation } from "./hub/dictation";
 import { registerSysState } from "./island/sysstate";
 import { registerMic } from "./island/mic";
 import { registerPeripherals } from "./island/peripherals";
+import { registerActivities } from "./island/activities";
 import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
@@ -48,6 +49,18 @@ async function main() {
     // ?mic=Zoom,Chromium pretends those programs record the microphone.
     const mic = new URLSearchParams(window.location.search).get("mic");
     if (mic) State.micApps = mic.split(",");
+    // ?acts=Show.S01E01:0.42:active,Movie:0.1:active,Backup:-:error pretends the server is busy.
+    const acts = new URLSearchParams(window.location.search).get("acts");
+    if (acts) {
+      State.activities = acts.split(",").map((s, i) => {
+        const [title, p, state] = s.split(":");
+        return {
+          id: `fake${i}`, app: "Server", kind: state === "error" ? "backup" : "download", title,
+          progress: p === "-" ? null : Number(p), eta: p === "-" ? null : 600, state: (state || "active") as "active",
+          detail: state === "error" ? "2 d ago" : "",
+        };
+      });
+    }
     // ?devices=headphones:WH-1000XM4:87,gamepad:DualSense:15 pretends those batteries.
     const dev = new URLSearchParams(window.location.search).get("devices");
     if (dev) {
@@ -118,6 +131,7 @@ async function main() {
   registerSysState(island);
   registerMic(island);
   registerPeripherals(island);
+  registerActivities(island);
   registerNotificationPeek(island);
 
   island.launch();

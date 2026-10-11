@@ -5,6 +5,7 @@
 import { Bridge } from "../core/bridge";
 import { State } from "../core/state";
 import { h, clear } from "../views/dom";
+import { etaWords, refreshActivities } from "../island/activities";
 import { iconOf } from "../island/peripherals";
 import type { CalEvent } from "./calendar";
 import { pomodoroStatsNow, refreshStats } from "./pomodoro";
@@ -63,7 +64,9 @@ function build(): HubHost {
   const wx = h("div", { class: "td-wx hub-hint" });
   // Batteries of paired devices: shown when there are any (a low one is coloured).
   const dev = h("div", { class: "td-dev" });
-  const el = h("div", { class: "td" }, title, grid, list, wx, dev);
+  // What the server is busy with (downloads, a backup that is late), one row each.
+  const acts = h("div", { class: "td-acts" });
+  const el = h("div", { class: "td" }, title, grid, acts, list, wx, dev);
 
   let events: CalEvent[] = [];
   let timer: number | null = null;
@@ -118,6 +121,29 @@ function build(): HubHost {
         ),
       );
     }
+    clear(acts);
+    const live = State.activities.filter((x) => x.state !== "done" || x.kind === "backup");
+    // Errors first (a backup that is late is what needs a look), then what runs; two rows fit above
+    // the day, the rest is "+ n more" (the whole panel scrolls).
+    const order = { error: 0, active: 1, queued: 2, done: 3 } as const;
+    live.sort((p, q) => order[p.state] - order[q.state]);
+    for (const x of live.slice(0, 2)) {
+      const icon = x.kind === "download" ? "⬇" : x.kind === "backup" ? "💾" : "⚙";
+      const right = x.state === "error" ? x.detail || "problem" : x.state === "queued" ? "waiting" : x.kind === "backup" ? x.detail : x.progress != null ? `${Math.round(x.progress * 100)} %${x.eta != null ? ` · ${etaWords(x.eta)}` : ""}` : "";
+      const bar = h("i");
+      bar.style.width = `${Math.round((x.progress ?? 0) * 100)}%`;
+      acts.append(
+        h(
+          "div",
+          { class: `td-act ${x.state}`, title: `${x.app}: ${x.title}` },
+          h("span", { class: "td-ico", text: icon }),
+          h("span", { class: "cal-what", text: x.title }),
+          h("span", { class: "cal-when", text: right }),
+          h("div", { class: "td-bar" }, bar),
+        ),
+      );
+    }
+    if (live.length > 2) acts.append(h("div", { class: "hub-hint", text: `+ ${live.length - 2} more` }));
     clear(dev);
     for (const d of State.peripherals) {
       const low = !d.charging && d.percent <= 20;
@@ -164,6 +190,7 @@ function build(): HubHost {
       void refreshStats().then(render);
       void loadEvents();
       void loadWeather();
+      refreshActivities(); // so what is shown here is fresh (a no-op when it is off)
       // Minutes age and a calendar changes: a light look each minute, the weather every quarter hour.
       timer = window.setInterval(() => {
         render();

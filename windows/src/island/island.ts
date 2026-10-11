@@ -295,6 +295,10 @@ export class Island {
         selectTool("pomodoro");
         this.alert("tool");
       },
+      openActivities: () => {
+        selectTool("today");
+        this.alert("tool");
+      },
       blip: () => Sound.play("blip"),
     });
     this.hairFill = h("i");

@@ -156,19 +156,68 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
 - **Today** is the Hub's first tab: the next event (and how long until it), what is due or late,
   the focus minutes so far, the day's calendar and reminders on one timeline, and the weather if it
   is on. It reads what the other tabs keep and stores nothing of its own.
-- **Keys.** While the island window has the keyboard and no text field does, **←** / **→** move
-  along the Hub's tabs and **1**–**9** pick one. The island is deliberately non-activating, so it only
-  has the keyboard where your desktop gives it focus on a click; where it does not, use the mouse
-  (the wheel scrolls the tab strip).
-- **Outfits.** The Mac app's wardrobe (`MochiWardrobe.swift`) draws its outfits in 3-D, and that is
-  not ported. This build draws flat ones under the same ids (`partyHat`, `santaHat`, `witchHat`,
-  `bunnyEars`, `sunglasses`, `bow`) and follows the Mac's seasons for "auto" (party hat Dec 31–Jan 2,
-  Santa hat Dec 1–26, witch hat Oct 1–Nov 1, bunny ears around Easter, sunglasses Jun 21–Aug 31).
-  The Mac's `beanie`, `crown`, `roundGlasses`, `scarf` and `pumpkin` are not drawn here and read as
-  "none". Only on the PC, and only where no season applies: a night cap while he sleeps, headphones
-  while a player plays, sunglasses during a Pomodoro focus period (they come off while his eyes say
-  something, e.g. an approval). Settings → Mochi → Outfit fixes one or takes them all off. Mini
-  Mochis never wear any. `windows/dev/outfits-preview.html` shows them all in a browser (`npx vite`).
+- **Keys.** A click inside the Hub's panel makes the island take the keyboard (never on hover),
+  and then **←** / **→** move along the tabs and **1**–**9** pick one (not while a text field has
+  it). It lets go when the pointer leaves the island, the view changes or the island closes, and,
+  with `xdotool` installed, hands the keyboard back to the window that had it (only if the island is
+  still the active one). Written from the code and unit-checked in a browser; **not yet verified in
+  a real GNOME session**.
+- **Outfits.** All of the Mac's wardrobe (`MochiWardrobe.swift`, `MochiOutfitDrawing.swift`) is
+  ported to Canvas 2D in `src/mochi/wardrobe.ts`, in 3-D like there: the head is a superellipse ball
+  and every accessory is built from points on its surface, so hats turn with his head, rims follow
+  the skull and glasses sit on his eyes; hats lag on a spring and fly up when he rolls; the pumpkin
+  recolours him. Same ids, same seasons for "auto" (party hat Dec 31–Jan 2, Santa hat Dec 1–26, witch
+  hat Oct 1–Nov 1, bunny ears around Easter, sunglasses Jun 21–Aug 31). Added on the PC, where no
+  season applies: a night cap while he sleeps, headphones while a player plays, sunglasses during a
+  Pomodoro focus period (they come off while his eyes say something, e.g. an approval). Settings →
+  Mochi → Outfit fixes one or takes them all off; mini Mochis never wear any; on the 32 px strip a
+  small Mochi gets a stubbier party hat and shorter ears. `windows/dev/outfits-preview.html` shows
+  them all (`npx vite`); `?outfit=witchHat` tries one on the real island in a plain browser.
+
+## Microphone, device batteries, clipboard and server activity (Linux)
+
+- **Microphone indicator** (Settings → Mochi, on by default). GNOME's orange dot lives in the top
+  bar, which is hidden here, so the island keeps itself up and shows a small orange dot, with the
+  program's name in its tooltip and in the pill for four seconds when something starts. A click
+  opens Quick, where the microphone is muted. It reads the sound server's list of programs, never
+  audio, and is built not to be talked out of showing: Handy and Coucou's own bars are excluded only
+  when the process the server recorded for the connection really is that program, monitors are
+  recognised by their source, paused streams (a call tab left open) do not count, and a failed read
+  keeps the last state. Names are shown as plain, trimmed text.
+- **Device batteries.** Headphones, mice, keyboards and game controllers that UPower knows about
+  (Bluetooth ones included) are listed in Today; a fall to 20, 10 and 5 % says so once in the pill
+  (5 points of hysteresis, so 20 ↔ 21 never nags; a critical level brings the island up, a warning
+  waits until it is on screen; what is already low at start is not news). Event-driven, nothing is
+  polled. **Not tested with real hardware**: no device was paired when it was written
+  (`?devices=gamepad:DualSense:15` tries the UI).
+- **Clipboard** (Hub → Clipboard; **off until turned on**). Put back what you copied with a click;
+  search, pin, forget. Text only (4 000 characters, 40 items). The history is in memory only and goes
+  when Coucou quits; only pinned items are written (a file only you can read). What a password
+  manager marks as secret (`x-kde-passwordManagerHint`) is never kept, and if the clipboard's kinds
+  of data cannot be read nothing is kept. Never shared with Jinx or sent anywhere.
+- **Server activity** (Settings → Hub; off until turned on, needs a server). Downloads and a
+  backup that is late, on the pill ("3 downloads · 41 %", amber when something failed) and as rows in
+  Today. When another pill owns the slot (a recording, a reminder, the Pomodoro) the activities
+  become a small chip at its end, so neither hides the other. This is the one reader that looks
+  while the island is minimised: a fixed script (`src-tauri/src/activities.py`, sent on stdin, nothing
+  installed) over the shared ssh connection every 30 s while something runs, every 5 min when nothing
+  does, every 10 min while the server cannot be reached, never while paused. Nothing is guessed:
+  the server's `~/.config/coucou/activities.json` lists what to look at (without it, only
+  `deluge-console`, if installed):
+
+  ```json
+  {"sources": [
+    {"type": "deluge"},
+    {"type": "arr", "app": "Sonarr", "url": "http://127.0.0.1:8989", "key": "…"},
+    {"type": "arr", "app": "Radarr", "url": "http://127.0.0.1:7878", "key": "…"},
+    {"type": "age", "name": "Backup", "path": "/mnt/backups/latest", "stale_hours": 30}
+  ]}
+  ```
+
+  API keys stay on the server (only names, progress and states come back, checked and bounded
+  here). The script is tested locally against a fake Sonarr (`python3 windows/scripts/test-activities.py`);
+  **not yet run against the real server** (it was offline), so the deluge/arr parsing rests on
+  their documented formats.
 
 ## The pill and the quiet details (Linux)
 

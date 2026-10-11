@@ -227,6 +227,8 @@ export interface Settings {
   micIndicator: boolean;
   /** The Hub's Clipboard keeps what was copied (memory only; pins on disk). Off until turned on. */
   clipboardHistory: boolean;
+  /** The server's downloads and backups in the pill and Today (polls over ssh). Off until turned on. */
+  activitiesOn: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -267,12 +269,30 @@ export const DEFAULT_SETTINGS: Settings = {
   mochiOutfit: "auto",
   micIndicator: true,
   clipboardHistory: false,
+  activitiesOn: false,
 };
 
 type Listener = () => void;
 
 /** What the minimised island's pill can be showing, most important first. */
-export type PillKind = "dictation" | "reminder" | "flash" | "pomodoro";
+export type PillKind = "dictation" | "reminder" | "flash" | "pomodoro" | "activities";
+
+/** Something the server is busy with: a download, a backup that is late (activities.rs). */
+export interface Activity {
+  id: string;
+  app: string;
+  kind: "download" | "backup" | "other";
+  title: string;
+  progress: number | null;
+  eta: number | null;
+  state: "active" | "queued" | "done" | "error";
+  detail: string;
+}
+
+/** The activities worth the pill: running, waiting, or gone wrong (a finished one is not news). */
+export function pillActivities(list: Activity[]): Activity[] {
+  return list.filter((a) => a.state === "active" || a.state === "queued" || a.state === "error");
+}
 
 /** A few seconds of news in the pill ("Plugged in", "Back online"). */
 export interface Flash {
@@ -380,6 +400,9 @@ class AppState {
   lastActivity = performance.now();
 
   settings: Settings = { ...DEFAULT_SETTINGS };
+
+  /** What the server is busy with, as it last said (island/activities.ts). */
+  activities: Activity[] = [];
 
   /** Devices with a battery, as the system last said (peripherals.rs). */
   peripherals: Peripheral[] = [];
@@ -531,6 +554,7 @@ class AppState {
     if (this.reminders.length > 0) return "reminder";
     if (this.flash) return "flash";
     if (this.pomodoroPhase !== "idle") return "pomodoro";
+    if (pillActivities(this.activities).length > 0) return "activities";
     return null;
   }
 

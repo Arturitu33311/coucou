@@ -1,5 +1,6 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod activities;
 mod agents;
 mod bars;
 mod calendar;
@@ -686,6 +687,20 @@ async fn server_sample(shared: State<'_, Shared>) -> Result<sysmon::Vitals, Stri
         .map_err(|e| e.to_string())?
 }
 
+/// What the server is busy with (see activities.rs). Off unless turned on; "not-configured" when
+/// there is no server, so the page can stay quiet.
+#[tauri::command]
+async fn activities_fetch(shared: State<'_, Shared>) -> Result<Vec<activities::Activity>, String> {
+    let (host, on) = {
+        let s = shared.settings.lock().unwrap();
+        (s.server_host.trim().to_string(), s.activities_on)
+    };
+    if !on || host.is_empty() {
+        return Err("not-configured".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || activities::fetch(&host)).await.map_err(|e| e.to_string())?
+}
+
 // ── Jinx (Hermes) ─────────────────────────────────────────────────────────────
 
 /// Starts a run; the reply, tool calls and approval requests arrive as `jinx` events.
@@ -942,6 +957,7 @@ pub fn run() {
             tasks_clear_done,
             sys_state,
             peripherals_list,
+            activities_fetch,
             clipboard_list,
             clipboard_pin,
             clipboard_delete,
