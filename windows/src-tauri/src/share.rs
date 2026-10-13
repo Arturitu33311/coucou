@@ -86,7 +86,8 @@ pub fn schedule(host: &str, name: &str, content: String) {
         return;
     }
     // Free text goes up with its private lines (card numbers, passwords…) replaced by a marker.
-    let content = if name.ends_with(".md") { crate::sensitive::redact(&content).0 } else { content };
+    // Markdown and JSON alike (JSON keeps its shape: only the value of a private line is replaced).
+    let content = crate::sensitive::redact(&content).0;
     PENDING
         .lock()
         .unwrap()

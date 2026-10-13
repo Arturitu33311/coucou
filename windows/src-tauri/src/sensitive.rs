@@ -53,7 +53,10 @@ fn has_word(hay: &str, needle: &str) -> bool {
         let start = from + i;
         let end = start + needle.len();
         let before = hay[..start].chars().next_back().is_none_or(|c| !is_word_char(c));
-        let after = hay[end..].chars().next().is_none_or(|c| !is_word_char(c));
+        // "password" is also "passwords" / "passwords:" (one plural s is allowed).
+        let rest = &hay[end..];
+        let after = rest.chars().next().is_none_or(|c| !is_word_char(c))
+            || (rest.starts_with('s') && rest[1..].chars().next().is_none_or(|c| !is_word_char(c)));
         // A needle that starts with a symbol ("-----begin") has no boundary on its left to speak of.
         let left_ok = before || !needle.chars().next().is_some_and(is_word_char);
         if left_ok && after {
@@ -101,7 +104,7 @@ fn digit_runs(line: &str) -> Vec<Vec<u8>> {
         if let Some(d) = c.to_digit(10) {
             cur.push(d as u8);
             gap = 0;
-        } else if (c == ' ' || c == '-') && !cur.is_empty() && gap == 0 {
+        } else if (c == ' ' || c == '-' || c == '.') && !cur.is_empty() && gap == 0 {
             gap = 1;
         } else {
             if !cur.is_empty() {
@@ -168,20 +171,88 @@ pub fn kind_of(line: &str) -> Option<&'static str> {
     None
 }
 
+/// A line that names a secret without giving it ("Contraseña:", "password =") has its value on the
+/// next line.
+fn names_without_value(line: &str) -> bool {
+    let t = line.trim_end();
+    t.ends_with(':') || t.ends_with('=') || t.ends_with("es:") || t.ends_with("is")
+}
+
+/// " (n línea(s) privada(s) no enviadas)" for a note to the model, or nothing.
+pub fn note(hidden: usize) -> String {
+    if hidden > 0 {
+        format!(" ({hidden} línea(s) privada(s) no enviadas)")
+    } else {
+        String::new()
+    }
+}
+
 /// `text` with every private line replaced by a marker naming its kind, and how many were.
+///
+/// Three things reach beyond the line itself: a key block ("-----BEGIN … -----END") goes whole, the
+/// line after a label that names a secret without giving it ("Contraseña:") goes too, and in JSON
+/// only the value of the line is replaced, so the file still parses.
 pub fn redact(text: &str) -> (String, usize) {
     let mut hidden = 0;
-    let lines: Vec<String> = text
-        .split('\n')
-        .map(|line| match kind_of(line) {
+    let mut in_key = false;
+    let mut value_next: Option<&'static str> = None;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.split('\n') {
+        let lower = line.to_lowercase();
+        if in_key {
+            hidden += 1;
+            out.push("[privado: clave privada]".to_string());
+            if lower.contains("-----end") {
+                in_key = false;
+            }
+            continue;
+        }
+        if let Some(kind) = value_next.take() {
+            if !line.trim().is_empty() {
+                hidden += 1;
+                out.push(format!("[privado: {kind}]"));
+                continue;
+            }
+            value_next = Some(kind); // blank lines in between: the value is still to come
+        }
+        match kind_of(line) {
             Some(kind) => {
                 hidden += 1;
-                format!("[privado: {kind}]")
+                if lower.contains("-----begin") && !lower.contains("-----end") {
+                    in_key = true;
+                }
+                if names_without_value(line) {
+                    value_next = Some(kind);
+                }
+                out.push(mark(line, kind));
             }
-            None => line.to_string(),
-        })
-        .collect();
-    (lines.join("\n"), hidden)
+            None => out.push(line.to_string()),
+        }
+    }
+    (out.join("\n"), hidden)
+}
+
+/// The marker that stands in for `line`. In a JSON line only the last string's value is replaced
+/// (`  "title": "Pagar 4111…",` → `  "title": "[privado: tarjeta]",`).
+fn mark(line: &str, kind: &str) -> String {
+    let marker = format!("[privado: {kind}]");
+    let t = line.trim_end_matches(|c: char| c == ',' || c.is_whitespace());
+    let quotes: Vec<usize> = t.match_indices('"').map(|(i, _)| i).collect();
+    let json_like = t.trim_start().starts_with('"') && t.ends_with('"') && quotes.len() >= 2;
+    if json_like {
+        // The opening quote of the last string: the previous unescaped quote before the closing one.
+        let open = quotes[..quotes.len() - 1]
+            .iter()
+            .rev()
+            .find(|&&i| i == 0 || t.as_bytes()[i - 1] != b'\\')
+            .copied();
+        if let Some(open) = open {
+            // prefix up to and including the opening quote, the marker, the closing quote, then the
+            // comma and spaces that followed.
+            return format!("{}{}\"{}", &t[..=open], marker, &line[t.len()..]);
+        }
+    }
+    marker
 }
 
 #[cfg(test)]
@@ -227,5 +298,40 @@ mod tests {
         assert_eq!(out, "compras\n[privado: tarjeta]\nleche\n[privado: contraseña]");
         assert!(!out.contains("4111"));
         assert_eq!(redact("nada que ocultar"), ("nada que ocultar".to_string(), 0));
+    }
+
+    #[test]
+    fn a_key_block_goes_whole() {
+        let pem = "antes\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXk\nAAAAB3NzaC1\n-----END OPENSSH PRIVATE KEY-----\ndespués";
+        let (out, n) = redact(pem);
+        assert_eq!(n, 4);
+        assert_eq!(out, "antes\n[privado: clave privada]\n[privado: clave privada]\n[privado: clave privada]\n[privado: clave privada]\ndespués");
+        assert!(!out.contains("b3Blbn"));
+    }
+
+    #[test]
+    fn a_label_alone_takes_the_next_line_with_it() {
+        let (out, n) = redact("wifi\nContraseña:\n\nhunter2\notra cosa");
+        assert_eq!(n, 2);
+        assert!(!out.contains("hunter2"), "{out}");
+        assert!(out.ends_with("otra cosa"));
+        let (out, _) = redact("password =\nhunter2");
+        assert!(!out.contains("hunter2"));
+    }
+
+    #[test]
+    fn plurals_and_dotted_numbers_are_caught() {
+        assert_eq!(kind_of("Mis passwords: ver abajo"), Some("contraseña"));
+        assert_eq!(kind_of("4111.1111.1111.1111"), Some("tarjeta"));
+    }
+
+    #[test]
+    fn json_keeps_its_shape() {
+        let json = "{\n  \"title\": \"Pagar tarjeta 4111 1111 1111 1111\",\n  \"start\": 12\n}";
+        let (out, n) = redact(json);
+        assert_eq!(n, 1);
+        assert!(serde_json::from_str::<serde_json::Value>(&out).is_ok(), "{out}");
+        assert!(out.contains("\"[privado: tarjeta]\""));
+        assert!(!out.contains("4111"));
     }
 }

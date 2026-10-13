@@ -89,9 +89,13 @@ pub fn with_context(text: &str, context: Option<&ChatContext>) -> Result<String,
     match context {
         None => Ok(text.to_string()),
         Some(ChatContext::Window { app_name, title, url }) => {
+            // A window title can carry a private detail, and a URL a token in its query: the title is
+            // held back if it looks private, and the URL goes without its query and fragment.
+            let title = crate::sensitive::kind_of(title).map_or_else(|| title.to_string(), |k| format!("[privado: {k}]"));
             let mut head = format!("Context — App: {app_name}, Window: {title}");
             if let Some(url) = url {
-                head.push_str(&format!(", URL: {url}"));
+                let bare = url.split(['?', '#']).next().unwrap_or("");
+                head.push_str(&format!(", URL: {bare}"));
             }
             Ok(format!("{head}\n\n{text}"))
         }
@@ -108,8 +112,10 @@ pub fn with_context(text: &str, context: Option<&ChatContext>) -> Result<String,
                 return Err(cannot());
             }
             if ext == "pdf" {
-                let body = pdf_text(path, name)?;
-                return Ok(format!("File: {name} (text of the PDF)\n```\n{body}\n```\n\n{text}"));
+                // The same gate as for a text file: private lines of a PDF do not go to the model either.
+                let (body, hidden) = crate::sensitive::redact(&pdf_text(path, name)?);
+                let note = crate::sensitive::note(hidden);
+                return Ok(format!("File: {name} (text of the PDF){note}\n```\n{body}\n```\n\n{text}"));
             }
             let len = std::fs::metadata(path).map_err(|e| format!("Cannot read \"{name}\": {e}"))?.len();
             if len > MAX_INLINE_TEXT {
@@ -118,7 +124,7 @@ pub fn with_context(text: &str, context: Option<&ChatContext>) -> Result<String,
             let body = std::fs::read_to_string(path).map_err(|_| cannot())?;
             // Lines that look like card numbers, passwords or ID numbers do not go to the model.
             let (body, hidden) = crate::sensitive::redact(&body);
-            let note = if hidden > 0 { format!(" ({hidden} línea(s) privada(s) no enviadas)") } else { String::new() };
+            let note = crate::sensitive::note(hidden);
             Ok(format!("File: {name}{note}\n```\n{body}\n```\n\n{text}"))
         }
     }
