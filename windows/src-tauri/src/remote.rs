@@ -399,6 +399,9 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
         })
     };
 
+    // Which phone this connection is: set by its first beat and then fixed, so one phone's link cannot
+    // speak as the other (each pairs with its own key; the id it claims must stay the same).
+    let mut device: Option<String> = None;
     let mut lines = BufReader::new(rd).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if !on() {
@@ -409,8 +412,15 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
         let reply = match parse_client_line(&line, &pending) {
             Action::Ping => json!({ "t": "pong" }),
             Action::Peer { beat, music, news } => {
-                crate::presence::on_peer(&app, beat, music, news);
-                crate::presence::reply_line()
+                if device.as_deref().is_some_and(|d| d != beat.device) {
+                    json!({ "t": "ack", "ok": false, "why": "this link is another phone's" })
+                } else {
+                    device = Some(beat.device.clone());
+                    // The other phones hear it through the laptop, which is the only place they meet.
+                    publish(&crate::presence::relay_line(&beat, music, news));
+                    crate::presence::on_peer(&app, beat, music, news);
+                    crate::presence::reply_line()
+                }
             }
             Action::TasksSync { tasks } => {
                 // Each device works alone; when they meet the newest change wins, then both have the same list.
@@ -446,9 +456,15 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
         }
     }
     writer.abort();
-    // A phone that left is not there: this device shows Mochi on its own again, at once.
-    crate::presence::on_link_down(&app, crate::presence::PHONE);
-    log::line("phone link: the phone left");
+    // A phone that left is not there: this device (and the other phone) forget it at once.
+    match device {
+        Some(d) => {
+            crate::presence::on_link_down(&app, &d);
+            publish(&crate::presence::gone_line(&d));
+            log::line(format!("phone link: {d} left"));
+        }
+        None => log::line("phone link: the phone left"),
+    }
 }
 
 #[cfg(test)]

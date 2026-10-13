@@ -133,6 +133,62 @@
       "peers": [{"device": "s21", "idle": 0, "screen_on": false, "server_ok": false, "server_active": null, "age_ms": 0}],
       "previous": "s21",
       "expect": "laptop"
+    },
+    {
+      "name": "two phones and the laptop: the one touched last wins (laptop's view)",
+      "me": {"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
+        {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s22"
+    },
+    {
+      "name": "the same moment from the first phone's view",
+      "me": {"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
+        {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s22"
+    },
+    {
+      "name": "the same moment from the second phone's own view",
+      "me": {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
+        {"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s22"
+    },
+    {
+      "name": "a phone gone quiet (stale beat) is not there: the other phone is compared with the laptop",
+      "me": {"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 20000},
+        {"device": "s22", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "s22"
+    },
+    {
+      "name": "the server names a phone but the second phone cannot reach it: they decide among themselves",
+      "me": {"device": "s21", "idle": 10, "screen_on": true, "server_ok": true, "server_active": "s21"},
+      "peers": [{"device": "laptop", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 1000},
+        {"device": "s22", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
+      "expect": "laptop"
+    },
+    {
+      "name": "the server names the second phone and every device sees it and agrees",
+      "me": {"device": "s21", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s22"},
+      "peers": [{"device": "laptop", "idle": 50, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000},
+        {"device": "s22", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000}],
+      "previous": null,
+      "expect": "s22"
+    },
+    {
+      "name": "hysteresis among three: a stray touch on another phone does not take the island",
+      "me": {"device": "laptop", "idle": 60, "screen_on": true, "server_ok": false, "server_active": null},
+      "peers": [{"device": "s21", "idle": 10, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
+        {"device": "s22", "idle": 9, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": "s21",
+      "expect": "s21"
     }
   ]
 }

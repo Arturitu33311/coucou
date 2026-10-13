@@ -18,9 +18,14 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
-pub const PHONE: &str = "s21";
+/// The phones that may join the link (each pairs with its own key and says which it is in its beats).
+pub const PHONES: [&str; 2] = ["s21", "s22"];
 pub const LAPTOP: &str = "laptop";
-const KNOWN: [&str; 2] = [PHONE, LAPTOP];
+const KNOWN: [&str; 3] = [PHONES[0], PHONES[1], LAPTOP];
+
+pub fn is_phone(id: &str) -> bool {
+    PHONES.contains(&id)
+}
 
 /// A peer silent for longer than this is not there.
 pub const FRESH_MS: u64 = 15_000;
@@ -288,12 +293,32 @@ pub fn set_local_news() {
 
 // ── What the phone may say ─────────────────────────────────────────────────────────
 
-/// Reads a phone's beat. Only state: the device must be the phone, the server answer one of our ids,
-/// the idle bounded. Anything else about it is ignored.
+/// What every other phone on the link is told about this one: its beat, relayed by the laptop (the
+/// phones are not connected to each other, so the laptop is how they hear one another and arbitrate
+/// with the same inputs). `relay` marks it as not the laptop's own.
+pub fn relay_line(beat: &Beat, music: bool, news: bool) -> Value {
+    json!({
+        "t": "peer",
+        "device": beat.device,
+        "idle": beat.idle_s,
+        "screen_on": beat.screen_on,
+        "server_ok": beat.server_ok,
+        "server_active": beat.server_active,
+        "music": music,
+        "news": news,
+        "relay": true,
+    })
+}
+
+/// A phone's link ended: the other phones drop it at once instead of waiting for its beat to go stale.
+pub fn gone_line(device: &str) -> Value {
+    json!({ "t": "peer_gone", "device": device })
+}
+
+/// Reads a phone's beat. Only state: the device must be one of the phones, the server answer one of
+/// our ids, the idle bounded. Anything else about it is ignored.
 pub fn parse_peer(v: &Value) -> Option<(Beat, bool, bool)> {
-    if v.get("device").and_then(Value::as_str) != Some(PHONE) {
-        return None;
-    }
+    let device = v.get("device").and_then(Value::as_str).filter(|d| is_phone(d))?.to_string();
     let idle = v.get("idle").and_then(Value::as_u64).unwrap_or(0).min(MAX_IDLE_S);
     let server_active = v
         .get("server_active")
@@ -303,7 +328,7 @@ pub fn parse_peer(v: &Value) -> Option<(Beat, bool, bool)> {
     let flag = |k: &str, d: bool| v.get(k).and_then(Value::as_bool).unwrap_or(d);
     Some((
         Beat {
-            device: PHONE.to_string(),
+            device,
             idle_s: idle,
             screen_on: flag("screen_on", true),
             server_ok: flag("server_ok", false),
@@ -503,14 +528,19 @@ mod tests {
         assert_eq!(ok.0.idle_s, 12);
         assert!(!ok.0.screen_on && ok.0.server_ok && ok.1 && !ok.2);
         assert_eq!(ok.0.server_active.as_deref(), Some("s21"));
-        // Only the phone speaks on this link; the laptop's own id is not accepted from outside.
+        // Only phones speak on this link; the laptop's own id is not accepted from outside.
         assert!(parse_peer(&json!({"device":"laptop","idle":0})).is_none());
         assert!(parse_peer(&json!({"idle":0})).is_none());
+        // The second phone is a phone; an unknown device is not.
+        assert_eq!(parse_peer(&json!({"device":"s22","idle":3})).unwrap().0.device, "s22");
+        assert!(parse_peer(&json!({"device":"s23","idle":3})).is_none());
         // An id we do not know is no server answer; an absurd idle is clamped.
         let odd = parse_peer(&json!({"device":"s21","idle":u64::MAX,"server_active":"vga"})).unwrap();
         assert_eq!(odd.0.server_active, None);
         assert_eq!(odd.0.idle_s, MAX_IDLE_S);
     }
+
+    const PHONE: &str = "s21";
 
     fn phone_beat(idle: u64) -> Peer {
         Peer {
