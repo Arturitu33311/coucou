@@ -217,20 +217,25 @@ fn check_number(w: &[u8]) -> Option<&'static str> {
 /// tried (so a card followed by a year, an amount or another number is still found), and a single
 /// glued group longer than a card is tried in every window.
 fn run_hits(run: &Run) -> Option<&'static str> {
-    let ends: Vec<usize> = run.ends.iter().copied().take(24).collect();
+    // Nothing is skipped however long the run: from each group, groups are added only while the
+    // stretch can still be a card (19 digits at most), so the work is bounded without a cut-off
+    // that a secret could sit behind.
+    let ends = &run.ends;
     for i in 0..ends.len() {
         let start = if i == 0 { 0 } else { ends[i - 1] };
         for end in &ends[i..] {
+            if end - start > 19 {
+                break;
+            }
             if let Some(kind) = check_number(&run.digits[start..*end]) {
                 return Some(kind);
             }
         }
         let group = &run.digits[start..ends[i]];
         if group.len() > 19 {
-            let g = if group.len() > 64 { &group[..64] } else { group };
-            for s in 0..g.len() {
-                for len in 13..=19usize.min(g.len() - s) {
-                    if let Some(kind) = check_number(&g[s..s + len]) {
+            for s in 0..group.len() {
+                for len in 13..=19usize.min(group.len() - s) {
+                    if let Some(kind) = check_number(&group[s..s + len]) {
                         return Some(kind);
                     }
                 }
@@ -240,17 +245,25 @@ fn run_hits(run: &Run) -> Option<&'static str> {
     None
 }
 
+/// Our own markers, as the detector sees them (folded), and nothing else: `[privado: <kind>]` with
+/// one of the kinds this module writes. An arbitrary "[privado: …]" is just text.
+fn markers() -> Vec<String> {
+    let mut kinds: Vec<&str> = KEYWORDS.iter().map(|(_, k)| *k).collect();
+    kinds.extend(["tarjeta", "cuenta bancaria", "seguro social", "identificación", "clave privada"]);
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds.into_iter().map(|k| fold(&format!("[privado: {k}]"))).collect()
+}
+
 /// What makes this line private ("tarjeta", "contraseña"…), or None.
 pub fn kind_of(line: &str) -> Option<&'static str> {
-    // Our own markers ("[privado: contraseña]") name a kind and must not read as one themselves.
+    // Our own exact markers ("[privado: contraseña]") name a kind and must not read as one
+    // themselves. Only those exact strings are taken out: nothing else is dropped, and nothing is
+    // cut off, so wrapping a secret in brackets of the same look hides nothing.
     let mut f = fold(line);
-    while let Some(i) = f.find("[privado: ") {
-        match f[i..].find(']') {
-            Some(j) => f.replace_range(i..=i + j, ""),
-            None => {
-                f.truncate(i);
-                break;
-            }
+    for m in markers() {
+        if f.contains(&m) {
+            f = f.replace(&m, " ");
         }
     }
     for (word, kind) in KEYWORDS {
@@ -466,6 +479,23 @@ mod tests {
         assert_eq!(kind_of("pass\u{200B}word = x"), Some("contraseña"), "zero-width space inside");
         assert_eq!(kind_of("Número de tarjeta"), Some("tarjeta"));
         assert_eq!(kind_of("numero de tarjeta"), Some("tarjeta"), "without the accent");
+    }
+
+    #[test]
+    fn dressing_a_secret_as_our_marker_hides_nothing() {
+        assert_eq!(kind_of("[privado: 4111 1111 1111 1111]"), Some("tarjeta"), "a card inside the brackets");
+        assert_eq!(kind_of("[privado: 4111 1111 1111 1111"), Some("tarjeta"), "an unclosed marker cuts nothing off");
+        assert_eq!(kind_of("[privado: x] 4111 1111 1111 1111"), Some("tarjeta"));
+        assert_eq!(kind_of("[privado: tarjeta] 4111 1111 1111 1111"), Some("tarjeta"), "the real marker beside a card");
+        assert_eq!(kind_of("[privado: contraseña]"), None, "the real marker alone is clean");
+    }
+
+    #[test]
+    fn a_card_after_many_numbers_is_still_found() {
+        let many: String = (0..40).map(|i| format!("{} ", i % 10)).collect();
+        assert_eq!(kind_of(&format!("{many}4111 1111 1111 1111")), Some("tarjeta"), "after 40 groups");
+        let glued = format!("{}4111111111111111{}", "9".repeat(100), "8".repeat(100));
+        assert!(kind_of(&glued).is_some(), "inside a long glued run");
     }
 
     #[test]
