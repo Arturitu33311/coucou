@@ -18,8 +18,10 @@ mod log;
 mod music;
 mod notes;
 mod notifs;
+mod opencode;
 mod pipe;
 mod pendientes;
+mod presence;
 mod pomodoro;
 mod remote;
 mod quick;
@@ -68,6 +70,31 @@ pub struct BootInfo {
     /// False where the OS has no global cursor (Wayland): the page then reports
     /// the cursor from its own mouse events.
     cursor_poll: bool,
+}
+
+/// Is this the device in use (and what the other one hears and sees)? The page paints Mochi and
+/// Coucou only while it is, and keeps asking nothing else of it.
+#[tauri::command]
+fn presence_state() -> serde_json::Value {
+    presence::state()
+}
+
+/// The page says whether this device is playing something: the other one's Mochi dances to it.
+#[tauri::command]
+fn presence_local_music(app: AppHandle, playing: bool) {
+    presence::set_local_music(&app, playing);
+}
+
+/// Claude Code is (or is no longer) rate-limited here: the phone's Mochi is tired with it.
+#[tauri::command]
+fn presence_local_limit(limited: bool) {
+    presence::set_local_limit(limited);
+}
+
+/// Something arrived on this device (a notification): the phone's Mochi is startled too.
+#[tauri::command]
+fn presence_local_news() {
+    presence::set_local_news();
 }
 
 #[tauri::command]
@@ -499,14 +526,17 @@ fn tasks_list() -> Vec<tasks::Task> {
 }
 
 /// Adds a task; `text` may carry its own time ("llamar a mamá a las 17:30", "stretch in 20 min").
+/// A day picked on the calendar wins over the sentence's day, keeping its time of day
+/// ("viernes a las 17:30" → Friday 17:30; a bare Friday → `hour`:00).
 /// With Jinx shared (a server set, sharing on) the task is also hers: her list gets it at the sync.
 #[tauri::command]
-fn tasks_add(shared: State<Shared>, text: String) -> Result<Vec<tasks::Task>, String> {
+fn tasks_add(shared: State<Shared>, text: String, day: Option<i64>, hour: i64) -> Result<Vec<tasks::Task>, String> {
     let now = tasks::now();
     let (title, when) = tasks::parse_when(&text, now, &pomodoro::local_offset);
+    let at = day.map(|d| tasks::with_day(d, when, hour, &pomodoro::local_offset)).or(when);
     let to_jinx = share_target(&shared).is_some();
     tasks::update(|l| {
-        tasks::add(l, &title, when, now)?;
+        tasks::add(l, &title, at, now)?;
         if let Some(t) = l.last_mut() {
             t.jinx = to_jinx;
         }
@@ -734,11 +764,29 @@ async fn jinx_test() -> Result<String, String> {
     jinx::test().await
 }
 
-// ── Claude Code sessions (see agents.rs) ──────────────────────────────────────
+// ── Claude Code and OpenCode sessions (see agents.rs, opencode.rs) ────────────
 
 #[tauri::command]
 async fn agents_list() -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(agents::list).await.map_err(|e| e.to_string())?
+    // Both CLIs are asked at once: each can take a second, and the chat polls
+    // every couple of seconds. One missing is fine; none at all is an error.
+    let claude = tauri::async_runtime::spawn_blocking(agents::list);
+    let open = tauri::async_runtime::spawn_blocking(opencode::list);
+    let (claude, open) = (claude.await, open.await);
+    let mut all: Vec<serde_json::Value> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    match claude.map_err(|e| e.to_string())? {
+        Ok(v) => all.extend(v.as_array().cloned().unwrap_or_default()),
+        Err(e) => errors.push(e),
+    }
+    match open.map_err(|e| e.to_string())? {
+        Ok(v) => all.extend(v.as_array().cloned().unwrap_or_default()),
+        Err(e) => errors.push(e),
+    }
+    if all.is_empty() && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    Ok(serde_json::Value::Array(all))
 }
 
 /// The 5-hour / 7-day usage percentages, when the statusline has written them.
@@ -749,6 +797,11 @@ fn rate_limits() -> Option<serde_json::Value> {
 
 #[tauri::command]
 async fn agent_messages(session_id: String, offset: u64) -> Result<agents::Messages, String> {
+    if opencode::is_opencode(&session_id) {
+        return tauri::async_runtime::spawn_blocking(move || opencode::messages(&session_id, offset))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     tauri::async_runtime::spawn_blocking(move || agents::messages(&session_id, offset))
         .await
         .map_err(|e| e.to_string())?
@@ -756,16 +809,29 @@ async fn agent_messages(session_id: String, offset: u64) -> Result<agents::Messa
 
 #[tauri::command]
 async fn agent_send(id: String, text: String) -> Result<(), String> {
+    if opencode::is_opencode(&id) {
+        return tauri::async_runtime::spawn_blocking(move || opencode::send(&id, &text))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     tauri::async_runtime::spawn_blocking(move || agents::send(&id, &text)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-async fn agent_start(cwd: String, prompt: String) -> Result<String, String> {
+async fn agent_start(cwd: String, prompt: String, backend: String) -> Result<String, String> {
+    if backend == "opencode" {
+        return tauri::async_runtime::spawn_blocking(move || opencode::start(&cwd, &prompt))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     tauri::async_runtime::spawn_blocking(move || agents::start(&cwd, &prompt)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn agent_stop(id: String) -> Result<(), String> {
+    if opencode::is_opencode(&id) {
+        return Err("OpenCode sessions run to the end on their own — they cannot be stopped from here".into());
+    }
     tauri::async_runtime::spawn_blocking(move || agents::stop(&id)).await.map_err(|e| e.to_string())?
 }
 
@@ -907,6 +973,10 @@ pub fn run() {
         .manage(jinx::Jinx::default())
         .invoke_handler(tauri::generate_handler![
             boot,
+            presence_state,
+            presence_local_music,
+            presence_local_news,
+            presence_local_limit,
             save_settings,
             set_collapsed,
             set_island_rect,
@@ -1025,6 +1095,8 @@ pub fn run() {
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
+            // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
+            presence::start(&handle);
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);

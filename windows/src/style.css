@@ -1489,3 +1489,8 @@ input[type="range"]::-webkit-slider-thumb {
 .int-card.detail {
   padding-top: 8px;
 }
+
+/* Another device is the one in use (src/core/presence.ts): Mochi and Coucou rest out of sight here.
+   Only the painting goes; whatever is waiting keeps its timer and its answer. */
+#root { transition: opacity 0.25s ease; }
+body.presence-away #root { opacity: 0; pointer-events: none; }

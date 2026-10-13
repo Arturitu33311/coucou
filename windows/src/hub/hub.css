@@ -36,6 +36,23 @@
 .sh-meta { flex: 0 0 auto; font-size: 10px; opacity: 0.5; white-space: nowrap; }
 .sh-foot { flex: 0 0 auto; }
 .sh-add { width: 100%; box-sizing: border-box; font: inherit; font-size: 11px; color: inherit; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 3px 8px; }
+/* Day picker for a new task: input + calendar button, then the inline strip. */
+.tk-addrow { display: flex; gap: 6px; align-items: center; }
+.tk-addrow .sh-add { flex: 1 1 auto; min-width: 0; }
+.tk-addrow .hub-btn.on { background: rgba(16,185,129,0.25); border-color: rgba(16,185,129,0.6); }
+.tk-when { display: flex; flex-direction: column; gap: 6px; padding: 2px 0; }
+.tk-days { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
+.tk-days::-webkit-scrollbar { display: none; }
+.tk-day { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 34px; padding: 4px 6px; border-radius: 10px; border: 1px solid transparent; background: rgba(255,255,255,0.07); color: inherit; cursor: pointer; }
+.tk-day.on { background: #10B981; border-color: #10B981; }
+.tk-wd { font-size: 9px; font-weight: 600; opacity: 0.55; text-transform: capitalize; }
+.tk-day.on .tk-wd { opacity: 0.8; color: #0B0C0E; }
+.tk-num { font-size: 14px; font-weight: 700; }
+.tk-day.on .tk-num { color: #0B0C0E; }
+.tk-hours { display: flex; gap: 5px; flex-wrap: wrap; }
+.tk-hours .hub-btn.on { background: rgba(16,185,129,0.25); border-color: rgba(16,185,129,0.6); }
+.tk-sum { display: flex; align-items: center; gap: 6px; }
+.tk-sum .hub-hint { flex: 1 1 auto; }
 .sh-wrap { position: absolute; inset: 0; min-height: 0; }
 .sh-wrap > .sh { height: 100%; }
 .sh-up { display: flex; flex-direction: column; gap: 5px; height: 100%; min-height: 0; overflow-y: auto; scrollbar-width: thin; }

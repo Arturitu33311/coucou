@@ -18,6 +18,10 @@ pub const KNOWN_KEYS: &[&str] = &[
     "calcom-api-key",
     "jinx-url",
     "jinx-api-key",
+    // The presence server (heartbeat for "which device is in use"); without them the devices decide
+    // among themselves.
+    "presence-url",
+    "presence-key",
 ];
 
 fn entry(key: &str) -> Option<Entry> {
