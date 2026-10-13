@@ -25,6 +25,7 @@ mod remote;
 mod quick;
 mod platform;
 mod secrets;
+mod sensitive;
 mod settings;
 mod share;
 mod sysmon;

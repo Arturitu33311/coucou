@@ -85,6 +85,8 @@ pub fn schedule(host: &str, name: &str, content: String) {
     if !crate::sysmon::safe_word(host) || !valid_name(name) {
         return;
     }
+    // Free text goes up with its private lines (card numbers, passwords…) replaced by a marker.
+    let content = if name.ends_with(".md") { crate::sensitive::redact(&content).0 } else { content };
     PENDING
         .lock()
         .unwrap()

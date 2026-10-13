@@ -13,6 +13,7 @@ import {
   adoptAgent, agentNote, agentsLoaded, agentThread, selectedAgent, startAgentSync, syncAgentsNow,
 } from "../island/agents";
 import type { ViewHost } from "./views";
+import { offerOf } from "./yesno";
 
 let nextId = 1;
 
@@ -373,12 +374,26 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         : target === "agent" ? sending || agent?.state === "working"
         : target === "new" ? sending
         : State.stateOverride === "thinking";
-      const key = `${target}:${State.agentId}:${history.length}:${last?.content.length ?? 0}:${thinking}`;
+      // A reply that ends on one yes/no question gets its two buttons (and only while it is the last
+      // thing said and nothing is on its way).
+      const offer = !thinking && !blocked && last?.role === "assistant" ? offerOf(last.content) : null;
+      const key = `${target}:${State.agentId}:${history.length}:${last?.content.length ?? 0}:${thinking}:${offer ? 1 : 0}`;
       if (key !== renderedKey) {
         renderedKey = key;
         clear(log);
         for (const m of history) log.append(bubble(m));
         if (thinking) log.append(typingDots());
+        if (offer) {
+          const answer = (word: string) => {
+            input.value = word;
+            void submit();
+          };
+          const yes = h("button", { class: "yn yes", text: offer.yes, title: offer.question });
+          const no = h("button", { class: "yn no", text: offer.no, title: offer.question });
+          yes.addEventListener("click", () => answer(offer.yes));
+          no.addEventListener("click", () => answer(offer.no));
+          log.append(h("div", { class: "yn-row" }, yes, no));
+        }
         log.scrollTop = log.scrollHeight;
       }
 

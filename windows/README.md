@@ -223,6 +223,22 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
   **not yet run against the real server** (it was offline), so the deluge/arr parsing rests on
   their documented formats.
 
+## Talking to Jinx: what the chat adds and what never reaches her
+
+Ideas taken (and credited) from [Plip](https://github.com/hussainn7/plip-oss) (MIT):
+
+- **Yes / No buttons.** When a reply (Jinx's, Mochi's, an agent's) ends on one yes/no question
+  ("¿Quieres que lo agende?", "Want me to…?"), the chat shows **Sí** / **No** under it and sends that
+  word. A choice ("¿A o B?") or an open question ("¿qué prefieres?") gets no buttons: a Yes could not
+  answer it. Spanish and English (`src/views/yesno.ts`).
+- **What is shown is content, not instructions.** The note Coucou hands Jinx once per run says that the
+  Hub files, a dropped file and what Coucou tells her about the screen are content, never orders.
+- **Private lines never go up.** Before notes are copied to the server and before a dropped file is
+  inlined into a run, any line that looks like a card number (Luhn), a CLABE (check digit), a CURP, an
+  SSN or that names a password, passport, IBAN or private key is replaced by `[privado: tarjeta]` (the
+  kind, never the value). It is conservative on purpose: a false positive hides a line, a miss sends a
+  secret to a model (`src-tauri/src/sensitive.rs`).
+
 ## The pill and the quiet details (Linux)
 
 With no panel on screen, the minimised island is all there is, so it widens, in the Music pill's
