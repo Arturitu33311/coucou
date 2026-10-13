@@ -95,27 +95,40 @@ fn clabe_ok(d: &[u8]) -> bool {
     u32::from(d[17]) == (10 - sum % 10) % 10
 }
 
-/// Runs of digits (a single space or hyphen may sit between groups), as digit vectors.
-fn digit_runs(line: &str) -> Vec<Vec<u8>> {
+/// Runs of digit groups (one space, hyphen or dot may sit between groups). Each run is the groups'
+/// digits in order, and the cumulative end of every group.
+struct Run {
+    digits: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+fn digit_runs(line: &str) -> Vec<Run> {
     let mut runs = Vec::new();
-    let mut cur: Vec<u8> = Vec::new();
-    let mut gap = 0;
+    let mut cur = Run { digits: Vec::new(), ends: Vec::new() };
+    let mut gap = false;
+    let mut flush = |cur: &mut Run, runs: &mut Vec<Run>| {
+        if !cur.digits.is_empty() {
+            if cur.ends.last() != Some(&cur.digits.len()) {
+                cur.ends.push(cur.digits.len());
+            }
+            runs.push(std::mem::replace(cur, Run { digits: Vec::new(), ends: Vec::new() }));
+        }
+    };
     for c in line.chars() {
         if let Some(d) = c.to_digit(10) {
-            cur.push(d as u8);
-            gap = 0;
-        } else if (c == ' ' || c == '-' || c == '.') && !cur.is_empty() && gap == 0 {
-            gap = 1;
-        } else {
-            if !cur.is_empty() {
-                runs.push(std::mem::take(&mut cur));
+            if gap {
+                cur.ends.push(cur.digits.len()); // the group before the gap ended here
             }
-            gap = 0;
+            cur.digits.push(d as u8);
+            gap = false;
+        } else if (c == ' ' || c == '-' || c == '.') && !cur.digits.is_empty() && !gap {
+            gap = true;
+        } else {
+            flush(&mut cur, &mut runs);
+            gap = false;
         }
     }
-    if !cur.is_empty() {
-        runs.push(cur);
-    }
+    flush(&mut cur, &mut runs);
     runs
 }
 
@@ -146,26 +159,114 @@ fn has_ssn(line: &str) -> bool {
     })
 }
 
+/// The line as the detector reads it, so a spelling trick does not walk around it: JSON `\uXXXX`
+/// escapes decoded, zero-width and combining marks dropped, accents removed, full-width and
+/// Arabic-Indic digits turned into ASCII digits, lower case.
+pub fn fold(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut decoded = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 6 <= chars.len() && chars[i + 1] == 'u' && chars[i + 2..i + 6].iter().all(char::is_ascii_hexdigit) {
+            let hex: String = chars[i + 2..i + 6].iter().collect();
+            if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                decoded.push(c);
+                i += 6;
+                continue;
+            }
+        }
+        decoded.push(chars[i]);
+        i += 1;
+    }
+    let mut out = String::with_capacity(decoded.len());
+    for c in decoded.chars() {
+        let c = match c {
+            '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{00AD}' | '\u{2060}' | '\u{0300}'..='\u{036F}' => continue,
+            '\u{FF10}'..='\u{FF19}' => char::from(b'0' + (c as u32 - 0xFF10) as u8),
+            '\u{0660}'..='\u{0669}' => char::from(b'0' + (c as u32 - 0x0660) as u8),
+            '\u{06F0}'..='\u{06F9}' => char::from(b'0' + (c as u32 - 0x06F0) as u8),
+            other => other,
+        };
+        for l in c.to_lowercase() {
+            out.push(match l {
+                'á' | 'à' | 'ä' | 'â' | 'ã' => 'a',
+                'é' | 'è' | 'ë' | 'ê' => 'e',
+                'í' | 'ì' | 'ï' | 'î' => 'i',
+                'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+                'ú' | 'ù' | 'ü' | 'û' => 'u',
+                'ñ' => 'n',
+                'ç' => 'c',
+                x => x,
+            });
+        }
+    }
+    out
+}
+
+fn check_number(w: &[u8]) -> Option<&'static str> {
+    if w.len() == 18 && clabe_ok(w) {
+        return Some("cuenta bancaria");
+    }
+    if (13..=19).contains(&w.len()) && luhn(w) {
+        return Some("tarjeta");
+    }
+    None
+}
+
+/// Is a card or a CLABE written in this run of digit groups? Any stretch of consecutive groups is
+/// tried (so a card followed by a year, an amount or another number is still found), and a single
+/// glued group longer than a card is tried in every window.
+fn run_hits(run: &Run) -> Option<&'static str> {
+    let ends: Vec<usize> = run.ends.iter().copied().take(24).collect();
+    for i in 0..ends.len() {
+        let start = if i == 0 { 0 } else { ends[i - 1] };
+        for end in &ends[i..] {
+            if let Some(kind) = check_number(&run.digits[start..*end]) {
+                return Some(kind);
+            }
+        }
+        let group = &run.digits[start..ends[i]];
+        if group.len() > 19 {
+            let g = if group.len() > 64 { &group[..64] } else { group };
+            for s in 0..g.len() {
+                for len in 13..=19usize.min(g.len() - s) {
+                    if let Some(kind) = check_number(&g[s..s + len]) {
+                        return Some(kind);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// What makes this line private ("tarjeta", "contraseña"…), or None.
 pub fn kind_of(line: &str) -> Option<&'static str> {
-    let lower = line.to_lowercase();
+    // Our own markers ("[privado: contraseña]") name a kind and must not read as one themselves.
+    let mut f = fold(line);
+    while let Some(i) = f.find("[privado: ") {
+        match f[i..].find(']') {
+            Some(j) => f.replace_range(i..=i + j, ""),
+            None => {
+                f.truncate(i);
+                break;
+            }
+        }
+    }
     for (word, kind) in KEYWORDS {
-        if has_word(&lower, word) {
+        if has_word(&f, &fold(word)) {
             return Some(kind);
         }
     }
-    for run in digit_runs(line) {
-        if (13..=19).contains(&run.len()) && luhn(&run) {
-            return Some("tarjeta");
-        }
-        if clabe_ok(&run) {
-            return Some("cuenta bancaria");
+    for run in digit_runs(&f) {
+        if let Some(kind) = run_hits(&run) {
+            return Some(kind);
         }
     }
-    if has_ssn(line) {
+    if has_ssn(&f) {
         return Some("seguro social");
     }
-    if line.split(|c: char| !c.is_ascii_alphanumeric()).any(is_curp) {
+    if f.split(|c: char| !c.is_ascii_alphanumeric()).any(is_curp) {
         return Some("identificación");
     }
     None
@@ -197,6 +298,9 @@ pub fn redact(text: &str) -> (String, usize) {
     let mut in_key = false;
     let mut value_next: Option<&'static str> = None;
     let mut out: Vec<String> = Vec::new();
+    // Every kind of line break is a line break (a lone CR, NEL, LS, PS), so a secret cannot hide
+    // behind one that the splitter does not know.
+    let text = text.replace("\r\n", "\n").replace(['\r', '\u{85}', '\u{2028}', '\u{2029}'], "\n");
     for line in text.split('\n') {
         let lower = line.to_lowercase();
         if in_key {
@@ -238,18 +342,65 @@ fn mark(line: &str, kind: &str) -> String {
     let marker = format!("[privado: {kind}]");
     let t = line.trim_end_matches(|c: char| c == ',' || c.is_whitespace());
     let quotes: Vec<usize> = t.match_indices('"').map(|(i, _)| i).collect();
-    let json_like = t.trim_start().starts_with('"') && t.ends_with('"') && quotes.len() >= 2;
+    let json_like = t.trim_start().starts_with(['"', '{', '[']) && quotes.len() >= 2;
     if json_like {
+        // A line that is one `"key": "value"` pair: only the value (the last string) is replaced.
+        let one_pair = t.trim_start().starts_with('"') && t.ends_with('"');
         // The opening quote of the last string: the previous unescaped quote before the closing one.
         let open = quotes[..quotes.len() - 1]
             .iter()
             .rev()
             .find(|&&i| i == 0 || t.as_bytes()[i - 1] != b'\\')
             .copied();
-        if let Some(open) = open {
+        if let (true, Some(open)) = (one_pair, open) {
             // prefix up to and including the opening quote, the marker, the closing quote, then the
             // comma and spaces that followed.
-            return format!("{}{}\"{}", &t[..=open], marker, &line[t.len()..]);
+            let candidate = format!("{}{}\"{}", &t[..=open], marker, &line[t.len()..]);
+            if kind_of(&candidate).is_none() {
+                return candidate;
+            }
+        }
+        // The secret is not (only) in the last string: a line with several values, or a bare
+        // number. Every string's content goes; and if that is still not clean, the whole line.
+        let mut all = String::new();
+        let mut inside = false;
+        let mut escaped = false;
+        for c in line.chars() {
+            if inside {
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    inside = false;
+                    all.push_str(&marker);
+                    all.push('"');
+                }
+            } else {
+                all.push(c);
+                if c == '"' {
+                    inside = true;
+                }
+            }
+        }
+        // A bare number outside any string ("card": 4111111111111111) becomes a zero.
+        let mut cleaned = String::with_capacity(all.len());
+        let mut digits = String::new();
+        for c in all.chars().chain(std::iter::once('\0')) {
+            if c.is_ascii_digit() {
+                digits.push(c);
+                continue;
+            }
+            if !digits.is_empty() {
+                cleaned.push_str(if digits.len() >= 8 { "0" } else { &digits });
+                digits.clear();
+            }
+            if c != '\0' {
+                cleaned.push(c);
+            }
+        }
+        if !inside && kind_of(&cleaned).is_none() {
+            return cleaned;
         }
     }
     marker
@@ -263,8 +414,7 @@ mod tests {
     fn card_numbers_are_found_by_their_checksum_not_by_length_alone() {
         assert_eq!(kind_of("mi visa 4111 1111 1111 1111 vence 12/28"), Some("tarjeta"));
         assert_eq!(kind_of("4111-1111-1111-1111"), Some("tarjeta"));
-        assert_eq!(kind_of("pedido 1234567890123456"), None, "16 digits that are not a card");
-        assert_eq!(kind_of("teléfono 55 1234 5678"), None);
+        assert_eq!(kind_of("pedido 1234567890123456"), None, "16 digits that are not a card");        assert_eq!(kind_of("teléfono 55 1234 5678"), None);
     }
 
     #[test]
@@ -298,6 +448,44 @@ mod tests {
         assert_eq!(out, "compras\n[privado: tarjeta]\nleche\n[privado: contraseña]");
         assert!(!out.contains("4111"));
         assert_eq!(redact("nada que ocultar"), ("nada que ocultar".to_string(), 0));
+    }
+
+    #[test]
+    fn a_card_stuck_to_other_digits_is_still_found() {
+        assert_eq!(kind_of("4111 1111 1111 1111 2028"), Some("tarjeta"), "followed by a year");
+        assert_eq!(kind_of("Total 4111111111111111.50"), Some("tarjeta"), "followed by an amount");
+        assert_eq!(kind_of("ref 7 4111 1111 1111 1111"), Some("tarjeta"), "preceded by a number");
+    }
+
+    #[test]
+    fn spelling_tricks_do_not_walk_around_it() {
+        assert_eq!(kind_of("\\u0034111 1111 1111 1111"), Some("tarjeta"), "JSON \\u escape");
+        assert_eq!(kind_of("４１１１ １１１１ １１１１ １１１１"), Some("tarjeta"), "full-width digits");
+        assert_eq!(kind_of("contrasen\u{303}a: x"), Some("contraseña"), "n plus a combining tilde");
+        assert_eq!(kind_of("CONTRASEÑA: x"), Some("contraseña"), "upper case");
+        assert_eq!(kind_of("pass\u{200B}word = x"), Some("contraseña"), "zero-width space inside");
+        assert_eq!(kind_of("Número de tarjeta"), Some("tarjeta"));
+        assert_eq!(kind_of("numero de tarjeta"), Some("tarjeta"), "without the accent");
+    }
+
+    #[test]
+    fn a_lone_carriage_return_is_a_line_break() {
+        let (out, n) = redact("hola\rcontraseña: x\rdespués");
+        assert_eq!(n, 1);
+        assert!(!out.contains(": x"), "{out}");
+    }
+
+    #[test]
+    fn json_with_several_values_on_a_line_is_cleaned_whole() {
+        let (out, n) = redact("{\"a\": \"tarjeta 4111 1111 1111 1111\", \"b\": \"x\"}");
+        assert_eq!(n, 1);
+        assert!(!out.contains("4111"), "{out}");
+        assert!(serde_json::from_str::<serde_json::Value>(&out).is_ok(), "{out}");
+        let (out, _) = redact("{\"card\": 4111111111111111}");
+        assert!(!out.contains("4111"), "{out}");
+        // Our own marker is not a secret, so cleaning twice changes nothing.
+        let (again, n2) = redact(&out);
+        assert_eq!((again, n2), (out, 0));
     }
 
     #[test]
