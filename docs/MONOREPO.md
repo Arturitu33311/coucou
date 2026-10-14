@@ -12,6 +12,17 @@
 `android/` keeps the SmartIsland history and licence. It no longer follows or contributes to the SmartIsland upstream.
 Everything else tracks Coucou's upstream (`Louis-CFM/coucou`).
 
+`jinx/server-side/` holds the sources of what runs on the home server outside this repo's other folders (Cat OS, the
+homelab dashboard's edited files). `docs/history/` keeps the working notes of the Jinx-assistant build.
+
+## Day-to-day
+
+- Desktop: `cd windows && npm ci && npm run tauri dev` (needs the GTK/WebKit dev packages on Linux).
+- Android: `cd android && JAVA_HOME=<jdk21> ./gradlew :app:assembleDebug` (needs `android/local.properties` with `sdk.dir`,
+  which is machine-specific and ignored by git).
+- Jinx tooling: `jinx/jinx-assist/install.sh` (laptop side), `jinx/jinx-assist/deploy-server.sh`, `jinx/vga-panel/deploy.sh`.
+- Before sending anything: `bash scripts/check-contracts.sh`.
+
 ## Shared contracts
 
 The PC (Rust) and the phone (Kotlin) must behave the same on two things, and each is pinned by one JSON file kept in both places:

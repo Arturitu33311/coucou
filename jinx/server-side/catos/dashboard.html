@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#151311">
+<title>HERMES CAT OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cyan: #f97316; --mag: #e5484d; --bg: #151311;
+    --panel: #1e1c1a; --edge: #ffffff24; --txt: #a1a1aa; --dim: #52525b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--txt);
+    font-family: "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, monospace;
+    font-size: 14px; padding: 12px; padding-bottom: 40px;
+    -webkit-text-size-adjust: 100%;
+  }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 1px solid var(--edge); padding-bottom: 8px; margin-bottom: 12px;
+  }
+  h1 { font-size: 16px; letter-spacing: 3px; color: var(--cyan);
+       text-shadow: 0 0 12px rgba(249,115,22,.5); font-weight: 600; }
+  h1 b { color: var(--mag); text-shadow: 0 0 12px rgba(229,72,77,.5); }
+  #clock { color: var(--dim); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 700px) { .grid { grid-template-columns: 1fr 1fr; } }
+  section {
+    background: var(--panel); border: 1px solid var(--edge);
+    border-radius: 10px; padding: 12px 14px;
+  }
+  section h2 {
+    font-size: 11px; letter-spacing: 2px; color: var(--cyan);
+    text-transform: uppercase; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  section h2 small { color: var(--dim); letter-spacing: 0; text-transform: none; }
+  /* medidores de emoción */
+  .meter { margin-bottom: 8px; }
+  .meter .lab { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 3px; }
+  .meter .lab span:last-child { color: var(--cyan); }
+  .bar { height: 8px; background: #272422; border-radius: 4px; overflow: hidden; position: relative; }
+  .bar i {
+    display: block; height: 100%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--cyan), var(--mag));
+    box-shadow: 0 0 8px rgba(249,115,22,.4);
+    transition: width .8s cubic-bezier(.2,.8,.2,1);
+  }
+  .bar u { position: absolute; top: -2px; width: 2px; height: 12px; background: var(--mag); opacity: .8; }
+  .meter .lab em { font-style: normal; font-size: 11px; margin-left: 6px; }
+  .score { font-size: 22px; color: var(--mag); text-shadow: 0 0 10px rgba(229,72,77,.5); }
+  .score.alt { color: var(--cyan); text-shadow: 0 0 10px rgba(249,115,22,.5); }
+  .emoRow { display: flex; gap: 18px; margin-top: 10px; flex-wrap: wrap; }
+  .emoStat { flex: 1; min-width: 120px; }
+  .emoStat .lab { font-size: 10px; letter-spacing: 1.5px; color: var(--dim);
+                  text-transform: uppercase; margin-bottom: 2px; }
+  .emoStat .lab em { font-style: normal; text-transform: none; letter-spacing: 0; }
+  /* chips de patrones */
+  .chip {
+    display: inline-block; padding: 3px 10px; margin: 0 6px 6px 0;
+    border-radius: 20px; font-size: 12px; border: 1px solid var(--mag);
+    color: var(--mag); background: rgba(229,72,77,.08);
+  }
+  .chip.off { border-color: var(--edge); color: var(--dim); background: none; }
+  /* memorias */
+  .mem { border-left: 2px solid var(--cyan); padding: 4px 8px; margin-bottom: 8px; font-size: 12px; }
+  .mem .meta { color: var(--dim); font-size: 10px; margin-top: 2px; }
+  .mem.hi { border-left-color: var(--mag); }
+  /* servicios */
+  .svc { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px;
+         border-bottom: 1px dashed #ffffff1f; }
+  .svc:last-child { border-bottom: 0; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+  .ok  { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .bad { background: var(--mag);  box-shadow: 0 0 6px var(--mag); }
+  /* crons */
+  .cron { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0;
+          font-size: 12px; border-bottom: 1px dashed #ffffff1f; }
+  .cron span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cron span:last-child { color: var(--cyan); flex-shrink: 0; }
+  /* gasto */
+  .money { font-size: 26px; color: var(--cyan); text-shadow: 0 0 12px rgba(249,115,22,.4); }
+  .money small { font-size: 12px; color: var(--dim); }
+  .warn { color: var(--mag); font-size: 12px; margin-top: 4px; }
+  /* botón ocupado */
+  #busyBtn {
+    width: 100%; padding: 14px; margin-top: 4px; border-radius: 10px;
+    font: 600 15px/1 inherit; letter-spacing: 2px; cursor: pointer;
+    background: none; transition: all .3s;
+    border: 1px solid var(--cyan); color: var(--cyan);
+  }
+  #busyBtn.busy {
+    border-color: var(--mag); color: var(--mag);
+    background: rgba(229,72,77,.1); box-shadow: 0 0 18px rgba(229,72,77,.35);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 50% { box-shadow: 0 0 6px rgba(229,72,77,.2); } }
+  #err { color: var(--mag); font-size: 12px; text-align: center; margin-top: 10px; min-height: 16px; }
+  .stale { opacity: .5; }
+  .badge { flex-shrink: 0; font-size: 11px; padding: 3px 9px; border-radius: 20px;
+           border: 1px solid; white-space: nowrap; text-align: right; }
+  .badge.ok   { color: var(--cyan); border-color: var(--cyan); background: rgba(249,115,22,.08); }
+  .badge.bad  { color: var(--mag);  border-color: var(--mag);  background: rgba(229,72,77,.08); }
+  .badge.warn { color: #f5b301; border-color: #f5b30188; background: rgba(245,179,1,.09); }
+</style>
+</head>
+<body>
+<header>
+  <h1>HERMES <b>CAT&nbsp;OS</b></h1>
+  <span id="clock">--:--</span>
+</header>
+
+<div class="grid">
+  <section>
+    <h2>Estado emocional de Jinx <small id="emoTrig"></small></h2>
+    <div id="meters"></div>
+    <div class="emoRow">
+      <div class="emoStat">
+        <div class="lab">Score <em>· estado general</em></div>
+        <span class="score" id="emoScore">–</span>
+      </div>
+      <div class="emoStat">
+        <div class="lab">Current <em>· momentum</em></div>
+        <span class="score alt" id="emoCurrent">–</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Patrones <small id="patUpd"></small></h2>
+    <div id="patterns">…</div>
+  </section>
+
+  <section>
+    <h2>Cola proactiva <small id="queueUpd"></small></h2>
+    <div id="queue">…</div>
+  </section>
+
+  <section>
+    <h2>Servicios <small id="wakeInfo"></small></h2>
+    <div id="services">…</div>
+  </section>
+
+  <section>
+    <h2>Sesión unificada</h2>
+    <div id="sessionBox">…</div>
+  </section>
+
+  <section>
+    <h2>OpenRouter — créditos y límites</h2>
+    <div id="orbox">…</div>
+  </section>
+
+  <section>
+    <h2>Crons <small>próximas ejecuciones</small></h2>
+    <div id="crons">…</div>
+  </section>
+
+  <section>
+    <h2>Modo de Jinx</h2>
+    <button id="busyBtn" onclick="toggleBusy()">–</button>
+    <div id="busyInfo" style="font-size:11px;color:var(--dim);margin-top:6px"></div>
+  </section>
+
+  <section style="grid-column:1/-1">
+    <h2>Mnemosyne — últimas memorias</h2>
+    <div id="mems">…</div>
+  </section>
+</div>
+<div id="err"></div>
+
+<script>
+let cur = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function fmtNext(ts){
+  if(!ts) return "?";
+  const d = ts*1000 - Date.now();
+  if(d < 60e3) return "<1 min";
+  if(d < 3600e3) return Math.round(d/60e3)+" min";
+  if(d < 86400e3) return Math.round(d/3600e3)+" h";
+  return Math.round(d/86400e3)+" d";
+}
+
+// last_update viene como isoformat() naive (hora local del servidor), sin
+// sufijo de zona horaria, así que el navegador lo interpreta como hora local.
+function fmtAgo(iso){
+  if(!iso) return "";
+  const d = Date.now() - new Date(iso).getTime();
+  if(isNaN(d)) return "";
+  if(d < 0) return "justo ahora";
+  if(d < 60e3) return "hace <1 min";
+  if(d < 3600e3) return "hace "+Math.round(d/60e3)+" min";
+  if(d < 86400e3) return "hace "+Math.round(d/3600e3)+" h";
+  return "hace "+Math.round(d/86400e3)+" d";
+}
+
+// timestamp ISO con zona (…+00:00) → fecha/hora local corta es-MX
+function fmtDateTime(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return String(iso ?? "").slice(0,16).replace("T"," ");
+  return d.toLocaleString("es-MX",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+}
+
+function render(d){
+  cur = d;
+  // emociones
+  const e = d.emotion || {};
+  const names = {affection:"Afecto", trust:"Confianza",
+                 possessiveness:"Posesividad", patience:"Paciencia",
+                 energy:"Energía", pride:"Orgullo", jealousy:"Celos",
+                 worry:"Preocupación", satisfaction:"Satisfacción",
+                 boredom:"Aburrimiento"};
+  $("meters").innerHTML = Object.entries(names).map(([k,lab])=>{
+    const v = e[k], b = (e.baselines||{})[k];
+    if(v == null) return "";
+    const diff = b!=null ? (+v - b) : null;
+    const diffColor = diff==null ? "var(--dim)" : diff>=0 ? "var(--cyan)" : "var(--mag)";
+    const diffTxt = diff!=null
+      ? `<em style="color:${diffColor}">${diff>=0?"+":""}${diff.toFixed(1)} vs base ${b}</em>` : "";
+    return `<div class="meter">
+      <div class="lab"><span>${lab}</span><span>${(+v).toFixed(1)}${diffTxt}</span></div>
+      <div class="bar"><i style="width:${Math.min(100,v)}%"></i>
+      ${b!=null?`<u style="left:${Math.min(100,b)}%" title="baseline ${b}"></u>`:""}</div></div>`;
+  }).join("");
+  $("emoScore").textContent = e.emotion_score!=null ? (e.emotion_score>0?"+":"")+(+e.emotion_score).toFixed(2) : "–";
+  $("emoCurrent").textContent = e.current_emotion!=null ? (e.current_emotion>0?"+":"")+(+e.current_emotion).toFixed(2) : "–";
+  const expr = d.expression || {};
+  $("emoTrig").textContent = [
+    expr.dominant_now ? "expresión: "+expr.dominant_now : "",
+    e.last_trigger ? "último: "+e.last_trigger : "",
+    e.last_update ? fmtAgo(e.last_update) : "",
+  ].filter(Boolean).join(" · ");
+
+  // patrones
+  const p = d.patterns || {};
+  let ph = (p.active||[]).map(x=>`<span class="chip">${esc(x.id||x)}</span>`).join("");
+  if(!ph) ph = `<span style="color:var(--dim);font-size:12px">Sin patrones activos ✓</span>`;
+  if(p.cleared && p.cleared.length)
+    ph += `<div style="margin-top:6px">${p.cleared.map(x=>`<span class="chip off">${esc(x)}</span>`).join("")}</div>`;
+  $("patterns").innerHTML = ph;
+  $("patUpd").textContent = p.updated_at ? p.updated_at.slice(11,16)+" UTC" : "";
+
+  // cola proactiva
+  const q = d.queue || {};
+  const qKindLabel = {sugerencia:"sugerencia", comentario:"comentario", tarea:"tarea", observacion:"observación"};
+  let qh = (q.pending||[]).map(it=>
+    `<div style="margin-bottom:6px;padding:6px 8px;background:#1a1816;border-radius:6px">
+       <span class="chip off" style="margin-right:6px">${esc(qKindLabel[it.kind]||it.kind||"item")}</span>
+       <span style="font-size:13px">${esc(it.text||"")}</span>
+       <div style="font-size:11px;color:var(--dim);margin-top:2px">${it.created_at?fmtAgo(it.created_at):""}</div>
+     </div>`
+  ).join("");
+  if(!qh) qh = `<span style="color:var(--dim);font-size:12px">Sin pendientes ✓</span>`;
+  $("queue").innerHTML = qh;
+  $("queueUpd").textContent = q.pending_count ? `${q.pending_count} pendiente(s)` : "";
+
+  // servicios
+  const s = d.services || {};
+  let sh = `<div class="svc"><span><i class="dot ${s.hermes_gateway==="active"?"ok":"bad"}"></i>hermes-gateway (Jinx)</span><span>${esc(s.hermes_gateway)}</span></div>`;
+  const uLabels = {"open-llm-vtuber.service":"open-llm-vtuber (avatar)",
+                   "hermes-jinx-face-ssl.service":"jinx-face (push-to-talk)",
+                   "hermes-catos.service":"cat os (este panel)"};
+  const units = s.user_units || {};
+  sh += Object.entries(uLabels).map(([unit,lab])=>
+    `<div class="svc"><span><i class="dot ${units[unit]==="active"?"ok":"bad"}"></i>${esc(lab)}</span><span>${esc(units[unit]||"?")}</span></div>`).join("");
+  sh += (s.containers||[]).map(c=>
+    `<div class="svc"><span><i class="dot ${c.up?"ok":"bad"}"></i>${esc(c.name)}</span><span>${esc(c.status.replace(/\s*\(.*\)/,""))}</span></div>`).join("");
+  $("services").innerHTML = sh;
+  const ww = d.wakeword || {};
+  $("wakeInfo").textContent = "wake word: " + (ww.listening ? "escuchando" : "inactivo");
+
+  // sesión unificada
+  const sess = d.session || {};
+  if(sess.error){
+    $("sessionBox").innerHTML = `<div class="warn">${esc(sess.error)}</div>`;
+  } else {
+    let sb = `<div class="svc"><span>session_id</span><span style="color:var(--cyan)">${esc(sess.session_id||"?")}</span></div>`;
+    sb += `<div class="svc"><span>Iniciada</span><span>${sess.started_at?fmtAgo(sess.started_at):"no rastreado"}</span></div>`;
+    sb += `<div class="svc"><span>Última actividad</span><span>${sess.last_active?fmtAgo(sess.last_active):"no rastreado"}</span></div>`;
+    if(sess.message_count!=null) sb += `<div class="svc"><span>Mensajes</span><span>${sess.message_count}</span></div>`;
+    $("sessionBox").innerHTML = sb;
+  }
+
+  // openrouter: cuenta y límite de la llave de Jinx + gasto de hoy
+  const o = d.openrouter || {};
+  const fm = v => v == null ? "?" : "$" + (+v).toFixed(2);
+  const per = r => ({weekly:"semanal",monthly:"mensual",daily:"diario"}[r] || "");
+  const lim = k => k && !k.error && k.limit != null ? `de $${k.limit}${k.reset?" "+per(k.reset):""}` : (k && k.error ? "sin datos" : "sin límite");
+  const cred = o.credits && !o.credits.error ? o.credits.remaining : null;
+  const tri = [
+    ["Créditos en cuenta", cred, "saldo real", 2],
+    ["Límite de Jinx", o.jinx && o.jinx.limit_remaining, lim(o.jinx), 0.5],
+  ];
+  let oh = `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px">` + tri.map(([k,v,sub,err]) =>
+    `<div style="border:1px solid var(--edge);border-radius:8px;padding:8px">
+       <div style="font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">${k}</div>
+       <div style="font-size:20px;font-weight:700;color:${v!=null&&v<err?"var(--mag)":"inherit"}">${fm(v)}</div>
+       <div style="font-size:10px;color:var(--dim)">${sub}</div></div>`).join("") + `</div>`;
+  for(const lab of ["jinx"]){
+    const k = o[lab]; if(!k) continue;
+    oh += k.error
+      ? `<div class="warn">${lab}: ${esc(k.error)}</div>`
+      : `<div style="font-size:12px;color:var(--dim);margin-bottom:4px"><b>gasto ${lab}</b> hoy $${k.usage_daily.toFixed(2)} · semana $${k.usage_weekly.toFixed(2)} · mes $${k.usage_monthly.toFixed(2)}</div>`;
+  }
+  $("orbox").innerHTML = oh || "sin datos";
+
+  // crons
+  $("crons").innerHTML = (d.crons||[]).slice(0,12).map(c=>
+    `<div class="cron"><span title="${esc(c.expr)}">${esc(c.name)}</span><span>${fmtNext(c.next)}</span></div>`).join("");
+
+  // busy
+  const busy = (d.busy||{}).mode === "busy";
+  const btn = $("busyBtn");
+  btn.className = busy ? "busy" : "";
+  btn.textContent = busy ? "● OCUPADO — tocar para desactivar" : "○ DISPONIBLE — activar OCUPADO";
+  $("busyInfo").textContent = busy && d.busy.entered_busy_at
+    ? `desde ${d.busy.entered_busy_at.replace("T"," ")}${d.busy.reason?" · "+d.busy.reason:""}` : "";
+
+  // memorias
+  $("mems").innerHTML = (d.memories||[]).map(m=>{
+    const t = m.created_at ? String(m.created_at).slice(0,16).replace("T"," ") : "";
+    return `<div class="mem ${m.importance>=0.85?"hi":""}">${esc(m.content)}
+      <div class="meta">${esc(m.source)} · imp ${(+m.importance||0).toFixed(2)} · ${t}</div></div>`;
+  }).join("");
+}
+
+async function refresh(){
+  try{
+    const r = await fetch("/api/status", {cache:"no-store"});
+    render(await r.json());
+    $("err").textContent = "";
+    document.body.classList.remove("stale");
+  }catch(e){
+    $("err").textContent = "sin conexión con Cat OS — " + e.message;
+    document.body.classList.add("stale");
+  }
+}
+
+async function toggleBusy(){
+  if(!cur) return;
+  const target = (cur.busy||{}).mode === "busy" ? "normal" : "busy";
+  $("busyBtn").disabled = true;
+  try{
+    const r = await fetch("/api/busy", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({mode: target})});
+    const res = await r.json();
+    if(res.status !== "OK") throw new Error(res.raw || res.error || "fallo");
+    await refresh();
+  }catch(e){ $("err").textContent = "toggle falló: " + e.message; }
+  $("busyBtn").disabled = false;
+}
+
+setInterval(()=>{ $("clock").textContent =
+  new Date().toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }, 1000);
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
