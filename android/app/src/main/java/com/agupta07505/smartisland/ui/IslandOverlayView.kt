@@ -586,6 +586,10 @@ fun IslandOverlayView(
                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
 
                             if (change.changedToUp()) {
+                                // A button inside the open island (a reminder's Hecho/+10 min, an approval's
+                                // Allow…) already took this tap: it must not also open the card. (Children see
+                                // the release first, so a consumed one here was handled inside.)
+                                val handledInside = change.isConsumed
                                 change.consume()
                                 holdJob.cancel()
                                 val totalElapsedMs = System.currentTimeMillis() - pressTimeMs
@@ -629,7 +633,7 @@ fun IslandOverlayView(
                                             currentIndex = currentSelectedIndex
                                         )
                                     } else if (!isDragging || abs(dragOffset) < 10f * displayMetrics.density) {
-                                        if (!isHoldRegistered) {
+                                        if (!isHoldRegistered && !handledInside) {
                                             if (currentNotification != null) {
                                                 currentOnOpenNotification(currentNotification)
                                             } else {
