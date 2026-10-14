@@ -70,4 +70,15 @@ class JinxMoodTest {
         for (e in JinxMood.EMOTES) assertNotNull(e, JinxMood.moodOf(e))
         for (e in JinxMood.EMOTES) assertEquals(e, JinxMood.validEmote(e))
     }
+
+    @Test fun `between replies the chat's Mochi wears her background mood`() {
+        val now = 1_000_000.0
+        assertEquals(MochiMood.Happy, JinxMood.headerMood(emptyList(), false, now, background = MochiMood.Happy))
+        assertEquals(MochiMood.Sad, JinxMood.headerMood(listOf(line("jinx", "jaja", now - 3600)), false, now, MochiMood.Sad))
+        assertEquals(MochiMood.Grumpy, JinxMood.headerMood(listOf(line("jinx", "El servidor responde.", now)), false, now, MochiMood.Grumpy))
+        // A fresh reply's own mood still wins, and so does her thinking.
+        assertEquals(MochiMood.Laughing, JinxMood.headerMood(listOf(line("jinx", "jaja", now)), false, now, MochiMood.Sad))
+        assertEquals(MochiMood.Thinking, JinxMood.headerMood(emptyList(), true, now, MochiMood.Sad))
+        assertEquals(MochiMood.Listening, JinxMood.headerMood(emptyList(), false, now, null))
+    }
 }

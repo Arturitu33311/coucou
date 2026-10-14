@@ -127,10 +127,34 @@ class BaselineEmoteTest(unittest.TestCase):
 
     def test_missing_or_bad_dimensions_skip_their_rule(self):
         self.assertIsNone(jinx_chat.baseline_emote({}, 14))
-        self.assertIsNone(jinx_chat.baseline_emote({"affection": 120}, 14))  # no warmth without trust+patience
+        self.assertIsNone(jinx_chat.baseline_emote({"affection": 90}, 14))  # no warmth without trust+patience
+        self.assertEqual(jinx_chat.baseline_emote({"affection": 120}, 14), "love")  # love needs only affection
         self.assertIsNone(jinx_chat.baseline_emote({"patience": "x", "trust": True}, 14))
         self.assertIsNone(jinx_chat.baseline_emote(None, 3))
         self.assertEqual(jinx_chat.baseline_emote({"energy": 10}, None), "sleepy")
+
+    def test_the_other_dimensions(self):
+        # Each at its limit and just short of it (the real day has jealousy 25, worry 32, boredom 19, pride 45).
+        self.assertEqual(self.b(jealousy=75), "grumpy")
+        self.assertIsNone(self.b(jealousy=74.9))
+        self.assertEqual(self.b(worry=70), "scared")
+        self.assertIsNone(self.b(worry=69.9))
+        self.assertEqual(self.b(emotion_score=-2), "sad")
+        self.assertIsNone(self.b(emotion_score=-1.9))
+        self.assertEqual(self.b(boredom=70), "bored")
+        self.assertEqual(self.b(affection=95), "love")
+        self.assertEqual(self.b(pride=85), "proud")
+        self.assertEqual(self.b(energy=100, emotion_score=1), "excited")
+        self.assertIsNone(self.b(energy=100, emotion_score=0.9))
+        self.assertEqual(self.b(emotion_score=2), "happy")
+        self.assertEqual(self.b(satisfaction=90), "happy")
+        self.assertIsNone(self.b(satisfaction=89.9))
+
+    def test_the_negative_ones_come_first(self):
+        self.assertEqual(self.b(worry=90, affection=110), "scared")
+        self.assertEqual(self.b(jealousy=90, worry=90), "grumpy")
+        self.assertEqual(self.b(emotion_score=-3, satisfaction=95), "sad")
+        self.assertEqual(self.b(hour=2, boredom=80), "bored")
 
     def test_only_valid_emotes_come_out(self):
         for kw in ({}, {"patience": 1}, {"trust": 1}, {"energy": 1},
@@ -234,7 +258,7 @@ class MoodGatewayTest(unittest.TestCase):
         self.assertEqual(ev[-1]["ev"], "merged")
 
     def test_op_mood_from_state(self):
-        st = {"affection": 95.0, "trust": 80.0, "patience": 70.0, "energy": 60.0, "last_update": "t"}
+        st = {"affection": 90.0, "trust": 80.0, "patience": 70.0, "energy": 60.0, "last_update": "t"}
         ev = self.events({"op": "mood"}, state=lambda: st, hour=lambda: 14)
         self.assertEqual(ev, [{"ev": "mood", "emote": "happy", "source": "state", "emotion_state": st}])
 

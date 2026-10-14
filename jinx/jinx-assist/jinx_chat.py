@@ -72,75 +72,9 @@ def split_mood(text):
     return _MOOD_TAG_RE.sub("", text).strip(), mood
 
 
-def parse_emotion_state(md):
-    """Las dimensiones numéricas de `emotion_state:` en el frontmatter de STATE.md, más `last_update` y
-    `last_trigger_type` si están. Solo lo plano (dos espacios de sangría): baselines e inertia se saltan.
-    None si no hay frontmatter, bloque o ninguna dimensión."""
-    lines = (md or "").splitlines()
-    if not lines or lines[0].strip() != "---":
-        return None
-    out, inside = {}, False
-    for ln in lines[1:]:
-        if ln.strip() == "---":
-            break
-        if not inside:
-            inside = ln.rstrip() == "emotion_state:"
-            continue
-        if not ln.startswith("  "):
-            break  # sangría 0: se acabó el bloque
-        if ln.startswith("   "):
-            continue  # más hondo: baselines.*, inertia.*
-        key, _, val = ln.strip().partition(":")
-        val = val.strip().strip("'\"")
-        if key in ("last_update", "last_trigger_type") and val:
-            out[key] = val
-            continue
-        try:
-            out[key] = float(val)
-        except ValueError:
-            continue
-    return out if any(isinstance(v, float) for v in out.values()) else None
-
-
-# Umbrales sobre la escala real de Hermes: cada dimensión va de 0 a 120 y sus líneas base son
-# affection 70, trust 75, patience 65, energy 68 (emotion_calculator.py); con los valores de un día normal
-# (afecto 70, confianza 76, paciencia 66, energía 83) no hay ánimo de fondo: eso es lo esperado.
-MOOD_GRUMPY_PATIENCE = 30   # paciencia ≤ esto: gruñona
-MOOD_SAD_TRUST = 30         # confianza ≤ esto: triste
-MOOD_HAPPY_WARMTH = 78      # calidez ≥ esto: contenta (la línea base de la calidez es ~70)
-MOOD_SLEEPY_WARMTH = 40     # calidez ≤ esto: sin ganas
-MOOD_SLEEPY_ENERGY = 30     # energía ≤ esto: sin ganas
-NIGHT_FROM, NIGHT_TO = 22, 6  # de 22:00 a 05:59 (hora local): somnolienta
-
-
-def baseline_emote(emotion_state, hour):
-    """El ánimo de fondo de Jinx, un emote de EMOTES o None. Pura.
-
-    calidez = media de affection, trust y patience (las otras —worry, jealousy, boredom— suben cuando va
-    peor, no mejor). Primera regla que cumple: paciencia ≤ 30 → grumpy · confianza ≤ 30 → sad ·
-    calidez ≥ 78 → happy · calidez ≤ 40 o energía ≤ 30 → sleepy · de 22 a 6 h → sleepy · si no, None.
-    Una dimensión que falta o no es un número no cuenta (su regla no se aplica)."""
-    if not isinstance(emotion_state, dict):
-        return None
-
-    def num(key):
-        v = emotion_state.get(key)
-        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-    patience, trust, energy = num("patience"), num("trust"), num("energy")
-    parts = [num("affection"), trust, patience]
-    warmth = sum(parts) / 3 if all(p is not None for p in parts) else None
-    if patience is not None and patience <= MOOD_GRUMPY_PATIENCE:
-        return "grumpy"
-    if trust is not None and trust <= MOOD_SAD_TRUST:
-        return "sad"
-    if warmth is not None and warmth >= MOOD_HAPPY_WARMTH:
-        return "happy"
-    if (warmth is not None and warmth <= MOOD_SLEEPY_WARMTH) or (energy is not None and energy <= MOOD_SLEEPY_ENERGY):
-        return "sleepy"
-    if isinstance(hour, int) and not isinstance(hour, bool) and (hour >= NIGHT_FROM or hour < NIGHT_TO):
-        return "sleepy"
-    return None
+# parse_emotion_state, baseline_emote y sus umbrales viven en jinx_baseline.py: el servidor de presencia usa los
+# mismos (ver ese módulo).
+from jinx_baseline import baseline_emote, parse_emotion_state  # noqa: E402,F401
 
 
 def _mood_event(deps):

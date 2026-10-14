@@ -41,6 +41,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,6 +83,9 @@ internal fun AssistContent(
 ) {
     var draft by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
+    // What Jinx feels between messages (from the server): her Mochi wears it while nothing else moves him.
+    val background = com.agupta07505.smartisland.coucou.presence.JinxBackground.emote.collectAsState().value
+        .let { JinxMood.moodOf(it) }
     val list = rememberLazyListState()
     LaunchedEffect(ui.lines.size, ui.busy) {
         val last = ui.lines.size + if (ui.busy) 1 else 0
@@ -101,7 +105,7 @@ internal fun AssistContent(
                 Box(
                     Modifier.size(46.dp).clip(CircleShape).background(CoucouColors.AccentSoft),
                     contentAlignment = Alignment.Center,
-                ) { MochiGlyph(size = 30.dp, tint = MochiEmerald, mood = JinxMood.headerMood(ui.lines, ui.busy, System.currentTimeMillis() / 1000.0)) }
+                ) { MochiGlyph(size = 30.dp, tint = MochiEmerald, mood = JinxMood.headerMood(ui.lines, ui.busy, System.currentTimeMillis() / 1000.0, background)) }
             },
             actions = {
                 Box {

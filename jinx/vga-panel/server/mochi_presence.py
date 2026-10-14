@@ -10,8 +10,10 @@ fallback en los funnels (ver mochi_route.py), nunca aquí.
 
 Endpoints (127.0.0.1:8897 + IP tailnet, clave X-Mochi-Key salvo localhost):
   POST /api/presence/heartbeat {"device":"pc|s21|s22","idle_seconds":N,"screen_on":bool}
+       -> {ok, active_device, jinx_mood}   ("laptop" se acepta como alias de "pc")
   GET  /api/presence/state
   POST /api/mochi/message {"text","mood"|null,"kind","source"}  (texto <=500)
+       -> {ok, id, active_device, watched}   watched=false: nadie mirando, avisar también por Telegram
   GET  /api/mochi/inbox?since_id=N  -> {messages, active_device}
   POST /api/mochi/ack {"id","by"}
   GET  /health
@@ -20,9 +22,19 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# El ánimo de fondo de Jinx: el mismo módulo que usa el gateway. En el servidor va copiado al lado de este
+# archivo (deploy.sh); en el repo está en jinx/jinx-assist.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parents[2] / "jinx-assist"))
+try:
+    from jinx_baseline import baseline_emote, parse_emotion_state
+except ImportError:  # sin el módulo el servidor sigue: simplemente no hay ánimo de fondo
+    baseline_emote = parse_emotion_state = None
 
 BASE = Path(__file__).parent
 STATE_PATH = BASE / "mochi_presence_state.json"
@@ -34,6 +46,11 @@ PORT = int(os.environ.get("MOCHI_PORT", "8897"))
 HEARTBEAT_TIMEOUT = 45   # s sin latir -> el dispositivo se declara fuera
 IDLE_LIMIT = 300         # idle mayor -> no cuenta como "mirado"
 DEVICES = ("pc", "s21", "s22")  # el panel (vga) es el failsafe: siempre presente, no late
+# Coucou del portátil se llama a sí mismo "laptop"; aquí es "pc".
+ALIASES = {"laptop": "pc"}
+# El STATE.md de Hermes (local en este servidor) y cada cuánto se vuelve a leer.
+JINX_STATE_MD = Path(os.environ.get("MOCHI_JINX_STATE", str(Path.home() / ".hermes" / "STATE.md")))
+JINX_MOOD_TTL = 60
 # La página del panel (kiosco) es el único navegador que habla con este servidor desde un origen web.
 PANEL_ORIGINS = ("http://127.0.0.1:8896", "http://localhost:8896")
 INBOX_CAP = 50
@@ -70,6 +87,25 @@ def save():
             ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
+
+_jinx_cache = {"at": 0.0, "mood": None}
+
+
+def jinx_mood(now: float):
+    """El ánimo de fondo de Jinx (un emote de Mochi o None), de su STATE.md, como mucho una lectura por minuto.
+    Nunca falla: sin archivo, sin módulo o con un archivo raro es None (tranquila)."""
+    if now - _jinx_cache["at"] < JINX_MOOD_TTL:
+        return _jinx_cache["mood"]
+    mood = None
+    if baseline_emote is not None:
+        try:
+            st = parse_emotion_state(JINX_STATE_MD.read_text(encoding="utf-8"))
+            mood = baseline_emote(st, time.localtime(now).tm_hour)
+        except Exception:
+            mood = None
+    _jinx_cache.update(at=now, mood=mood)
+    return mood
 
 
 def read_key() -> str:
@@ -170,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
                 **{dev: view(dev) for dev in DEVICES},
                 "devices": list(DEVICES),
                 "failsafe": "vga",
+                "jinx_mood": jinx_mood(now),
                 "ts": int(now),
             })
         if self.path.startswith("/api/mochi/inbox"):
@@ -215,6 +252,8 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         if self.path == "/api/presence/heartbeat":
             b = self._body()
+            if isinstance(b, dict) and b.get("device") in ALIASES:
+                b["device"] = ALIASES[b["device"]]
             if not isinstance(b, dict) or b.get("device") not in DEVICES:
                 return self._send(400, {"error": "device debe ser " + "|".join(DEVICES)})
             try:
@@ -226,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                 "screen_on": bool(b.get("screen_on", True)),
                 "ts": now,
             }
-            return self._send(200, {"ok": True, "active_device": active_device(now)})
+            return self._send(200, {"ok": True, "active_device": active_device(now), "jinx_mood": jinx_mood(now)})
         if self.path == "/api/mochi/message":
             b = self._body()
             if not isinstance(b, dict) or not str(b.get("text", "")).strip():
@@ -245,8 +284,11 @@ class Handler(BaseHTTPRequestHandler):
             state["inbox"].append(msg)
             state["inbox"] = state["inbox"][-INBOX_CAP:]
             save()
+            active = active_device(now)
+            # `watched`: hay alguien mirando un dispositivo (pc o un teléfono). Con "vga" (el respaldo) puede no
+            # haber nadie delante del panel: quien manda el aviso debe mandarlo también por Telegram.
             return self._send(200, {"ok": True, "id": msg["id"],
-                                   "active_device": active_device(now)})
+                                   "active_device": active, "watched": active != "vga"})
         if self.path == "/api/mochi/ack":
             b = self._body()
             if not isinstance(b, dict):

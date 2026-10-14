@@ -170,7 +170,7 @@ fun MochiDesk(onReplyStateChanged: (Boolean) -> Unit, modifier: Modifier = Modif
         scene.surprised -> MochiMood.Surprised
         scene.glancing -> MochiMood.Glance
         scene.musicPlaying -> MochiMood.Dancing
-        else -> calm
+        else -> MochiReactions.calmOrJinx(calm, scene.jinxBackground)
     }
     val tint = if (overdue > 0) ReminderAmber else MochiEmerald
 

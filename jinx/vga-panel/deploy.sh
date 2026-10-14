@@ -11,12 +11,14 @@ python3 "$here/build.py"
 python3 -m unittest discover -s "$here/server" -p 'test_*.py' >/dev/null
 node --test "$here/test_mochi_logic.js" >/dev/null
 
-for f in panel.html panel_server.py mochi_presence.py; do
+for f in panel.html panel_server.py mochi_presence.py jinx_baseline.py; do
   ssh -o BatchMode=yes "$host" "[ -e '$dest/$f' ] && cp -p '$dest/$f' '$dest/$f.bak-$stamp-mochi3' || true"
 done
 scp -q "$here/dist/panel.html" "$host:$dest/panel.html"
 scp -q "$here/server/panel_server.py" "$host:$dest/panel_server.py"
 scp -q "$here/server/mochi_presence.py" "$host:$dest/mochi_presence.py"
+# El ánimo de fondo de Jinx: el mismo módulo que usa el gateway del portátil.
+scp -q "$here/../jinx-assist/jinx_baseline.py" "$host:$dest/jinx_baseline.py"
 
 ssh -o BatchMode=yes "$host" 'systemctl --user restart hermes-mochi-presence.service hermes-vga-panel.service; sleep 3;
   systemctl --user is-active hermes-mochi-presence.service hermes-vga-panel.service'

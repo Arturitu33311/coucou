@@ -73,7 +73,7 @@ pub const EMOTES: [&str; 19] = [
     "grumpy", "smug", "laughing", "crying", "relieved", "determined", "flustered", "sleepy",
 ];
 
-fn valid_emote(v: &Value) -> Option<String> {
+pub fn valid_emote(v: &Value) -> Option<String> {
     v.as_str().filter(|m| EMOTES.contains(m)).map(str::to_string)
 }
 

@@ -49,6 +49,22 @@ Where Jinx's mood comes from, in the order the clients use it (`windows/src-taur
 
 An unknown name is ignored by every client. Hermes itself returns no mood with its replies (only text).
 
+**Her background mood on her Mochi** (what she feels between messages): the presence server (`mochi_presence.py`, on the
+server, where `~/.hermes/STATE.md` is local) answers every heartbeat with `jinx_mood` (`<emote>|null`, read at most once
+a minute). The rules live in one module, `jinx/jinx-assist/jinx_baseline.py` (`baseline_emote`, all ten dimensions plus
+`emotion_score`), used by the gateway's `op: mood` too; `deploy.sh` copies it next to the server. The PC
+(`presence.rs` → `Presence.jinxMood` → `mochi/scene.ts wornEmote`) and the phone (`MochiPresence` → `JinxBackground` →
+`MochiReactions.calmOrJinx`, and the chat header) wear it whenever nothing else moves him; null means calm.
+
+### Which device has Mochi (presence contract)
+
+One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.
+The server calls the laptop `pc` (clients send `pc` and read `pc` as `laptop`; the server also accepts `laptop`).
+Its `vga` means nobody is in use: the VGA panel has Mochi and no device shows him, unless one of them, screen on, was
+touched less than 300 s ago (its answer is up to a heartbeat old). The panel itself draws Mochi only when it is the
+active one. `POST /api/mochi/message` answers `watched: false` when the panel has him (maybe nobody in front of it):
+whoever sends the notice must then also send it by Telegram.
+
 ## Taking changes from Coucou's upstream
 
 ```

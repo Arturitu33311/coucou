@@ -18,6 +18,7 @@ def load():
     mod.STATE_PATH = type(mod.STATE_PATH)("/tmp/mochi_presence_test_state.json")   # no tocar el estado real
     mod.state["presence"].clear()
     mod.state["inbox"].clear()
+    mod.JINX_STATE_MD = type(mod.JINX_STATE_MD)("/nonexistent/STATE.md")   # sin el estado real de Jinx
     return mod
 
 
@@ -79,6 +80,24 @@ class HttpTest(unittest.TestCase):
         code, out = self.post("/api/presence/heartbeat", {"device": "s22", "idle_seconds": 1, "screen_on": True})
         self.assertEqual(code, 200)
         self.assertEqual(out["active_device"], "s22")
+
+    def test_a_message_says_whether_anyone_is_watching(self):
+        code, out = self.post("/api/mochi/message", {"text": "hola", "kind": "info", "source": "test"})
+        self.assertEqual((code, out["active_device"], out["watched"]), (200, "vga", False))
+        self.post("/api/presence/heartbeat", {"device": "s21", "idle_seconds": 1, "screen_on": True})
+        code, out = self.post("/api/mochi/message", {"text": "hola", "kind": "info", "source": "test"})
+        self.assertEqual((out["active_device"], out["watched"]), ("s21", True))
+
+    def test_the_laptop_may_call_itself_laptop(self):
+        code, out = self.post("/api/presence/heartbeat", {"device": "laptop", "idle_seconds": 1, "screen_on": True})
+        self.assertEqual(code, 200)
+        self.assertEqual(out["active_device"], "pc")
+
+    def test_the_heartbeat_answer_carries_jinx_background_mood(self):
+        code, out = self.post("/api/presence/heartbeat", {"device": "s21", "idle_seconds": 1, "screen_on": True})
+        self.assertEqual(code, 200)
+        self.assertIn("jinx_mood", out)
+        self.assertIsNone(out["jinx_mood"])  # no STATE.md here: calm
 
     def test_an_unknown_device_is_refused_with_the_list_of_known_ones(self):
         code, out = self.post("/api/presence/heartbeat", {"device": "tablet", "idle_seconds": 1})
@@ -157,3 +176,24 @@ class HostAndCorsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JinxMoodTest(unittest.TestCase):
+    STATE = "---\nemotion_state:\n  affection: 70\n  trust: 75\n  patience: 20\n  energy: 70\n---\n"
+
+    def test_it_reads_her_state_md_once_a_minute(self):
+        import tempfile
+        m = load()
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(self.STATE)
+        m.JINX_STATE_MD = type(m.JINX_STATE_MD)(f.name)
+        m._jinx_cache.update(at=0.0, mood=None)
+        self.assertEqual(m.jinx_mood(1000.0), "grumpy")
+        os.unlink(f.name)
+        self.assertEqual(m.jinx_mood(1030.0), "grumpy")  # cached: the file is not read again yet
+        self.assertIsNone(m.jinx_mood(1100.0))            # read again: gone, so calm
+
+    def test_without_her_file_she_is_calm(self):
+        m = load()
+        m._jinx_cache.update(at=0.0, mood=None)
+        self.assertIsNone(m.jinx_mood(5000.0))

@@ -7,13 +7,14 @@
 // on how long a mood lasts.
 //
 // Two channels into the engine (see mochi/engine.ts):
-//   * persistent mood → setPermanentEmote (cleared back to null when calm);
+//   * persistent mood → setPermanentEmote (when calm: Jinx's background mood, else null);
 //   * celebration     → triggerEmote("happy"), fired once when the list empties.
 
 import type { BotEmoteName } from "../core/layout";
 import type { BotEngine } from "./engine";
 import { State } from "../core/state";
 import { Presence, onPresence, reportLocalLimit, reportLocalMusic } from "../core/presence";
+import { validJinxEmote } from "../core/jinx-mood";
 
 /** How long the celebration lasts after the list empties. */
 export const CELEBRATE_MS = 3_000;
@@ -59,6 +60,15 @@ export function emoteOf(mood: MochiMood): BotEmoteName | null {
 }
 
 /**
+ * The emote he wears for this mood: when nothing moves him (idle), Jinx's background mood (what she feels
+ * between messages, from the presence server), else the mood's own. Same rule as the phone's
+ * MochiReactions.calmOrJinx.
+ */
+export function wornEmote(mood: MochiMood, jinxMood: unknown): BotEmoteName | null {
+  return mood === "idle" ? validJinxEmote(jinxMood) : emoteOf(mood);
+}
+
+/**
  * The celebration latch: the open count dropping to zero opens it, time closes
  * it. Kept in one place so every caller shares the same "previous count".
  */
@@ -90,7 +100,8 @@ export function isNight(date = new Date()): boolean {
 // ── Live wiring ─────────────────────────────────────────────────────────────
 
 const latch = new CelebrationLatch();
-let lastMood: MochiMood | null = null;
+/** The emote last put on him ("" before the first beat). */
+let lastWorn: BotEmoteName | null | "" = "";
 let timer: ReturnType<typeof setInterval> | null = null;
 
 /** Read from a hub task-list counter (injected so this file stays UI-free). */
@@ -132,9 +143,10 @@ export function startSceneSync(engine: BotEngine, openCount: OpenCounter, dueCou
     void reportLocalMusic(State.music?.status === "Playing");
     void reportLocalLimit(State.tasks.some((t) => t.state === "ratelimit"));
     const mood = moodOf(readScene(dueCount()), new Date().getHours());
-    if (mood !== lastMood) {
-      lastMood = mood;
-      engine.setPermanentEmote(emoteOf(mood));
+    const worn = wornEmote(mood, Presence.jinxMood);
+    if (worn !== lastWorn) {
+      lastWorn = worn;
+      engine.setPermanentEmote(worn);
     }
   };
   timer = setInterval(beat, 1000);
@@ -144,5 +156,5 @@ export function startSceneSync(engine: BotEngine, openCount: OpenCounter, dueCou
 export function stopSceneSync() {
   if (timer) clearInterval(timer);
   timer = null;
-  lastMood = null;
+  lastWorn = "";
 }

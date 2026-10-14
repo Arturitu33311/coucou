@@ -96,13 +96,15 @@ object JinxMood {
      * Mochi's face at the top of Jinx's chat: thinking while she answers, then the mood of her reply while
      * it is the latest line and fresh, listening otherwise. Pure, tested.
      */
-    fun headerMood(lines: List<ChatLine>, busy: Boolean, nowS: Double): MochiMood {
+    fun headerMood(lines: List<ChatLine>, busy: Boolean, nowS: Double, background: MochiMood? = null): MochiMood {
         if (busy) return MochiMood.Thinking
-        val last = lines.lastOrNull()?.takeIf { it.fromJinx } ?: return MochiMood.Listening
+        // Between replies he wears what she feels in the background (her emotion state), else he listens.
+        val idle = background ?: MochiMood.Listening
+        val last = lines.lastOrNull()?.takeIf { it.fromJinx } ?: return idle
         // The gateway stamps seconds; a millisecond stamp is read as such.
         val ts = if (last.ts > 1e11) last.ts / 1000.0 else last.ts
-        if (nowS - ts > FRESH_S) return MochiMood.Listening
+        if (nowS - ts > FRESH_S) return idle
         // The mood she sent with the line wins; her words are only the fallback.
-        return moodOfReply(last.mood, last.text) ?: MochiMood.Listening
+        return moodOfReply(last.mood, last.text) ?: idle
     }
 }

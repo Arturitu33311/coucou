@@ -56,4 +56,24 @@ class MochiPresenceTest {
         assertEquals("info", msgs[1].kind)
         assertEquals("urgente", msgs[1].text)
     }
+
+    @Test
+    fun the_heartbeat_answer_carries_her_background_mood() {
+        assertEquals("happy", MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":"happy"}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":null}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":"Happy"}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga"}""")))
+    }
+
+    @Test
+    fun the_server_names_are_read_as_ours() {
+        assertEquals("laptop", Arbiter.fromServer("pc"))
+        assertEquals("s22", Arbiter.serverAnswer("s22"))
+        assertEquals("vga", Arbiter.serverAnswer("vga"))
+        assertEquals("laptop", Arbiter.serverAnswer("pc"))
+        assertNull(Arbiter.serverAnswer("tv"))
+        assertNull(Arbiter.serverAnswer(""))
+        assertNull(Arbiter.serverAnswer(null))
+    }
 }
+

@@ -246,7 +246,7 @@ object MochiPresence {
         ioScope.launch {
             for (id in ids) {
                 PresenceNet.post(base, "/api/mochi/ack", key,
-                    JSONObject().put("id", id).put("by", "s21").toString())
+                    JSONObject().put("id", id).put("by", DeviceActivity.myId).toString())
             }
         }
     }
@@ -287,8 +287,11 @@ object MochiPresence {
             .put("idle_seconds", idleSeconds())
             .put("screen_on", true)
             .toString()
-        val active = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
-            ?.let { runCatching { JSONObject(it).optString("active_device", "?") }.getOrNull() }
+        val answer = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+        // The server calls the laptop "pc"; our ids say "laptop". Its "vga" (nobody in use) is an answer too.
+        val active = answer?.let { Arbiter.fromServer(it.optString("active_device", "?")) }
+        if (answer != null) JinxBackground.set(readJinxMood(answer))
         Log.d(TAG, "heartbeat -> ${active ?: "SIN RESPUESTA"}")
         // What the server says goes to the arbitration, which also hears the laptop and may overrule
         // it when the two of us do not both reach the server (see Arbiter).
@@ -309,6 +312,12 @@ object MochiPresence {
         ack(app, stale.map { it.id }.toSet())
         shownIds = IslandJinx.publish(app, fresh, autoExpandAlert = true)
     }
+
+    /** Jinx's background mood in a heartbeat answer (`jinx_mood`, one of Mochi's emotes), else null. Pure. */
+    fun readJinxMood(answer: JSONObject): String? =
+        com.agupta07505.smartisland.coucou.assist.JinxMood.validEmote(
+            if (answer.isNull("jinx_mood")) null else answer.optString("jinx_mood"),
+        )
 
     /** Pure parsing, so it can be unit-tested without Android. */
     fun parseInbox(body: String): List<PresenceMsg> {

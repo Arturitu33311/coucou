@@ -12,9 +12,11 @@ export interface PresenceState {
   peerMusic: boolean;
   /** Something just arrived on the other device: a moment of surprise. */
   peerNews: boolean;
+  /** What Jinx feels between messages (her emotion state, from the presence server): one of Mochi's emotes, or null. */
+  jinxMood?: string | null;
 }
 
-export const Presence: PresenceState = { active: true, peerMusic: false, peerNews: false };
+export const Presence: PresenceState = { active: true, peerMusic: false, peerNews: false, jinxMood: null };
 
 const listeners = new Set<(p: PresenceState) => void>();
 
