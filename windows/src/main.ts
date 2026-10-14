@@ -12,12 +12,13 @@ import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerJinxHandlers } from "./island/jinx";
 import { registerPomodoro } from "./hub/pomodoro";
-import { registerTasks } from "./hub/tasks";
+import { registerTasks, openCount, dueCount } from "./hub/tasks";
 import { registerDictation } from "./hub/dictation";
 import { registerSysState } from "./island/sysstate";
 import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
+import { startSceneSync } from "./mochi/scene";
 
 // A script error must not vanish into a webview nobody is looking at: it goes to the log.
 window.addEventListener("error", (e) => {
@@ -101,6 +102,7 @@ async function main() {
   registerNotificationPeek(island);
 
   island.launch();
+  startSceneSync(island.mochi, openCount, dueCount);
 
   // In a plain browser there is no wake strip behind the cursor: make the whole
   // page wake the island so the visuals can be checked with `npm run dev`.

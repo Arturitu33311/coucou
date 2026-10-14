@@ -109,19 +109,21 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
-  // Claude Code sessions: the running ones, what was said, a message into one, a new one.
+  // Claude Code and OpenCode sessions: the running ones, what was said, a message into one, a new one.
   agentsList: () => callOrThrow<AgentSession[]>("agents_list"),
   rateLimits: () => call<{ five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null>("rate_limits"),
   agentMessages: (sessionId: string, offset: number) =>
     callOrThrow<{ offset: number; messages: { role: "user" | "assistant" | "tool" | "queued" | "dequeued" | "queue-clear"; text: string }[] }>(
       "agent_messages", { sessionId, offset }),
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
-  agentStart: (cwd: string, prompt: string) => callOrThrow<string>("agent_start", { cwd, prompt }),
+  agentStart: (cwd: string, prompt: string, backend: "claude" | "opencode") =>
+    callOrThrow<string>("agent_start", { cwd, prompt, backend }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
   calendarEvents: (days: number) => callOrThrow<unknown[]>("calendar_events", { days }),
   jinxTasks: () => callOrThrow<unknown[]>("jinx_tasks"),
   tasksList: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_list"),
-  tasksAdd: (text: string) => callOrThrow<import("../hub/tasks").Task[]>("tasks_add", { text }),
+  tasksAdd: (text: string, day: number | null, hour: number) =>
+    callOrThrow<import("../hub/tasks").Task[]>("tasks_add", { text, day, hour }),
   tasksDone: (id: string, done: boolean) => callOrThrow<import("../hub/tasks").Task[]>("tasks_done", { id, done }),
   tasksSnooze: (id: string, until: number) => callOrThrow<import("../hub/tasks").Task[]>("tasks_snooze", { id, until }),
   tasksSetJinx: (id: string, on: boolean) => callOrThrow<import("../hub/tasks").Task[]>("tasks_set_jinx", { id, on }),

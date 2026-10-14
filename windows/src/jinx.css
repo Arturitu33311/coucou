@@ -17,6 +17,7 @@
 .chat-target button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; max-width: 160px; }
 .chat-target button span { overflow: hidden; text-overflow: ellipsis; }
 .chat-target button.agent.on { background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
+.chat-target button.agent.opencode.on { background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.55); }
 .sdot { width: 6px; height: 6px; border-radius: 50%; background: #8b8f98; flex: 0 0 auto; }
 .sdot.working { background: #3B9EFF; animation: sdot-pulse 1.1s ease-in-out infinite; }
 .sdot.done { background: #22C55E; }

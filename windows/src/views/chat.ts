@@ -1,13 +1,13 @@
 // Chat view — DOM port of PromptView / ChatBubble / TypingDotsView from
 // IslandViewContent.swift, extended with who you are talking to: the running
-// Claude Code sessions (each with its state), a new agent, Jinx, and Mochi's own
-// API chat when there is a key for it.
+// agent sessions (Claude Code and OpenCode, each with its state), a new agent,
+// Jinx, and Mochi's own API chat when there is a key for it.
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import { Bridge, type ChatContext } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { JINX_ID, State, type ChatMessage } from "../core/state";
+import { JINX_ID, BACKEND_MOCHI, State, type ChatMessage } from "../core/state";
 import { jinxSendFailed, jinxStarted } from "../island/jinx";
 import {
   adoptAgent, agentNote, agentsLoaded, agentThread, selectedAgent, startAgentSync, syncAgentsNow,
@@ -99,9 +99,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const targetRow = h("div", { class: "chat-target" });
   const statusTxt = h("span", {});
   const cwdSel = h("select", { class: "agent-cwd", title: "Folder the new agent works in" }) as HTMLSelectElement;
+  const backendSel = h("select", { class: "agent-cwd", title: "What runs the new agent" }) as HTMLSelectElement;
+  backendSel.append(h("option", { value: "claude", text: "Claude Code" }));
+  backendSel.append(h("option", { value: "opencode", text: "OpenCode" }));
+  backendSel.addEventListener("change", () => {
+    State.chatBackend = backendSel.value as "claude" | "opencode";
+    State.notify();
+  });
   // Usage limits, small, at the end of the line: "5h 9% · 7d 59%".
   const limitsEl = h("span", { class: "limits" });
-  const statusRow = h("div", { class: "agent-status" }, statusTxt, cwdSel, limitsEl);
+  const statusRow = h("div", { class: "agent-status" }, statusTxt, cwdSel, backendSel, limitsEl);
   let targetKey = "";
   let cwdKey = "";
 
@@ -138,21 +145,22 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     input.focus();
   }
 
-  /** The chips: running agents (with their state), a new one, Jinx, Mochi's API chat. */
+  /** The chips: running agents (Claude Code and OpenCode, with their state), a new one, Jinx, Mochi's API chat. */
   function renderTargets() {
     const jinxOn = State.tasks.some((t) => t.id === JINX_ID);
     const key = [
       State.chatTarget, State.agentId, jinxOn, State.mochiApi,
-      State.agents.map((a) => `${a.id}:${a.name}:${a.state}`).join("|"),
+      State.agents.map((a) => `${a.id}:${a.name}:${a.state}:${a.kind}`).join("|"),
     ].join("~");
     if (key === targetKey) return;
     targetKey = key;
     clear(targetRow);
     for (const a of State.agents) {
       const on = State.chatTarget === "agent" && State.agentId === a.id;
+      const who = a.kind === "opencode" ? BACKEND_MOCHI.opencode.name : BACKEND_MOCHI.claude.name;
       const chip = h(
         "button",
-        { class: on ? "agent on" : "agent", title: `${a.name} — ${a.cwd}` },
+        { class: on ? `agent on ${a.kind}` : `agent ${a.kind}`, title: `${who} · ${a.name} — ${a.cwd}` },
         h("i", { class: `sdot ${a.state}` }),
         h("span", { text: short(a.name || a.id, 18) }),
       );
@@ -243,14 +251,14 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     }
   }
 
-  /** A new background agent; once it is running the chat moves onto it. */
+  /** A new background agent (Claude Code) or session (OpenCode); once it is running the chat moves onto it. */
   async function submitNew(query: string) {
     const { text, sentPath } = withFile(query);
     sending = true;
     Sound.play("send");
     State.notify();
     try {
-      const id = await Bridge.agentStart(cwdSel.value, text);
+      const id = await Bridge.agentStart(cwdSel.value, text, backendSel.value as "claude" | "opencode");
       if (sentPath) State.agentFilePath = sentPath;
       await adoptAgent(id);
     } catch (err) {
@@ -353,11 +361,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       // One line under the chips: the selected agent's state, or what is wrong.
       let status = "";
       if (State.agentsError && (target === "agent" || target === "new")) status = `⚠ ${State.agentsError}`;
-      else if (agent && blocked) status = `waiting for your answer — answer its card, or run: claude attach ${agent.id}`;
+      else if (agent && blocked) {
+        status = agent.kind === "opencode"
+          ? "waiting for your answer"
+          : `waiting for your answer — answer its card, or run: claude attach ${agent.id}`;
+      }
       else if (agent) status = STATE_TEXT[agent.state] ?? agent.state;
       else if (target === "new") status = "starts a background agent in:";
       statusTxt.textContent = status;
       cwdSel.style.display = target === "new" && !State.agentsError ? "" : "none";
+      backendSel.style.display = target === "new" && !State.agentsError ? "" : "none";
       statusRow.className = `agent-status${blocked ? " blocked" : ""}${agent?.state === "working" ? " working" : ""}`;
       const lim = limitsText();
       limitsEl.textContent = lim.text;
