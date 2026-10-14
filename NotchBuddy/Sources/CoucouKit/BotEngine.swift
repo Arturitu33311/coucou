@@ -32,7 +32,7 @@ struct Tween {
 // MARK: - Particle
 
 struct Particle {
-    enum ParticleType { case heart, star, spark, sweat, z }
+    enum ParticleType { case heart, star, spark, sweat, z, tear, question, anger, puff }
     var type: ParticleType
     var x, y, vx, vy: CGFloat
     var age: Double        // seconds
@@ -63,6 +63,8 @@ struct BotStateCfg {
 
 enum EyeShape: String {
     case pill, wide, dot, line, flat, happy, closed, spiral, heart, star, tired, wink, cup
+    case drowsy, sad, angry, halfLid, smug, scared, curious, confused, shy, sparkle
+    case laugh, teary, determined, wobbly
 }
 
 enum BadgeType {
@@ -499,6 +501,7 @@ final class BotEngine: ObservableObject {
                 TweenKey(target:  0.14, duration: 420, ease: Ease.inOut),
                 TweenKey(target:  0,    duration: 260, ease: Ease.out),
             ])
+            if Bool.random() { emitAt(.question, x: 0.5, y: -0.55, vy: -0.25, life: 1.2, size: 0.2) }
             miniNextBehavior = CACurrentMediaTime() + 2.8 + Double.random(in: 0...2.0)
 
         case .excited:
@@ -537,6 +540,9 @@ final class BotEngine: ObservableObject {
                 TweenKey(target: 0.10, duration: 500, ease: Ease.inOut),
                 TweenKey(target: 0,    duration: 600, ease: Ease.inOut),
             ])
+            if Double.random(in: 0...1) < 0.35 {
+                emitAt(.tear, x: -0.3, y: 0.12, vx: -0.08, vy: 0.4, life: 1.0, size: 0.12, delay: 0.3)
+            }
             miniNextBehavior = CACurrentMediaTime() + 3.6 + Double.random(in: 0...2.2)
 
         case .curious:
@@ -566,6 +572,7 @@ final class BotEngine: ObservableObject {
                 TweenKey(target: 0.94, duration: 600, ease: Ease.inOut),
                 TweenKey(target: 1,    duration: 700, ease: Ease.inOut),
             ])
+            emitPuff()
             miniNextBehavior = CACurrentMediaTime() + 3.8 + Double.random(in: 0...2.4)
 
         case .scared:
@@ -597,6 +604,7 @@ final class BotEngine: ObservableObject {
                 TweenKey(target: 0.95, duration: 90,  ease: Ease.out),
                 TweenKey(target: 1,    duration: 220, ease: Ease.inOut),
             ])
+            if Bool.random() { emitAnger() } else { emitPuff() }
             miniNextBehavior = CACurrentMediaTime() + 3.2 + Double.random(in: 0...2.0)
 
         case .smug:
@@ -611,6 +619,84 @@ final class BotEngine: ObservableObject {
                 TweenKey(target: 0,     duration: 400, ease: Ease.back),
             ])
             miniNextBehavior = CACurrentMediaTime() + 2.8 + Double.random(in: 0...2.0)
+
+        case .laughing:
+            // Giggle fit: a few quick hops
+            guard !locks.contains("oy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.4
+                return
+            }
+            anim("oy", keys: [
+                TweenKey(target: -0.08, duration: 70, ease: Ease.out),
+                TweenKey(target: 0,     duration: 90, ease: Ease.inOut),
+                TweenKey(target: -0.07, duration: 70, ease: Ease.out),
+                TweenKey(target: 0,     duration: 90, ease: Ease.inOut),
+                TweenKey(target: -0.05, duration: 70, ease: Ease.out),
+                TweenKey(target: 0,     duration: 120, ease: Ease.back),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 1.6 + Double.random(in: 0...1.4)
+
+        case .crying:
+            // Sob + tears
+            guard !locks.contains("sy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.4
+                return
+            }
+            anim("sy", keys: [
+                TweenKey(target: 0.9,  duration: 120, ease: Ease.out),
+                TweenKey(target: 1.04, duration: 160, ease: Ease.inOut),
+                TweenKey(target: 1,    duration: 200, ease: Ease.back),
+            ])
+            emitTears(count: 2)
+            miniNextBehavior = CACurrentMediaTime() + 1.4 + Double.random(in: 0...1.0)
+
+        case .relieved:
+            // Slow contented breath out
+            guard !locks.contains("sy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.5
+                return
+            }
+            anim("sy", keys: [
+                TweenKey(target: 1.05, duration: 400, ease: Ease.inOut),
+                TweenKey(target: 0.95, duration: 600, ease: Ease.inOut),
+                TweenKey(target: 1,    duration: 500, ease: Ease.inOut),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.emitPuff()
+            }
+            miniNextBehavior = CACurrentMediaTime() + 3.4 + Double.random(in: 0...2.0)
+
+        case .determined:
+            // Braces itself: quick squat and stand
+            guard !locks.contains("sy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.4
+                return
+            }
+            anim("sy", keys: [
+                TweenKey(target: 0.9,  duration: 100, ease: Ease.out),
+                TweenKey(target: 1.05, duration: 150, ease: Ease.out),
+                TweenKey(target: 1,    duration: 200, ease: Ease.inOut),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 2.6 + Double.random(in: 0...1.6)
+
+        case .flustered:
+            // Jittery fidget
+            guard !locks.contains("ox") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.4
+                return
+            }
+            anim("ox", keys: [
+                TweenKey(target: 0.04,  duration: 55, ease: Ease.inOut),
+                TweenKey(target: -0.04, duration: 55, ease: Ease.inOut),
+                TweenKey(target: 0.04,  duration: 55, ease: Ease.inOut),
+                TweenKey(target: -0.03, duration: 55, ease: Ease.inOut),
+                TweenKey(target: 0,     duration: 70, ease: Ease.out),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.8, duration: 150, ease: Ease.out),
+                TweenKey(target: 0,   duration: 700, ease: Ease.inOut),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 2.0 + Double.random(in: 0...1.5)
 
         default:
             miniNextBehavior = CACurrentMediaTime() + 3.0 + Double.random(in: 0...2.0)
@@ -818,143 +904,306 @@ final class BotEngine: ObservableObject {
             }
 
         case .sleepy:
-            // Slow head droop + nod, like fighting off a nap
-            anim("tilt", keys: [
-                TweenKey(target: 0.10, duration: 420, ease: Ease.inOut),
-                TweenKey(target: 0.10, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
-                TweenKey(target: 0,    duration: 380, ease: Ease.inOut),
-            ])
+            // Sinks slowly… then jolts awake with a blink, and sinks again
             anim("oy", keys: [
-                TweenKey(target: 0.07, duration: 420, ease: Ease.inOut),
-                TweenKey(target: 0.07, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
-                TweenKey(target: 0,    duration: 380, ease: Ease.back),
+                TweenKey(target: 0.09,  duration: 700, ease: Ease.inOut),
+                TweenKey(target: -0.05, duration: 90,  ease: Ease.out),
+                TweenKey(target: 0.06,  duration: holdMs(duration, 0.79), ease: Ease.inOut),
+                TweenKey(target: 0,     duration: 300, ease: Ease.back),
             ])
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                self?.emit(.z, count: 1)
+            anim("tilt", keys: [
+                TweenKey(target: 0.12, duration: 700, ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 120, ease: Ease.out),
+                TweenKey(target: 0.08, duration: holdMs(duration, 0.82), ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 300, ease: Ease.inOut),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+                self?.blink()
+                self?.emit(.z, count: 2)
             }
 
         case .confused:
-            // Slow, puzzled side-to-side head tilt (no snap, unlike .annoyed)
+            // Puzzled tilt one way, then the other, with a floating "?"
             anim("tilt", keys: [
-                TweenKey(target: -0.16, duration: 260, ease: Ease.inOut),
-                TweenKey(target:  0.16, duration: 420, ease: Ease.inOut),
-                TweenKey(target: -0.08, duration: 340, ease: Ease.inOut),
-                TweenKey(target:  0,    duration: 260, ease: Ease.out),
+                TweenKey(target: -0.18, duration: 280, ease: Ease.inOut),
+                TweenKey(target:  0.16, duration: 460, ease: Ease.inOut),
+                TweenKey(target:  0.16, duration: holdMs(duration, 1.1), ease: Ease.lin),
+                TweenKey(target:  0,    duration: 300, ease: Ease.out),
             ])
+            anim("yaw", keys: [
+                TweenKey(target: 0.25, duration: 300, ease: Ease.inOut),
+                TweenKey(target: -0.2, duration: 460, ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 400, ease: Ease.inOut),
+            ])
+            emitAt(.question, x: 0.5, y: -0.55, vx: 0.05, vy: -0.25, life: 1.4, size: 0.2)
 
         case .excited:
-            // Quick double hop + sparkle burst
+            // Double hop with stretch, stars and sparks
             squash()
             emit(.spark, count: 6)
+            emit(.star, count: 2)
             anim("oy", keys: [
-                TweenKey(target: -0.28, duration: 110, ease: Ease.out),
+                TweenKey(target: -0.30, duration: 110, ease: Ease.out),
                 TweenKey(target:  0.02, duration: 150, ease: Ease.inOut),
-                TweenKey(target: -0.22, duration: 110, ease: Ease.out),
+                TweenKey(target: -0.24, duration: 110, ease: Ease.out),
                 TweenKey(target:  0,    duration: 200, ease: Ease.back),
+            ])
+            anim("sy", keys: [
+                TweenKey(target: 1.14, duration: 110, ease: Ease.out),
+                TweenKey(target: 0.86, duration: 150, ease: Ease.inOut),
+                TweenKey(target: 1.1,  duration: 110, ease: Ease.out),
+                TweenKey(target: 1,    duration: 200, ease: Ease.back),
             ])
 
         case .shy:
-            // Looks away and blushes, holding the pose for most of the duration
+            // Looks down and away, shrinks a little, blushes
             anim("yaw", keys: [
                 TweenKey(target: -0.55, duration: 260, ease: Ease.out),
-                TweenKey(target: -0.55, duration: CGFloat(max(0, duration - 0.6) * 1000), ease: Ease.lin),
+                TweenKey(target: -0.55, duration: holdMs(duration, 0.6), ease: Ease.lin),
                 TweenKey(target:  0,    duration: 340, ease: Ease.inOut),
             ])
-            anim("blush", keys: [
-                TweenKey(target: 0.8, duration: 260, ease: Ease.out),
-                TweenKey(target: 0.8, duration: CGFloat(max(0, duration - 0.6) * 1000), ease: Ease.lin),
+            anim("pitch", keys: [
+                TweenKey(target: 0.3, duration: 260, ease: Ease.out),
+                TweenKey(target: 0.3, duration: holdMs(duration, 0.6), ease: Ease.lin),
                 TweenKey(target: 0,   duration: 340, ease: Ease.inOut),
             ])
-            anim("oy", keys: [
-                TweenKey(target: 0.05, duration: 260, ease: Ease.out),
-                TweenKey(target: 0,    duration: 340, ease: Ease.back),
+            anim("blush", keys: [
+                TweenKey(target: 1,   duration: 260, ease: Ease.out),
+                TweenKey(target: 1,   duration: holdMs(duration, 0.6), ease: Ease.lin),
+                TweenKey(target: 0,   duration: 340, ease: Ease.inOut),
+            ])
+            anim("sx", keys: [
+                TweenKey(target: 0.95, duration: 260, ease: Ease.out),
+                TweenKey(target: 0.95, duration: holdMs(duration, 0.6), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 340, ease: Ease.back),
             ])
 
         case .sad:
-            // Droops down and squishes slightly, slow to recover
+            // Droops, squishes, looks down; a single tear
             anim("oy", keys: [
                 TweenKey(target: 0.12, duration: 380, ease: Ease.inOut),
-                TweenKey(target: 0.12, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+                TweenKey(target: 0.12, duration: holdMs(duration, 0.8), ease: Ease.lin),
                 TweenKey(target: 0,    duration: 420, ease: Ease.back),
             ])
             anim("sy", keys: [
                 TweenKey(target: 0.92, duration: 380, ease: Ease.inOut),
-                TweenKey(target: 0.92, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+                TweenKey(target: 0.92, duration: holdMs(duration, 0.8), ease: Ease.lin),
                 TweenKey(target: 1,    duration: 420, ease: Ease.back),
             ])
-            anim("tilt", keys: [
-                TweenKey(target: 0.08, duration: 380, ease: Ease.inOut),
-                TweenKey(target: 0.08, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+            anim("pitch", keys: [
+                TweenKey(target: 0.28, duration: 380, ease: Ease.inOut),
+                TweenKey(target: 0.28, duration: holdMs(duration, 0.8), ease: Ease.lin),
                 TweenKey(target: 0,    duration: 420, ease: Ease.inOut),
             ])
+            emitAt(.tear, x: -0.3, y: 0.12, vx: -0.08, vy: 0.4, life: 1.0, size: 0.12, delay: 0.45)
 
         case .curious:
-            // Leans in, head tilts, eyes widen slightly — holds for most of the duration
+            // Leans in, head cocked, eyes widen
             anim("tilt", keys: [
-                TweenKey(target: 0.14, duration: 240, ease: Ease.out),
-                TweenKey(target: 0.14, duration: CGFloat(max(0, duration - 0.5) * 1000), ease: Ease.lin),
-                TweenKey(target: 0,    duration: 280, ease: Ease.inOut),
+                TweenKey(target: 0.16, duration: 240, ease: Ease.out),
+                TweenKey(target: 0.16, duration: holdMs(duration, 0.55), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 300, ease: Ease.inOut),
             ])
             anim("es", keys: [
                 TweenKey(target: 1.15, duration: 200, ease: Ease.out),
-                TweenKey(target: 1.15, duration: CGFloat(max(0, duration - 0.5) * 1000), ease: Ease.lin),
+                TweenKey(target: 1.15, duration: holdMs(duration, 0.5), ease: Ease.lin),
                 TweenKey(target: 1,    duration: 300, ease: Ease.inOut),
+            ])
+            anim("sy", keys: [
+                TweenKey(target: 1.06, duration: 240, ease: Ease.out),
+                TweenKey(target: 1,    duration: 400, ease: Ease.back),
             ])
 
         case .bored:
-            // Long slow sigh — droop + exhale, very little snap
+            // Long sigh: deflate, a puff of air, slow refill
             anim("oy", keys: [
                 TweenKey(target: 0.08, duration: 500, ease: Ease.inOut),
-                TweenKey(target: 0.08, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
+                TweenKey(target: 0.08, duration: holdMs(duration, 1.0), ease: Ease.lin),
                 TweenKey(target: 0,    duration: 500, ease: Ease.inOut),
             ])
             anim("sy", keys: [
-                TweenKey(target: 0.93, duration: 500, ease: Ease.inOut),
-                TweenKey(target: 0.93, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
+                TweenKey(target: 0.9,  duration: 500, ease: Ease.inOut),
+                TweenKey(target: 0.93, duration: holdMs(duration, 1.0), ease: Ease.lin),
                 TweenKey(target: 1,    duration: 500, ease: Ease.inOut),
             ])
+            anim("sx", keys: [
+                TweenKey(target: 1.05, duration: 500, ease: Ease.inOut),
+                TweenKey(target: 1.03, duration: holdMs(duration, 1.0), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 500, ease: Ease.inOut),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.emitPuff()
+            }
 
         case .scared:
-            // Rapid shiver + flinch back
+            // Jumps back, shivers, cold sweat
             anim("ox", keys: [
                 TweenKey(target: -0.1,  duration: 50, ease: Ease.out),
                 TweenKey(target: 0.1,   duration: 60, ease: Ease.inOut),
                 TweenKey(target: -0.08, duration: 55, ease: Ease.inOut),
                 TweenKey(target: 0.06,  duration: 55, ease: Ease.inOut),
+                TweenKey(target: -0.04, duration: 55, ease: Ease.inOut),
                 TweenKey(target: 0,     duration: 90, ease: Ease.out),
             ])
+            anim("oy", keys: [
+                TweenKey(target: -0.14, duration: 90,  ease: Ease.out),
+                TweenKey(target: 0,     duration: 260, ease: Ease.back),
+            ])
             anim("sy", keys: [
-                TweenKey(target: 0.9, duration: 90,  ease: Ease.out),
-                TweenKey(target: 1,   duration: 180, ease: Ease.back),
+                TweenKey(target: 1.12, duration: 90,  ease: Ease.out),
+                TweenKey(target: 0.92, duration: 160, ease: Ease.inOut),
+                TweenKey(target: 1,    duration: 200, ease: Ease.back),
             ])
             emit(.sweat, count: 2)
 
         case .grumpy:
-            // Stiff crossed-arms stillness — a tight hold, no bounce
+            // Puffs up, holds it, huffs out
             anim("sx", keys: [
-                TweenKey(target: 1.06, duration: 120, ease: Ease.out),
-                TweenKey(target: 1.06, duration: CGFloat(max(0, duration - 0.3) * 1000), ease: Ease.lin),
+                TweenKey(target: 1.08, duration: 140, ease: Ease.out),
+                TweenKey(target: 1.08, duration: holdMs(duration, 0.4), ease: Ease.lin),
                 TweenKey(target: 1,    duration: 220, ease: Ease.inOut),
             ])
             anim("sy", keys: [
-                TweenKey(target: 0.94, duration: 120, ease: Ease.out),
-                TweenKey(target: 0.94, duration: CGFloat(max(0, duration - 0.3) * 1000), ease: Ease.lin),
+                TweenKey(target: 0.93, duration: 140, ease: Ease.out),
+                TweenKey(target: 0.93, duration: holdMs(duration, 0.4), ease: Ease.lin),
                 TweenKey(target: 1,    duration: 220, ease: Ease.inOut),
             ])
+            anim("yaw", keys: [
+                TweenKey(target: 0.35, duration: 200, ease: Ease.out),
+                TweenKey(target: 0.35, duration: holdMs(duration, 0.45), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 250, ease: Ease.inOut),
+            ])
+            emitAnger()
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0.2, duration - 0.35)) { [weak self] in
+                self?.emitPuff()
+            }
 
         case .smug:
-            // Chin lifts, head tilts back with a satisfied hold
+            // Chin up, slow tilt back, a little satisfied glow
             anim("tilt", keys: [
                 TweenKey(target: -0.12, duration: 260, ease: Ease.out),
-                TweenKey(target: -0.12, duration: CGFloat(max(0, duration - 0.5) * 1000), ease: Ease.lin),
+                TweenKey(target: -0.12, duration: holdMs(duration, 0.56), ease: Ease.lin),
                 TweenKey(target: 0,     duration: 300, ease: Ease.inOut),
             ])
             anim("oy", keys: [
                 TweenKey(target: -0.06, duration: 260, ease: Ease.out),
-                TweenKey(target: -0.06, duration: CGFloat(max(0, duration - 0.5) * 1000), ease: Ease.lin),
+                TweenKey(target: -0.06, duration: holdMs(duration, 0.56), ease: Ease.lin),
                 TweenKey(target: 0,     duration: 300, ease: Ease.back),
             ])
+            anim("pitch", keys: [
+                TweenKey(target: -0.2, duration: 260, ease: Ease.out),
+                TweenKey(target: -0.2, duration: holdMs(duration, 0.56), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 300, ease: Ease.inOut),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.4, duration: 260, ease: Ease.out),
+                TweenKey(target: 0,   duration: holdMs(duration, 0.26), ease: Ease.inOut),
+            ])
+
+        case .laughing:
+            // Shakes with laughter: rapid little bounces, body wobble
+            var bounces: [TweenKey] = []
+            let n = max(3, Int(duration / 0.16))
+            for i in 0..<n {
+                let amp: CGFloat = 0.1 * (1 - CGFloat(i) / CGFloat(n) * 0.6)
+                bounces.append(TweenKey(target: -amp, duration: 70, ease: Ease.out))
+                bounces.append(TweenKey(target: 0,    duration: 90, ease: Ease.inOut))
+            }
+            anim("oy", keys: bounces)
+            anim("tilt", keys: [
+                TweenKey(target: -0.1, duration: 140, ease: Ease.out),
+                TweenKey(target: 0.08, duration: holdMs(duration, 0.4), ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 260, ease: Ease.inOut),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.6, duration: 200, ease: Ease.out),
+                TweenKey(target: 0.6, duration: holdMs(duration, 0.5), ease: Ease.lin),
+                TweenKey(target: 0,   duration: 300, ease: Ease.inOut),
+            ])
+
+        case .crying:
+            // Sobs: hitching squashes and a stream of tears
+            var sobs: [TweenKey] = []
+            let n = max(2, Int(duration / 0.45))
+            for _ in 0..<n {
+                sobs.append(TweenKey(target: 0.9,  duration: 120, ease: Ease.out))
+                sobs.append(TweenKey(target: 1.04, duration: 160, ease: Ease.inOut))
+                sobs.append(TweenKey(target: 0.96, duration: 170, ease: Ease.inOut))
+            }
+            sobs.append(TweenKey(target: 1, duration: 200, ease: Ease.back))
+            anim("sy", keys: sobs)
+            anim("pitch", keys: [
+                TweenKey(target: 0.2, duration: 300, ease: Ease.out),
+                TweenKey(target: 0.2, duration: holdMs(duration, 0.6), ease: Ease.lin),
+                TweenKey(target: 0,   duration: 300, ease: Ease.inOut),
+            ])
+            emitTears(count: max(4, Int(duration * 4)))
+
+        case .relieved:
+            // Big exhale: rises a little, then settles lower and softer
+            anim("sy", keys: [
+                TweenKey(target: 1.08, duration: 300, ease: Ease.out),
+                TweenKey(target: 0.92, duration: 500, ease: Ease.inOut),
+                TweenKey(target: 0.95, duration: holdMs(duration, 1.1), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 300, ease: Ease.back),
+            ])
+            anim("sx", keys: [
+                TweenKey(target: 0.96, duration: 300, ease: Ease.out),
+                TweenKey(target: 1.06, duration: 500, ease: Ease.inOut),
+                TweenKey(target: 1.03, duration: holdMs(duration, 1.1), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 300, ease: Ease.back),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.4, duration: 400, ease: Ease.out),
+                TweenKey(target: 0,   duration: holdMs(duration, 0.4), ease: Ease.inOut),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                self?.emitPuff()
+            }
+
+        case .determined:
+            // Leans forward, plants itself, a burst of sparks
+            anim("pitch", keys: [
+                TweenKey(target: -0.15, duration: 200, ease: Ease.out),
+                TweenKey(target: -0.15, duration: holdMs(duration, 0.45), ease: Ease.lin),
+                TweenKey(target: 0,     duration: 250, ease: Ease.inOut),
+            ])
+            anim("sy", keys: [
+                TweenKey(target: 0.88, duration: 120, ease: Ease.out),
+                TweenKey(target: 1.06, duration: 160, ease: Ease.out),
+                TweenKey(target: 1.02, duration: holdMs(duration, 0.53), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 250, ease: Ease.inOut),
+            ])
+            anim("sx", keys: [
+                TweenKey(target: 1.1,  duration: 120, ease: Ease.out),
+                TweenKey(target: 0.97, duration: 160, ease: Ease.out),
+                TweenKey(target: 1,    duration: 300, ease: Ease.inOut),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.emit(.spark, count: 4)
+            }
+
+        case .flustered:
+            // Flails: fast sideways jitter, blush, sweat
+            var jitter: [TweenKey] = []
+            let n = max(4, Int(duration / 0.12))
+            for i in 0..<n {
+                jitter.append(TweenKey(target: i % 2 == 0 ? 0.05 : -0.05, duration: 60, ease: Ease.inOut))
+            }
+            jitter.append(TweenKey(target: 0, duration: 80, ease: Ease.out))
+            anim("ox", keys: jitter)
+            anim("blush", keys: [
+                TweenKey(target: 1, duration: 150, ease: Ease.out),
+                TweenKey(target: 1, duration: holdMs(duration, 0.45), ease: Ease.lin),
+                TweenKey(target: 0, duration: 300, ease: Ease.inOut),
+            ])
+            emit(.sweat, count: 2)
         }
+    }
+
+    /// Duration (ms) of the "hold" key in an emote, never zero so a short emote can't divide by 0.
+    private func holdMs(_ duration: Double, _ minus: Double) -> CGFloat {
+        CGFloat(max(0.016, duration - minus) * 1000)
     }
 
     func emit(_ type: Particle.ParticleType, count: Int) {
@@ -973,6 +1222,34 @@ final class BotEngine: ObservableObject {
             )
             particles.append(p)
         }
+    }
+
+    /// Spawns one particle at a fixed spot (body-relative units, same as emit()).
+    func emitAt(_ type: Particle.ParticleType, x: CGFloat, y: CGFloat, vx: CGFloat = 0, vy: CGFloat = 0,
+                life: Double = 1.0, size: CGFloat = 0.16, delay: Double = 0) {
+        particles.append(Particle(type: type, x: x, y: y, vx: vx, vy: vy,
+                                  age: -delay, life: life,
+                                  rot: CGFloat.random(in: 0...(.pi * 2)), size: size))
+    }
+
+    /// Tears roll out of both eyes and fall.
+    func emitTears(count: Int) {
+        for i in 0..<count {
+            let sd: CGFloat = i % 2 == 0 ? -1 : 1
+            emitAt(.tear, x: sd * 0.3, y: 0.12, vx: sd * CGFloat.random(in: 0.08...0.18),
+                   vy: CGFloat.random(in: 0.45...0.65), life: 0.9, size: 0.12, delay: Double(i) * 0.18)
+        }
+    }
+
+    /// A sigh cloud drifting out from the side of the face.
+    func emitPuff() {
+        let side: CGFloat = Bool.random() ? 1 : -1
+        emitAt(.puff, x: side * 0.5, y: 0.22, vx: side * 0.35, vy: -0.12, life: 1.1, size: 0.14)
+    }
+
+    /// A "vein" mark that pops at the top corner of the head.
+    func emitAnger() {
+        emitAt(.anger, x: 0.55, y: -0.5, vy: -0.04, life: 0.9, size: 0.2)
     }
 
     // MARK: - Update (called every frame from TimelineView)
@@ -1683,7 +1960,185 @@ final class BotEngine: ObservableObject {
                            control: CGPoint(x: -w/2, y: hh/2))
             p.closeSubpath()
             ctx.fill(p, with: .color(ink))
+
+        case .drowsy:
+            // Heavy lid that sinks and recovers, like fighting sleep
+            let hh = max(h * open, w * 0.3)
+            let lidY = -hh/2 + hh * (0.48 + 0.16 * sin(now * 1.3))
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: lidY, outerY: lidY))
+            lc.fill(pillPath(w: w, h: hh), with: .color(ink))
+            var lid = Path()
+            lid.move(to: CGPoint(x: -w*0.62, y: lidY))
+            lid.addLine(to: CGPoint(x: w*0.62, y: lidY))
+            ctx.stroke(lid, with: .color(ink), style: StrokeStyle(lineWidth: w*0.16, lineCap: .round))
+
+        case .sad:
+            // Outer corners droop, glossy highlight
+            let hh = max(h * 0.88 * open, w * 0.3)
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: -hh/2 + hh*0.08, outerY: -hh/2 + hh*0.55))
+            lc.fill(pillPath(w: w, h: hh), with: .color(ink))
+            var hi = Path()
+            hi.addEllipse(in: CGRect(x: -sd*w*0.14 - w*0.12, y: -hh*0.08 - w*0.12, width: w*0.24, height: w*0.24))
+            lc.fill(hi, with: .color(.white.opacity(0.85)))
+
+        case .angry:
+            // Steep inward V — scowl without brows
+            let hh = max(h * 0.9 * open, w * 0.3)
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: -hh/2 + hh*0.62, outerY: -hh/2 + hh*0.08))
+            lc.fill(pillPath(w: w*1.05, h: hh), with: .color(ink))
+
+        case .halfLid:
+            // Flat, unimpressed lids at half height
+            let hh = max(h * open, w * 0.3)
+            let lidY = -hh/2 + hh * 0.5
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: lidY, outerY: lidY))
+            lc.fill(pillPath(w: w*1.05, h: hh), with: .color(ink))
+            var lid = Path()
+            lid.move(to: CGPoint(x: -w*0.6, y: lidY))
+            lid.addLine(to: CGPoint(x: w*0.6, y: lidY))
+            ctx.stroke(lid, with: .color(ink), style: StrokeStyle(lineWidth: w*0.14, lineCap: .round))
+
+        case .smug:
+            // Lazy lids + side-eye (both eyes glance the same way)
+            let hh = max(h * open, w * 0.3)
+            ctx.translateBy(x: w * 0.14, y: 0)
+            let inner = -hh/2 + hh*0.40, outer = -hh/2 + hh*0.58
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: inner, outerY: outer))
+            lc.fill(pillPath(w: w, h: hh), with: .color(ink))
+            var lid = Path()
+            lid.move(to: CGPoint(x: -sd*w*0.6, y: inner - (outer - inner)*0.1))
+            lid.addLine(to: CGPoint(x: sd*w*0.6, y: outer + (outer - inner)*0.1))
+            ctx.stroke(lid, with: .color(ink), style: StrokeStyle(lineWidth: w*0.14, lineCap: .round))
+
+        case .scared:
+            // Tall trembling eyes with a small catch-light
+            ctx.translateBy(x: sin(now * 42) * w * 0.05, y: 0)
+            let hh = max(h * 1.3 * open, w * 0.3)
+            ctx.fill(pillPath(w: w*0.95, h: hh), with: .color(ink))
+            if open > 0.5 {
+                var hi = Path()
+                hi.addEllipse(in: CGRect(x: -w*0.3, y: -hh*0.32, width: w*0.3, height: w*0.3))
+                ctx.fill(hi, with: .color(.white.opacity(0.9)))
+            }
+
+        case .curious:
+            // One eye bigger and raised: the "hm?" look
+            let k: CGFloat = sd > 0 ? 1.22 : 0.88
+            if sd > 0 { ctx.translateBy(x: 0, y: -h * 0.07) }
+            let hh = max(h * k * open, w * 0.3)
+            ctx.fill(pillPath(w: w*k, h: hh), with: .color(ink))
+
+        case .confused:
+            // "o -": one round eye, one tilted dash
+            if sd < 0 {
+                var p = Path()
+                p.addEllipse(in: CGRect(x: -w*0.42, y: -w*0.42, width: w*0.84, height: w*0.84))
+                ctx.fill(p, with: .color(ink))
+            } else {
+                ctx.rotate(by: .radians(0.22))
+                var p = Path()
+                p.addRoundedRect(in: CGRect(x: -w*0.66, y: -w*0.18, width: w*1.32, height: w*0.36),
+                                 cornerSize: CGSize(width: w*0.18, height: w*0.18))
+                ctx.fill(p, with: .color(ink))
+            }
+
+        case .shy:
+            // Small eyes, gaze down and to the side
+            ctx.translateBy(x: -w * 0.16, y: h * 0.2)
+            var p = Path()
+            p.addEllipse(in: CGRect(x: -w*0.28, y: -w*0.3 * open, width: w*0.56, height: max(w*0.6 * open, w*0.18)))
+            ctx.fill(p, with: .color(ink))
+
+        case .sparkle:
+            // Big glossy eyes with twinkling highlights
+            let hh = max(h * 1.12 * open, w * 0.3)
+            ctx.fill(pillPath(w: w*1.08, h: hh), with: .color(ink))
+            if open > 0.5 {
+                let tw = 1 + 0.14 * sin(now * 6 + sd)
+                let r1 = w * 0.2 * tw, r2 = w * 0.09 * (2 - tw)
+                var big = Path()
+                big.addEllipse(in: CGRect(x: -w*0.14 - r1, y: -hh*0.22 - r1, width: r1*2, height: r1*2))
+                ctx.fill(big, with: .color(.white))
+                var small = Path()
+                small.addEllipse(in: CGRect(x: w*0.16 - r2, y: hh*0.18 - r2, width: r2*2, height: r2*2))
+                ctx.fill(small, with: .color(.white.opacity(0.9)))
+            }
+
+        case .laugh:
+            // "> <" squeezed shut
+            var p = Path()
+            p.move(to: CGPoint(x: sd*w*0.45, y: -h*0.32))
+            p.addLine(to: CGPoint(x: -sd*w*0.35, y: 0))
+            p.addLine(to: CGPoint(x: sd*w*0.45, y: h*0.32))
+            ctx.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: w*0.32, lineCap: .round, lineJoin: .round))
+
+        case .teary:
+            // Eyes welling up: wobbling water line inside the pill
+            let hh = max(h * open, w * 0.3)
+            let pill = pillPath(w: w, h: hh)
+            ctx.fill(pill, with: .color(ink))
+            var wc = ctx
+            wc.clip(to: pill)
+            let waterY = hh * 0.05 + sin(now * 5 + sd) * h * 0.04
+            var water = Path()
+            water.move(to: CGPoint(x: -w, y: waterY))
+            water.addQuadCurve(to: CGPoint(x: w, y: waterY), control: CGPoint(x: 0, y: waterY - h * 0.1))
+            water.addLine(to: CGPoint(x: w, y: hh))
+            water.addLine(to: CGPoint(x: -w, y: hh))
+            water.closeSubpath()
+            wc.fill(water, with: .color(Color(hex: "#7CC7FF").opacity(0.85)))
+            var hi = Path()
+            hi.addEllipse(in: CGRect(x: -w*0.3, y: -hh*0.34, width: w*0.28, height: w*0.28))
+            wc.fill(hi, with: .color(.white.opacity(0.9)))
+
+        case .determined:
+            // Focused: lowered inner lid + a firm brow
+            let hh = max(h * 0.95 * open, w * 0.3)
+            var lc = ctx
+            lc.clip(to: eyeLidRegion(sd: sd, w: w, innerY: -hh/2 + hh*0.36, outerY: -hh/2 + hh*0.1))
+            lc.fill(pillPath(w: w, h: hh), with: .color(ink))
+            var brow = Path()
+            brow.move(to: CGPoint(x: -sd*w*0.55, y: -hh/2 - h*0.06))
+            brow.addLine(to: CGPoint(x: sd*w*0.62, y: -hh/2 - h*0.32))
+            ctx.stroke(brow, with: .color(ink), style: StrokeStyle(lineWidth: w*0.22, lineCap: .round))
+
+        case .wobbly:
+            // "~" flustered squiggle
+            var p = Path()
+            let steps = 16
+            for i in 0...steps {
+                let u = CGFloat(i) / CGFloat(steps)
+                let x = -w*0.7 + u * w * 1.4
+                let y = sin(u * .pi * 2 + now * 8 * sd) * h * 0.12
+                if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+            }
+            ctx.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: w*0.26, lineCap: .round, lineJoin: .round))
         }
+    }
+
+    private func pillPath(w: CGFloat, h: CGFloat) -> Path {
+        var p = Path()
+        p.addRoundedRect(in: CGRect(x: -w/2, y: -h/2, width: w, height: h),
+                         cornerSize: CGSize(width: min(w/2, h/2), height: min(w/2, h/2)))
+        return p
+    }
+
+    /// Region under an eyelid line running from the eye's inner corner (toward the face centre)
+    /// to its outer corner. Screen y grows downward, so a larger y means a lower lid.
+    private func eyeLidRegion(sd: CGFloat, w: CGFloat, innerY: CGFloat, outerY: CGFloat) -> Path {
+        let d = outerY - innerY
+        var p = Path()
+        p.move(to: CGPoint(x: -sd * w * 1.5, y: innerY - 0.25 * d))
+        p.addLine(to: CGPoint(x: sd * w * 1.5, y: outerY + 0.25 * d))
+        p.addLine(to: CGPoint(x: sd * w * 1.5, y: w * 4))
+        p.addLine(to: CGPoint(x: -sd * w * 1.5, y: w * 4))
+        p.closeSubpath()
+        return p
     }
 
     private func drawBadge(context: GraphicsContext, size: CGSize, badge: BadgeType, R: CGFloat, rx: CGFloat, ry: CGFloat, cx: CGFloat, cy: CGFloat) {
@@ -1779,6 +2234,39 @@ final class BotEngine: ObservableObject {
             case .z:
                 pctx.draw(Text("z").font(.system(size: sz*1.9, weight: .bold)).foregroundColor(Color(red: 0.82, green: 0.86, blue: 0.92)),
                           at: .zero)
+            case .tear:
+                var drop = Path()
+                drop.move(to: CGPoint(x: 0, y: -sz*0.9))
+                drop.addQuadCurve(to: CGPoint(x: 0, y: sz*0.55), control: CGPoint(x: sz*0.7, y: sz*0.25))
+                drop.addQuadCurve(to: CGPoint(x: 0, y: -sz*0.9), control: CGPoint(x: -sz*0.7, y: sz*0.25))
+                pctx.fill(drop, with: .color(Color(hex: "#7CC7FF").opacity(0.9)))
+                var shine = Path()
+                shine.addEllipse(in: CGRect(x: -sz*0.22, y: -sz*0.05, width: sz*0.18, height: sz*0.26))
+                pctx.fill(shine, with: .color(.white.opacity(0.7)))
+            case .question:
+                pctx.rotate(by: .radians(sin(CGFloat(p.age) * 4) * 0.2))
+                pctx.draw(Text("?").font(.system(size: sz*2.1, weight: .heavy, design: .rounded))
+                            .foregroundColor(Color(hex: "#38BDF8")), at: .zero)
+            case .anger:
+                // Popping "vein" mark: four bent strokes around a gap
+                let pop = 1 + 0.25 * sin(min(1, k * 4) * .pi)
+                pctx.scaleBy(x: pop, y: pop)
+                for q in 0..<4 {
+                    var g = pctx
+                    g.rotate(by: .radians(CGFloat(q) * .pi / 2 + .pi / 4))
+                    var arc = Path()
+                    arc.move(to: CGPoint(x: sz*0.22, y: -sz*0.62))
+                    arc.addQuadCurve(to: CGPoint(x: sz*0.62, y: -sz*0.22), control: CGPoint(x: sz*0.2, y: -sz*0.2))
+                    g.stroke(arc, with: .color(Color(hex: "#F4505E")),
+                             style: StrokeStyle(lineWidth: sz*0.2, lineCap: .round))
+                }
+            case .puff:
+                // Small sigh cloud
+                for (dx, dy, r) in [(-0.35, 0.05, 0.42), (0.1, -0.18, 0.5), (0.45, 0.08, 0.36)] as [(CGFloat, CGFloat, CGFloat)] {
+                    var c = Path()
+                    c.addEllipse(in: CGRect(x: (dx - r) * sz, y: (dy - r) * sz, width: r * 2 * sz, height: r * 2 * sz))
+                    pctx.fill(c, with: .color(Color(red: 0.86, green: 0.9, blue: 0.95, opacity: 0.85)))
+                }
             }
         }
     }
@@ -1892,16 +2380,21 @@ private func emoteEyeShape(_ e: BotEmote) -> EyeShape {
     case .yawn:      return .tired
     case .happy:     return .happy
     case .annoyed:   return .line
-    case .sleepy:    return .closed
-    case .confused:  return .dot
-    case .excited:   return .star
-    case .shy:       return .line
-    case .sad:       return .tired
-    case .curious:   return .wide
-    case .bored:     return .flat
-    case .scared:    return .wide
-    case .grumpy:    return .flat
-    case .smug:      return .wink
+    case .sleepy:     return .drowsy
+    case .confused:   return .confused
+    case .excited:    return .sparkle
+    case .shy:        return .shy
+    case .sad:        return .sad
+    case .curious:    return .curious
+    case .bored:      return .halfLid
+    case .scared:     return .scared
+    case .grumpy:     return .angry
+    case .smug:       return .smug
+    case .laughing:   return .laugh
+    case .crying:     return .teary
+    case .relieved:   return .closed
+    case .determined: return .determined
+    case .flustered:  return .wobbly
     }
 }
 
