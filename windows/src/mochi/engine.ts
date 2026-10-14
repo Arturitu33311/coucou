@@ -14,7 +14,10 @@ import { drawOutfitBehind, drawOutfitFront, mochiH } from "./wardrobe";
 
 export type EyeShape =
   | "pill" | "wide" | "dot" | "line" | "flat" | "happy" | "closed"
-  | "spiral" | "heart" | "star" | "tired" | "wink" | "cup";
+  | "spiral" | "heart" | "star" | "tired" | "wink" | "cup"
+  // The Mac's own eyes for the newer emotes (BotEngine.swift EyeShape).
+  | "drowsy" | "sad" | "angry" | "halfLid" | "smug" | "scared" | "curious" | "confused" | "shy"
+  | "sparkle" | "laugh" | "teary" | "determined" | "wobbly";
 
 export type BadgeKind = "dots" | "bang" | "question" | "dot";
 
@@ -55,7 +58,7 @@ interface BotStateCfg {
 }
 
 interface Particle {
-  type: "heart" | "star" | "spark" | "sweat" | "z";
+  type: "heart" | "star" | "spark" | "sweat" | "z" | "tear" | "question" | "anger" | "puff";
   x: number; y: number; vx: number; vy: number;
   age: number; life: number; rot: number; size: number;
 }
@@ -117,7 +120,13 @@ const DANCE_BEAT_S = 1.4;
 const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
   love: "heart", surprised: "dot", proud: "star", wink: "wink",
   yawn: "tired", happy: "happy", annoyed: "line", dance: "happy",
+  sleepy: "drowsy", confused: "confused", excited: "sparkle", shy: "shy", sad: "sad",
+  curious: "curious", bored: "halfLid", scared: "scared", grumpy: "angry", smug: "smug",
+  laughing: "laugh", crying: "teary", relieved: "closed", determined: "determined", flustered: "wobbly",
 };
+
+/** Hold time (ms) of an emote's "hold" key: never zero or negative, so a short emote cannot stall a tween. */
+const holdMs = (duration: number, minus: number) => Math.max(0.016, duration - minus) * 1000;
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -484,7 +493,173 @@ export class BotEngine {
         this.eyeOverrideUntil = t + 0.8;
         setTimeout(() => Sound.play("annoyed"), 60);
         break;
+
+      // ── The Mac's newer fifteen (BotEngine.swift triggerEmote), same keys and timings ──
+      case "sleepy":
+        // Sinks slowly… then jolts awake with a blink, and sinks again.
+        this.anim("oy", [
+          [0.09, 700, Ease.inOut], [-0.05, 90, Ease.out],
+          [0.06, holdMs(duration, 0.79), Ease.inOut], [0, 300, Ease.back],
+        ]);
+        this.anim("tilt", [
+          [0.12, 700, Ease.inOut], [0, 120, Ease.out],
+          [0.08, holdMs(duration, 0.82), Ease.inOut], [0, 300, Ease.inOut],
+        ]);
+        setTimeout(() => { this.blink(); this.emit("z", 2); }, 700);
+        break;
+      case "confused":
+        // Puzzled tilt one way, then the other, with a floating "?".
+        this.anim("tilt", [
+          [-0.18, 280, Ease.inOut], [0.16, 460, Ease.inOut],
+          [0.16, holdMs(duration, 1.1), Ease.lin], [0, 300, Ease.out],
+        ]);
+        this.anim("yaw", [[0.25, 300, Ease.inOut], [-0.2, 460, Ease.inOut], [0, 400, Ease.inOut]]);
+        this.emitAt("question", 0.5, -0.55, { vx: 0.05, vy: -0.25, life: 1.4, size: 0.2 });
+        break;
+      case "excited":
+        // Double hop with stretch, stars and sparks.
+        this.squash();
+        this.emit("spark", 6);
+        this.emit("star", 2);
+        this.anim("oy", [[-0.3, 110, Ease.out], [0.02, 150, Ease.inOut], [-0.24, 110, Ease.out], [0, 200, Ease.back]]);
+        this.anim("sy", [[1.14, 110, Ease.out], [0.86, 150, Ease.inOut], [1.1, 110, Ease.out], [1, 200, Ease.back]]);
+        break;
+      case "shy":
+        // Looks down and away, shrinks a little, blushes.
+        this.anim("yaw", [[-0.55, 260, Ease.out], [-0.55, holdMs(duration, 0.6), Ease.lin], [0, 340, Ease.inOut]]);
+        this.anim("pitch", [[0.3, 260, Ease.out], [0.3, holdMs(duration, 0.6), Ease.lin], [0, 340, Ease.inOut]]);
+        this.anim("blush", [[1, 260, Ease.out], [1, holdMs(duration, 0.6), Ease.lin], [0, 340, Ease.inOut]]);
+        this.anim("sx", [[0.95, 260, Ease.out], [0.95, holdMs(duration, 0.6), Ease.lin], [1, 340, Ease.back]]);
+        break;
+      case "sad":
+        // Droops, squishes, looks down; a single tear.
+        this.anim("oy", [[0.12, 380, Ease.inOut], [0.12, holdMs(duration, 0.8), Ease.lin], [0, 420, Ease.back]]);
+        this.anim("sy", [[0.92, 380, Ease.inOut], [0.92, holdMs(duration, 0.8), Ease.lin], [1, 420, Ease.back]]);
+        this.anim("pitch", [[0.28, 380, Ease.inOut], [0.28, holdMs(duration, 0.8), Ease.lin], [0, 420, Ease.inOut]]);
+        this.emitAt("tear", -0.3, 0.12, { vx: -0.08, vy: 0.4, life: 1.0, size: 0.12, delay: 0.45 });
+        break;
+      case "curious":
+        // Leans in, head cocked, eyes widen.
+        this.anim("tilt", [[0.16, 240, Ease.out], [0.16, holdMs(duration, 0.55), Ease.lin], [0, 300, Ease.inOut]]);
+        this.anim("es", [[1.15, 200, Ease.out], [1.15, holdMs(duration, 0.5), Ease.lin], [1, 300, Ease.inOut]]);
+        this.anim("sy", [[1.06, 240, Ease.out], [1, 400, Ease.back]]);
+        break;
+      case "bored":
+        // Long sigh: deflate, a puff of air, slow refill.
+        this.anim("oy", [[0.08, 500, Ease.inOut], [0.08, holdMs(duration, 1.0), Ease.lin], [0, 500, Ease.inOut]]);
+        this.anim("sy", [[0.9, 500, Ease.inOut], [0.93, holdMs(duration, 1.0), Ease.lin], [1, 500, Ease.inOut]]);
+        this.anim("sx", [[1.05, 500, Ease.inOut], [1.03, holdMs(duration, 1.0), Ease.lin], [1, 500, Ease.inOut]]);
+        setTimeout(() => this.emitPuff(), 350);
+        break;
+      case "scared":
+        // Jumps back, shivers, cold sweat.
+        this.anim("ox", [
+          [-0.1, 50, Ease.out], [0.1, 60, Ease.inOut], [-0.08, 55, Ease.inOut],
+          [0.06, 55, Ease.inOut], [-0.04, 55, Ease.inOut], [0, 90, Ease.out],
+        ]);
+        this.anim("oy", [[-0.14, 90, Ease.out], [0, 260, Ease.back]]);
+        this.anim("sy", [[1.12, 90, Ease.out], [0.92, 160, Ease.inOut], [1, 200, Ease.back]]);
+        this.emit("sweat", 2);
+        break;
+      case "grumpy":
+        // Puffs up, holds it, huffs out.
+        this.anim("sx", [[1.08, 140, Ease.out], [1.08, holdMs(duration, 0.4), Ease.lin], [1, 220, Ease.inOut]]);
+        this.anim("sy", [[0.93, 140, Ease.out], [0.93, holdMs(duration, 0.4), Ease.lin], [1, 220, Ease.inOut]]);
+        this.anim("yaw", [[0.35, 200, Ease.out], [0.35, holdMs(duration, 0.45), Ease.lin], [0, 250, Ease.inOut]]);
+        this.emitAnger();
+        setTimeout(() => this.emitPuff(), Math.max(0.2, duration - 0.35) * 1000);
+        break;
+      case "smug":
+        // Chin up, slow tilt back, a little satisfied glow.
+        this.anim("tilt", [[-0.12, 260, Ease.out], [-0.12, holdMs(duration, 0.56), Ease.lin], [0, 300, Ease.inOut]]);
+        this.anim("oy", [[-0.06, 260, Ease.out], [-0.06, holdMs(duration, 0.56), Ease.lin], [0, 300, Ease.back]]);
+        this.anim("pitch", [[-0.2, 260, Ease.out], [-0.2, holdMs(duration, 0.56), Ease.lin], [0, 300, Ease.inOut]]);
+        this.anim("blush", [[0.4, 260, Ease.out], [0, holdMs(duration, 0.26), Ease.inOut]]);
+        break;
+      case "laughing": {
+        // Shakes with laughter: rapid little bounces, body wobble.
+        const bounces: TweenKey[] = [];
+        const n = Math.max(3, Math.floor(duration / 0.16));
+        for (let i = 0; i < n; i++) {
+          const amp = 0.1 * (1 - (i / n) * 0.6);
+          bounces.push([-amp, 70, Ease.out], [0, 90, Ease.inOut]);
+        }
+        this.anim("oy", bounces);
+        this.anim("tilt", [[-0.1, 140, Ease.out], [0.08, holdMs(duration, 0.4), Ease.inOut], [0, 260, Ease.inOut]]);
+        this.anim("blush", [[0.6, 200, Ease.out], [0.6, holdMs(duration, 0.5), Ease.lin], [0, 300, Ease.inOut]]);
+        break;
+      }
+      case "crying": {
+        // Sobs: hitching squashes and a stream of tears.
+        const sobs: TweenKey[] = [];
+        const n = Math.max(2, Math.floor(duration / 0.45));
+        for (let i = 0; i < n; i++) sobs.push([0.9, 120, Ease.out], [1.04, 160, Ease.inOut], [0.96, 170, Ease.inOut]);
+        sobs.push([1, 200, Ease.back]);
+        this.anim("sy", sobs);
+        this.anim("pitch", [[0.2, 300, Ease.out], [0.2, holdMs(duration, 0.6), Ease.lin], [0, 300, Ease.inOut]]);
+        this.emitTears(Math.max(4, Math.floor(duration * 4)));
+        break;
+      }
+      case "relieved":
+        // Big exhale: rises a little, then settles lower and softer.
+        this.anim("sy", [[1.08, 300, Ease.out], [0.92, 500, Ease.inOut], [0.95, holdMs(duration, 1.1), Ease.lin], [1, 300, Ease.back]]);
+        this.anim("sx", [[0.96, 300, Ease.out], [1.06, 500, Ease.inOut], [1.03, holdMs(duration, 1.1), Ease.lin], [1, 300, Ease.back]]);
+        this.anim("blush", [[0.4, 400, Ease.out], [0, holdMs(duration, 0.4), Ease.inOut]]);
+        setTimeout(() => this.emitPuff(), 350);
+        break;
+      case "determined":
+        // Leans forward, plants itself, a burst of sparks.
+        this.anim("pitch", [[-0.15, 200, Ease.out], [-0.15, holdMs(duration, 0.45), Ease.lin], [0, 250, Ease.inOut]]);
+        this.anim("sy", [[0.88, 120, Ease.out], [1.06, 160, Ease.out], [1.02, holdMs(duration, 0.53), Ease.lin], [1, 250, Ease.inOut]]);
+        this.anim("sx", [[1.1, 120, Ease.out], [0.97, 160, Ease.out], [1, 300, Ease.inOut]]);
+        setTimeout(() => this.emit("spark", 4), 150);
+        break;
+      case "flustered": {
+        // Flails: fast sideways jitter, blush, sweat.
+        const jitter: TweenKey[] = [];
+        const n = Math.max(4, Math.floor(duration / 0.12));
+        for (let i = 0; i < n; i++) jitter.push([i % 2 === 0 ? 0.05 : -0.05, 60, Ease.inOut]);
+        jitter.push([0, 80, Ease.out]);
+        this.anim("ox", jitter);
+        this.anim("blush", [[1, 150, Ease.out], [1, holdMs(duration, 0.45), Ease.lin], [0, 300, Ease.inOut]]);
+        this.emit("sweat", 2);
+        break;
+      }
     }
+  }
+
+  /** One particle at a fixed spot (body-relative units, same as emit()). */
+  emitAt(
+    type: Particle["type"], x: number, y: number,
+    o: { vx?: number; vy?: number; life?: number; size?: number; delay?: number } = {},
+  ) {
+    this.particles.push({
+      type, x, y, vx: o.vx ?? 0, vy: o.vy ?? 0,
+      age: -(o.delay ?? 0), life: o.life ?? 1.0,
+      rot: Math.random() * Math.PI * 2, size: o.size ?? 0.16,
+    });
+  }
+
+  /** Tears roll out of both eyes and fall. */
+  emitTears(count: number) {
+    for (let i = 0; i < count; i++) {
+      const sd = i % 2 === 0 ? -1 : 1;
+      this.emitAt("tear", sd * 0.3, 0.12, {
+        vx: sd * (0.08 + Math.random() * 0.1), vy: 0.45 + Math.random() * 0.2,
+        life: 0.9, size: 0.12, delay: i * 0.18,
+      });
+    }
+  }
+
+  /** A sigh cloud drifting out from the side of the face. */
+  emitPuff() {
+    const side = Math.random() < 0.5 ? 1 : -1;
+    this.emitAt("puff", side * 0.5, 0.22, { vx: side * 0.35, vy: -0.12, life: 1.1, size: 0.14 });
+  }
+
+  /** A "vein" mark that pops at the top corner of the head. */
+  emitAnger() {
+    this.emitAt("anger", 0.55, -0.5, { vy: -0.04, life: 0.9, size: 0.2 });
   }
 
   emit(type: Particle["type"], count: number) {
@@ -724,6 +899,97 @@ export class BotEngine {
         this.emit("heart", 2);
         this.anim("tilt", [[-0.1, 180, Ease.out], [0.1, 340, Ease.inOut], [0, 220, Ease.inOut]]);
         this.miniNextBehavior = n + 2.6 + Math.random() * 1.5;
+        break;
+      // The Mac's newer fifteen, as they behave on a mini bot (BotEngine.swift doMiniBehaviorLoop).
+      case "sleepy":
+        if (this.locks.has("oy")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("oy", [[0.08, 480, Ease.inOut], [0, 420, Ease.inOut]]);
+        this.emit("z", 1);
+        this.miniNextBehavior = n + 3.2 + Math.random() * 1.8;
+        break;
+      case "confused":
+        if (this.locks.has("tilt")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("tilt", [[-0.14, 260, Ease.inOut], [0.14, 420, Ease.inOut], [0, 260, Ease.out]]);
+        if (Math.random() < 0.5) this.emitAt("question", 0.5, -0.55, { vy: -0.25, life: 1.2, size: 0.2 });
+        this.miniNextBehavior = n + 2.8 + Math.random() * 2.0;
+        break;
+      case "excited":
+        if (this.locks.has("oy")) { this.miniNextBehavior = n + 0.4; return; }
+        this.squash();
+        this.anim("oy", [[-0.18, 100, Ease.out], [0, 180, Ease.back]]);
+        this.miniNextBehavior = n + 1.8 + Math.random() * 1.0;
+        break;
+      case "shy":
+        this.anim("yaw", [[-0.4, 260, Ease.out], [-0.4, 300, Ease.lin], [0, 280, Ease.inOut]]);
+        this.anim("blush", [[0.5, 260, Ease.out], [0, 500, Ease.inOut]]);
+        this.miniNextBehavior = n + 3.0 + Math.random() * 2.0;
+        break;
+      case "sad":
+        if (this.locks.has("oy")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("oy", [[0.1, 500, Ease.inOut], [0, 600, Ease.inOut]]);
+        if (Math.random() < 0.35) this.emitAt("tear", -0.3, 0.12, { vx: -0.08, vy: 0.4, life: 1.0, size: 0.12, delay: 0.3 });
+        this.miniNextBehavior = n + 3.6 + Math.random() * 2.2;
+        break;
+      case "curious":
+        if (this.locks.has("tilt")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("tilt", [[0.12, 220, Ease.out], [0.12, 380, Ease.lin], [0, 240, Ease.inOut]]);
+        this.anim("es", [[1.1, 220, Ease.out], [1, 400, Ease.inOut]]);
+        this.miniNextBehavior = n + 2.4 + Math.random() * 1.6;
+        break;
+      case "bored":
+        if (this.locks.has("sy")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("sy", [[0.94, 600, Ease.inOut], [1, 700, Ease.inOut]]);
+        this.emitPuff();
+        this.miniNextBehavior = n + 3.8 + Math.random() * 2.4;
+        break;
+      case "scared":
+        if (this.locks.has("ox")) { this.miniNextBehavior = n + 0.4; return; }
+        this.anim("ox", [[0.05, 45, Ease.inOut], [-0.05, 60, Ease.inOut], [0.03, 55, Ease.inOut], [0, 70, Ease.out]]);
+        this.emit("sweat", 1);
+        this.miniNextBehavior = n + 1.8 + Math.random() * 1.4;
+        break;
+      case "grumpy":
+        if (this.locks.has("sx")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("sx", [[1.05, 90, Ease.out], [1, 220, Ease.inOut]]);
+        this.anim("sy", [[0.95, 90, Ease.out], [1, 220, Ease.inOut]]);
+        if (Math.random() < 0.5) this.emitAnger(); else this.emitPuff();
+        this.miniNextBehavior = n + 3.2 + Math.random() * 2.0;
+        break;
+      case "smug":
+        this.anim("tilt", [[-0.1, 300, Ease.out], [-0.1, 400, Ease.lin], [0, 260, Ease.inOut]]);
+        this.anim("oy", [[-0.04, 300, Ease.out], [0, 400, Ease.back]]);
+        this.miniNextBehavior = n + 2.8 + Math.random() * 2.0;
+        break;
+      case "laughing":
+        if (this.locks.has("oy")) { this.miniNextBehavior = n + 0.4; return; }
+        this.anim("oy", [
+          [-0.08, 70, Ease.out], [0, 90, Ease.inOut], [-0.07, 70, Ease.out],
+          [0, 90, Ease.inOut], [-0.05, 70, Ease.out], [0, 120, Ease.back],
+        ]);
+        this.miniNextBehavior = n + 1.6 + Math.random() * 1.4;
+        break;
+      case "crying":
+        if (this.locks.has("sy")) { this.miniNextBehavior = n + 0.4; return; }
+        this.anim("sy", [[0.9, 120, Ease.out], [1.04, 160, Ease.inOut], [1, 200, Ease.back]]);
+        this.emitTears(2);
+        this.miniNextBehavior = n + 1.4 + Math.random() * 1.0;
+        break;
+      case "relieved":
+        if (this.locks.has("sy")) { this.miniNextBehavior = n + 0.5; return; }
+        this.anim("sy", [[1.05, 400, Ease.inOut], [0.95, 600, Ease.inOut], [1, 500, Ease.inOut]]);
+        setTimeout(() => this.emitPuff(), 450);
+        this.miniNextBehavior = n + 3.4 + Math.random() * 2.0;
+        break;
+      case "determined":
+        if (this.locks.has("sy")) { this.miniNextBehavior = n + 0.4; return; }
+        this.anim("sy", [[0.9, 100, Ease.out], [1.05, 150, Ease.out], [1, 200, Ease.inOut]]);
+        this.miniNextBehavior = n + 2.6 + Math.random() * 1.6;
+        break;
+      case "flustered":
+        if (this.locks.has("ox")) { this.miniNextBehavior = n + 0.4; return; }
+        this.anim("ox", [[0.04, 55, Ease.inOut], [-0.04, 55, Ease.inOut], [0.04, 55, Ease.inOut], [-0.03, 55, Ease.inOut], [0, 70, Ease.out]]);
+        this.anim("blush", [[0.8, 150, Ease.out], [0, 700, Ease.inOut]]);
+        this.miniNextBehavior = n + 2.0 + Math.random() * 1.5;
         break;
       default:
         this.miniNextBehavior = n + 3.0 + Math.random() * 2.0;
@@ -993,6 +1259,195 @@ export class BotEngine {
           x.stroke();
         }
         break;
+      // ── The Mac's own eyes for the newer emotes (BotEngine.swift drawEyeShape) ──
+      case "drowsy": {
+        // Heavy lid that sinks and recovers, like fighting sleep.
+        const hh = Math.max(h * this.open, w * 0.3);
+        const lidY = -hh / 2 + hh * (0.48 + 0.16 * Math.sin(t * 1.3));
+        x.save();
+        this.lidClip(x, sd, w, lidY, lidY);
+        roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
+        x.fill();
+        x.restore();
+        this.eyeLine(x, -w * 0.62, lidY, w * 0.62, lidY, w * 0.16);
+        break;
+      }
+      case "sad": {
+        // Outer corners droop, glossy highlight.
+        const hh = Math.max(h * 0.88 * this.open, w * 0.3);
+        x.save();
+        this.lidClip(x, sd, w, -hh / 2 + hh * 0.08, -hh / 2 + hh * 0.55);
+        roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
+        x.fill();
+        x.fillStyle = "rgba(255,255,255,0.85)";
+        x.beginPath();
+        x.arc(-sd * w * 0.14, -hh * 0.08, w * 0.12, 0, Math.PI * 2);
+        x.fill();
+        x.restore();
+        break;
+      }
+      case "angry": {
+        // Steep inward V: scowl without brows.
+        const hh = Math.max(h * 0.9 * this.open, w * 0.3);
+        x.save();
+        this.lidClip(x, sd, w, -hh / 2 + hh * 0.62, -hh / 2 + hh * 0.08);
+        roundRectPath(x, -w * 0.525, -hh / 2, w * 1.05, hh, Math.min(w * 0.525, hh / 2));
+        x.fill();
+        x.restore();
+        break;
+      }
+      case "halfLid": {
+        // Flat, unimpressed lids at half height.
+        const hh = Math.max(h * this.open, w * 0.3);
+        const lidY = -hh / 2 + hh * 0.5;
+        x.save();
+        this.lidClip(x, sd, w, lidY, lidY);
+        roundRectPath(x, -w * 0.525, -hh / 2, w * 1.05, hh, Math.min(w * 0.525, hh / 2));
+        x.fill();
+        x.restore();
+        this.eyeLine(x, -w * 0.6, lidY, w * 0.6, lidY, w * 0.14);
+        break;
+      }
+      case "smug": {
+        // Lazy lids + side-eye (both eyes glance the same way).
+        const hh = Math.max(h * this.open, w * 0.3);
+        x.translate(w * 0.14, 0);
+        const inner = -hh / 2 + hh * 0.4, outer = -hh / 2 + hh * 0.58;
+        x.save();
+        this.lidClip(x, sd, w, inner, outer);
+        roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
+        x.fill();
+        x.restore();
+        this.eyeLine(x, -sd * w * 0.6, inner - (outer - inner) * 0.1, sd * w * 0.6, outer + (outer - inner) * 0.1, w * 0.14);
+        break;
+      }
+      case "scared": {
+        // Tall trembling eyes with a small catch-light.
+        x.translate(Math.sin(t * 42) * w * 0.05, 0);
+        const hh = Math.max(h * 1.3 * this.open, w * 0.3);
+        roundRectPath(x, -w * 0.475, -hh / 2, w * 0.95, hh, Math.min(w * 0.475, hh / 2));
+        x.fill();
+        if (this.open > 0.5) {
+          x.fillStyle = "rgba(255,255,255,0.9)";
+          x.beginPath();
+          x.arc(-w * 0.15, -hh * 0.32 + w * 0.15, w * 0.15, 0, Math.PI * 2);
+          x.fill();
+          x.fillStyle = ink;
+        }
+        break;
+      }
+      case "curious": {
+        // One eye bigger and raised: the "hm?" look.
+        const k = sd > 0 ? 1.22 : 0.88;
+        if (sd > 0) x.translate(0, -h * 0.07);
+        const hh = Math.max(h * k * this.open, w * 0.3);
+        roundRectPath(x, -(w * k) / 2, -hh / 2, w * k, hh, Math.min((w * k) / 2, hh / 2));
+        x.fill();
+        break;
+      }
+      case "confused":
+        // "o -": one round eye, one tilted dash.
+        if (sd < 0) {
+          x.beginPath();
+          x.arc(0, 0, w * 0.42, 0, Math.PI * 2);
+          x.fill();
+        } else {
+          x.rotate(0.22);
+          roundRectPath(x, -w * 0.66, -w * 0.18, w * 1.32, w * 0.36, w * 0.18);
+          x.fill();
+        }
+        break;
+      case "shy": {
+        // Small eyes, gaze down and to the side.
+        x.translate(-w * 0.16, h * 0.2);
+        const hh = Math.max(w * 0.6 * this.open, w * 0.18);
+        x.beginPath();
+        x.ellipse(0, -w * 0.3 * this.open + hh / 2, w * 0.28, hh / 2, 0, 0, Math.PI * 2);
+        x.fill();
+        break;
+      }
+      case "sparkle": {
+        // Big glossy eyes with twinkling highlights.
+        const hh = Math.max(h * 1.12 * this.open, w * 0.3);
+        roundRectPath(x, -w * 0.54, -hh / 2, w * 1.08, hh, Math.min(w * 0.54, hh / 2));
+        x.fill();
+        if (this.open > 0.5) {
+          const tw = 1 + 0.14 * Math.sin(t * 6 + sd);
+          const r1 = w * 0.2 * tw, r2 = w * 0.09 * (2 - tw);
+          x.fillStyle = "#fff";
+          x.beginPath();
+          x.arc(-w * 0.14, -hh * 0.22, r1, 0, Math.PI * 2);
+          x.fill();
+          x.fillStyle = "rgba(255,255,255,0.9)";
+          x.beginPath();
+          x.arc(w * 0.16, hh * 0.18, r2, 0, Math.PI * 2);
+          x.fill();
+          x.fillStyle = ink;
+        }
+        break;
+      }
+      case "laugh":
+        // "> <" squeezed shut.
+        x.lineWidth = w * 0.32;
+        x.lineCap = "round";
+        x.lineJoin = "round";
+        x.beginPath();
+        x.moveTo(sd * w * 0.45, -h * 0.32);
+        x.lineTo(-sd * w * 0.35, 0);
+        x.lineTo(sd * w * 0.45, h * 0.32);
+        x.stroke();
+        break;
+      case "teary": {
+        // Eyes welling up: a wobbling water line inside the pill.
+        const hh = Math.max(h * this.open, w * 0.3);
+        x.save();
+        roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
+        x.fill();
+        x.clip();
+        const waterY = hh * 0.05 + Math.sin(t * 5 + sd) * h * 0.04;
+        x.fillStyle = "rgba(124,199,255,0.85)";
+        x.beginPath();
+        x.moveTo(-w, waterY);
+        x.quadraticCurveTo(0, waterY - h * 0.1, w, waterY);
+        x.lineTo(w, hh);
+        x.lineTo(-w, hh);
+        x.closePath();
+        x.fill();
+        x.fillStyle = "rgba(255,255,255,0.9)";
+        x.beginPath();
+        x.arc(-w * 0.16, -hh * 0.34 + w * 0.14, w * 0.14, 0, Math.PI * 2);
+        x.fill();
+        x.restore();
+        break;
+      }
+      case "determined": {
+        // Focused: lowered inner lid + a firm brow.
+        const hh = Math.max(h * 0.95 * this.open, w * 0.3);
+        x.save();
+        this.lidClip(x, sd, w, -hh / 2 + hh * 0.36, -hh / 2 + hh * 0.1);
+        roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
+        x.fill();
+        x.restore();
+        this.eyeLine(x, -sd * w * 0.55, -hh / 2 - h * 0.06, sd * w * 0.62, -hh / 2 - h * 0.32, w * 0.22);
+        break;
+      }
+      case "wobbly": {
+        // "~" flustered squiggle.
+        x.lineWidth = w * 0.26;
+        x.lineCap = "round";
+        x.lineJoin = "round";
+        x.beginPath();
+        const steps = 16;
+        for (let i = 0; i <= steps; i++) {
+          const u = i / steps;
+          const px = -w * 0.7 + u * w * 1.4;
+          const py = Math.sin(u * Math.PI * 2 + t * 8 * sd) * h * 0.12;
+          if (i === 0) x.moveTo(px, py);
+          else x.lineTo(px, py);
+        }
+        x.stroke();
+        break;
+      }
       case "cup": {
         // Flat top, rounded bottom corners (U shape) — used while the box is open
         const hh = Math.max(h * this.open, w * 0.3);
@@ -1009,6 +1464,31 @@ export class BotEngine {
         break;
       }
     }
+  }
+
+  /**
+   * Clips to the region under an eyelid line running from the eye's inner corner (toward the face
+   * centre) to its outer corner. y grows downward, so a larger y is a lower lid. Wrap in save/restore.
+   */
+  private lidClip(x: CanvasRenderingContext2D, sd: number, w: number, innerY: number, outerY: number) {
+    const d = outerY - innerY;
+    x.beginPath();
+    x.moveTo(-sd * w * 1.5, innerY - 0.25 * d);
+    x.lineTo(sd * w * 1.5, outerY + 0.25 * d);
+    x.lineTo(sd * w * 1.5, w * 4);
+    x.lineTo(-sd * w * 1.5, w * 4);
+    x.closePath();
+    x.clip();
+  }
+
+  /** A round-capped stroke in the eye's ink. */
+  private eyeLine(x: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, width: number) {
+    x.lineWidth = width;
+    x.lineCap = "round";
+    x.beginPath();
+    x.moveTo(x0, y0);
+    x.lineTo(x1, y1);
+    x.stroke();
   }
 
   /** Mailbox slot: dark pill cut into the box face, with rim and lip highlights. */
@@ -1233,6 +1713,53 @@ export class BotEngine {
           x.textAlign = "center";
           x.textBaseline = "middle";
           x.fillText("z", 0, 0);
+          break;
+        case "tear":
+          x.fillStyle = "rgba(124,199,255,0.9)";
+          x.beginPath();
+          x.moveTo(0, -sz * 0.9);
+          x.quadraticCurveTo(sz * 0.7, sz * 0.25, 0, sz * 0.55);
+          x.quadraticCurveTo(-sz * 0.7, sz * 0.25, 0, -sz * 0.9);
+          x.fill();
+          x.fillStyle = "rgba(255,255,255,0.7)";
+          x.beginPath();
+          x.ellipse(-sz * 0.13, sz * 0.08, sz * 0.09, sz * 0.13, 0, 0, Math.PI * 2);
+          x.fill();
+          break;
+        case "question":
+          x.rotate(Math.sin(p.age * 4) * 0.2);
+          x.fillStyle = "#38BDF8";
+          x.font = `800 ${sz * 2.1}px ${FONT}`;
+          x.textAlign = "center";
+          x.textBaseline = "middle";
+          x.fillText("?", 0, 0);
+          break;
+        case "anger": {
+          // Popping "vein" mark: four bent strokes around a gap.
+          const pop = 1 + 0.25 * Math.sin(Math.min(1, k * 4) * Math.PI);
+          x.scale(pop, pop);
+          x.strokeStyle = "#F4505E";
+          x.lineWidth = sz * 0.2;
+          x.lineCap = "round";
+          for (let q = 0; q < 4; q++) {
+            x.save();
+            x.rotate((q * Math.PI) / 2 + Math.PI / 4);
+            x.beginPath();
+            x.moveTo(sz * 0.22, -sz * 0.62);
+            x.quadraticCurveTo(sz * 0.2, -sz * 0.2, sz * 0.62, -sz * 0.22);
+            x.stroke();
+            x.restore();
+          }
+          break;
+        }
+        case "puff":
+          // Small sigh cloud.
+          x.fillStyle = "rgba(219,230,242,0.85)";
+          for (const [dx, dy, r] of [[-0.35, 0.05, 0.42], [0.1, -0.18, 0.5], [0.45, 0.08, 0.36]] as const) {
+            x.beginPath();
+            x.arc(dx * sz, dy * sz, r * sz, 0, Math.PI * 2);
+            x.fill();
+          }
           break;
       }
       x.restore();

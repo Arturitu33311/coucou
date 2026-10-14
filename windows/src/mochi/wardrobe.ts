@@ -895,6 +895,382 @@ export interface WardrobeState {
   t: number;
 }
 
+// ── Necktie, monocle, headband, earmuffs, bandana, wizard hat ───────────────────
+// Ports of the Mac's newer accessories (MochiOutfitDrawing.swift, final versions: the Mac's
+// `aca9129` redrew most of what `5440f3a` added). Same ids, same geometry.
+
+/** Strokes the runs of `pts` that pass `keep`, breaking the line wherever points are dropped. */
+function strokeRuns(x: Ctx, pts: P3[], keep: (p: P3) => boolean, color: string, width: number) {
+  const path = new Path2D();
+  let running = false;
+  for (const q of pts) {
+    if (keep(q)) {
+      if (running) path.lineTo(q.x, q.y);
+      else { path.moveTo(q.x, q.y); running = true; }
+    } else running = false;
+  }
+  stroke(x, path, color, width);
+}
+
+function starPath5(cx: number, cy: number, outer: number, inner: number): Path2D {
+  const p = new Path2D();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const r = i % 2 === 0 ? outer : inner;
+    const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+    if (i === 0) p.moveTo(px, py);
+    else p.lineTo(px, py);
+  }
+  p.closePath();
+  return p;
+}
+
+function drawNecktie(x: Ctx, H: MochiH) {
+  const R = H.R;
+  const simplified = R < 16;
+  const s = 1.02, yCollar = -0.56;
+  const collar = frontArcRoll(H, yCollar, s);
+  if (collar.length === 0) return;
+  strokeRuns(x, collar, () => true, "#CBD5E1", R * 0.13);
+  strokeRuns(x, collar, () => true, "#FFFFFF", R * 0.09);
+
+  const k = projRoll(H, surf(yCollar, 0, s * 1.02));
+  if (!(k.z > -0.2)) return;
+  const sq = Math.max(0.45, k.z); // narrows as Mochi turns away
+
+  x.save();
+  x.translate(k.x, k.y);
+  x.scale(sq, 1);
+  for (const sd of [-1, 1]) {
+    const pt = new Path2D();
+    pt.moveTo(sd * R * 0.04, -R * 0.05);
+    pt.lineTo(sd * R * 0.3, -R * 0.1);
+    pt.lineTo(sd * R * 0.14, R * 0.13);
+    pt.closePath();
+    x.fillStyle = "#FFFFFF";
+    x.fill(pt);
+    stroke(x, pt, "#CBD5E1", R * 0.02);
+  }
+  // The tie swings from the knot with the body's motion.
+  x.rotate(-H.physDx * 0.35);
+  const blade = new Path2D();
+  blade.moveTo(-R * 0.06, R * 0.07);
+  blade.lineTo(R * 0.06, R * 0.07);
+  blade.lineTo(R * 0.13, R * 0.62);
+  blade.lineTo(0, R * 0.78);
+  blade.lineTo(-R * 0.13, R * 0.62);
+  blade.closePath();
+  x.fillStyle = lin(x, -R * 0.13, 0, R * 0.13, 0, [[0, "#3B82F6"], [1, "#1D4ED8"]]);
+  x.fill(blade);
+  if (!simplified) {
+    x.save();
+    x.clip(blade);
+    for (let i = 0; i < 4; i++) {
+      const y0 = R * (0.16 + i * 0.16);
+      const st = new Path2D();
+      st.moveTo(-R * 0.2, y0);
+      st.lineTo(R * 0.2, y0 + R * 0.12);
+      stroke(x, st, "rgba(251,191,36,0.85)", R * 0.035, "butt");
+    }
+    x.restore();
+  }
+  const knot = new Path2D();
+  knot.moveTo(-R * 0.09, -R * 0.05);
+  knot.lineTo(R * 0.09, -R * 0.05);
+  knot.lineTo(R * 0.06, R * 0.09);
+  knot.lineTo(-R * 0.06, R * 0.09);
+  knot.closePath();
+  x.fillStyle = "#1E40AF";
+  x.fill(knot);
+  x.restore();
+}
+
+function drawMonocle(x: Ctx, H: MochiH, bodyPath: Path2D) {
+  const re = eyeFrames(mochiH(H.R, H.yaw, H.pitch + H.roll, H.physDx, H.physDy)).find((e) => e.sd > 0);
+  if (!re || !re.visible) return;
+  const d = H.R * 0.54;
+  x.save();
+  x.clip(bodyPath);
+
+  // Chain hangs from the rim and sags with motion.
+  const sx0 = re.x + (d / 2) * re.fx * 0.7, sy0 = re.y + d * 0.36;
+  const ex = H.rx * 1.02, ey = H.ry * 0.45;
+  const chain = new Path2D();
+  chain.moveTo(sx0, sy0);
+  chain.quadraticCurveTo(
+    (sx0 + ex) / 2 - H.physDx * H.R * 0.25,
+    Math.max(sy0, ey) + H.R * (0.22 + H.physDy * 0.15),
+    ex, ey,
+  );
+  x.setLineDash([H.R * 0.035, H.R * 0.045]);
+  stroke(x, chain, "#B8860B", H.R * 0.028);
+  x.setLineDash([]);
+
+  x.translate(re.x, re.y);
+  x.scale(re.fx, re.fy);
+  const lens = ellipse(x, 0, 0, d / 2, d / 2);
+  x.fillStyle = rad(x, -d * 0.15, -d * 0.15, d * 0.6, [[0, "rgba(217,240,255,0.08)"], [1, "rgba(191,224,255,0.30)"]]);
+  x.fill(lens);
+  stroke(x, lens, "#D4AF37", H.R * 0.075);
+  stroke(x, ellipse(x, 0, 0, d / 2 - H.R * 0.05, d / 2 - H.R * 0.05), "rgba(138,106,16,0.6)", H.R * 0.02);
+  const glint = new Path2D();
+  glint.arc(0, 0, d / 2 - H.R * 0.07, Math.PI * 1.1, Math.PI * 1.4, false);
+  stroke(x, glint, "rgba(255,255,255,0.65)", H.R * 0.035);
+  // A little ring where the chain is fastened.
+  const lr = H.R * 0.035;
+  stroke(x, ellipse(x, d * 0.35, d * 0.36, lr, lr), "#D4AF37", H.R * 0.02);
+  x.restore();
+}
+
+function drawHeadband(x: Ctx, H: MochiH) {
+  const s = 1.04, y0 = 0.32;
+  const arc = frontArcRoll(H, y0, s);
+  if (arc.length === 0) return;
+  strokeRuns(x, arc, () => true, "#DB2777", H.ry * 0.19);
+  strokeRuns(x, arc, () => true, "#F472B6", H.ry * 0.14);
+  const shine = arc.map((q) => ({ x: q.x, y: q.y - H.ry * 0.03, z: q.z }));
+  strokeRuns(x, shine, () => true, "rgba(255,255,255,0.35)", H.ry * 0.035);
+
+  // The bow sits at a fixed spot on the band and turns with the head.
+  const lon = 0.8;
+  const b = projRoll(H, surf(y0 + 0.04, lon, s * 1.03));
+  if (!(b.z > -0.15)) return;
+  const w = H.R * 0.17;
+  const sq = Math.max(0.4, Math.cos(lon + H.yaw));
+  x.save();
+  x.translate(b.x, b.y);
+  x.rotate(0.3 + H.yaw * 0.3 + H.physDx * 0.15);
+  x.scale(sq, 1);
+  for (const sd of [-1, 1]) {
+    const wing = new Path2D();
+    wing.moveTo(0, 0);
+    wing.bezierCurveTo(sd * w * 0.55, -w * 0.85, sd * w * 1.35, -w * 0.55, sd * w * 1.15, 0);
+    wing.bezierCurveTo(sd * w * 1.35, w * 0.55, sd * w * 0.55, w * 0.85, 0, 0);
+    x.fillStyle = lin(x, 0, -w, 0, w, [[0, "#F9A8D4"], [1, "#DB2777"]]);
+    x.fill(wing);
+  }
+  x.fillStyle = "#BE185D";
+  x.fill(ellipse(x, 0, 0, w * 0.22, w * 0.28));
+  x.restore();
+}
+
+/** Over-the-head band: left ear → crown → right ear, in the head's side plane. */
+function earmuffBandPts(H: MochiH): P3[] {
+  const s = 1.06, n = 16, yLow = 0.12;
+  const pts: P3[] = [];
+  for (let i = 0; i <= n; i++) {
+    const y = yLow + ((1 - yLow) * i) / n;
+    const p = surf(y, -Math.PI / 2, s);
+    pts.push(proj(H, [p[0], p[1] * 1.05, p[2]]));
+  }
+  for (let i = n - 1; i >= 0; i--) {
+    const y = yLow + ((1 - yLow) * i) / n;
+    const p = surf(y, Math.PI / 2, s);
+    pts.push(proj(H, [p[0], p[1] * 1.05, p[2]]));
+  }
+  return pts;
+}
+
+/** Front pass draws what faces the viewer; the behind pass draws the far side. */
+function drawEarmuffs(x: Ctx, H: MochiH, front: boolean) {
+  const keep = (q: P3) => (front ? q.z >= -0.02 : q.z < -0.02);
+  const band = earmuffBandPts(H);
+  strokeRuns(x, band, keep, "#4B5563", H.R * 0.1);
+  strokeRuns(x, band, keep, "#9CA3AF", H.R * 0.055);
+  for (const sd of [-1, 1]) {
+    const c = proj(H, [sd * 1.04, 0.12, 0]);
+    if (!keep(c)) continue;
+    drawPompom(x, c.x + H.physDx * H.rx * 0.08, c.y + H.physDy * H.ry * 0.08, H.R * 0.27, "#FBCFE8", "#EC4899");
+  }
+}
+
+function drawBandanaKnot(x: Ctx, H: MochiH, front: boolean) {
+  const k = proj(H, surf(0.42, 1.2, 1.03 * 1.04));
+  if (front ? !(k.z > 0) : !(k.z <= 0)) return;
+  const R = H.R;
+  const sway = H.physDx * 0.45;
+  x.save();
+  x.translate(k.x, k.y);
+  for (const [angle, len] of [[0.55, 0.42], [1.15, 0.36]] as const) {
+    x.save();
+    x.rotate(angle + sway);
+    const tail = new Path2D();
+    tail.moveTo(0, 0);
+    tail.quadraticCurveTo(R * len * 0.5, -R * 0.13, R * len, 0);
+    tail.quadraticCurveTo(R * len * 0.5, R * 0.1, 0, 0);
+    x.fillStyle = lin(x, 0, 0, R * len, 0, [[0, "#EF4444"], [1, "#991B1B"]]);
+    x.fill(tail);
+    x.restore();
+  }
+  x.fillStyle = "#DC2626";
+  x.fill(ellipse(x, 0, 0, R * 0.1, R * 0.08));
+  x.restore();
+}
+
+function drawBandana(x: Ctx, H: MochiH, bodyPath: Path2D, simplified: boolean) {
+  const s = 1.03, yEdge = 0.4;
+  const head = outfitPath(H.rx * s, H.ry * s);
+
+  // Shadow on the head under the edge.
+  x.save();
+  x.clip(bodyPath);
+  x.clip(capClip(H, yEdge - 0.1, 1));
+  fillRect(x, H, "rgba(70,20,10,0.10)");
+  x.restore();
+
+  // Cloth cap.
+  x.save();
+  x.clip(capClip(H, yEdge, s));
+  x.fillStyle = lin(x, H.rx * 0.5, -H.ry * 1.1, -H.rx * 0.6, H.ry * 0.2, [[0, "#F87171"], [1, "#B91C1C"]]);
+  x.fill(head);
+  if (!simplified) {
+    x.save();
+    x.clip(head);
+    const dots: [number, number, boolean][] = [
+      [-0.3, 0.75, true], [0.25, 0.8, true], [0, 0.95, false],
+      [-0.55, 0.92, false], [0.55, 0.9, false], [-0.05, 0.62, false],
+    ];
+    for (const [lon, y, ringed] of dots) {
+      const q = proj(H, surf(y, lon, s));
+      if (!(q.z > 0.05)) continue;
+      const r = H.R * 0.05 * q.z;
+      x.fillStyle = "rgba(255,255,255,0.8)";
+      x.fill(ellipse(x, q.x, q.y, r, r));
+      if (ringed) stroke(x, ellipse(x, q.x, q.y, r * 2, r * 2), "rgba(255,255,255,0.45)", r * 0.45);
+    }
+    // Fold creases radiating from the knot side.
+    for (const [lon, y] of [[0.7, 0.62], [0.45, 0.78]] as const) {
+      const a = proj(H, surf(yEdge + 0.04, 1.15, s));
+      const b = proj(H, surf(y, lon, s));
+      if (!(b.z > 0)) continue;
+      const cr = new Path2D();
+      cr.moveTo(a.x, a.y);
+      cr.quadraticCurveTo((a.x + b.x) / 2, Math.min(a.y, b.y) - H.R * 0.05, b.x, b.y);
+      stroke(x, cr, "rgba(90,0,0,0.22)", H.R * 0.04);
+    }
+    x.restore();
+  }
+  x.restore();
+
+  // Rolled edge band.
+  x.save();
+  x.clip(capClip(H, yEdge - 0.02, s));
+  x.clip(invert(capClip(H, yEdge + 0.1, s), H), "evenodd");
+  x.fillStyle = "#991B1B";
+  x.fill(head);
+  x.restore();
+
+  // Top highlight.
+  x.save();
+  x.clip(capClip(H, yEdge, s));
+  x.clip(head);
+  x.fillStyle = rad(x, H.rx * 0.3, -H.ry * 0.85, H.R * 0.45, [[0, "rgba(255,255,255,0.3)"], [1, "rgba(255,255,255,0)"]]);
+  x.fill(head);
+  x.restore();
+
+  drawBandanaKnot(x, H, true);
+}
+
+function wizardBrim(H: MochiH): P3[] {
+  const y = 0.68, rr = 1.3;
+  const out: P3[] = [];
+  for (let i = 0; i <= 120; i++) {
+    const a = -Math.PI + (i / 120) * 2 * Math.PI;
+    const wob = 1 + 0.03 * Math.sin(a * 3 + 0.4);
+    out.push(proj(H, [rr * wob * Math.sin(a), y, rr * wob * Math.cos(a)]));
+  }
+  return out;
+}
+
+function drawWizardHatBack(x: Ctx, H: MochiH) {
+  const ell = polyline(wizardBrim(H));
+  ell.closePath();
+  x.fillStyle = lin(x, 0, -H.ry, 0, -H.ry * 0.4, [[0, "#1E3A8A"], [1, "#172554"]]);
+  x.fill(ell);
+}
+
+function drawWizardHatFront(x: Ctx, H: MochiH, bodyPath: Path2D) {
+  const simplified = H.R < 16;
+  const all = wizardBrim(H);
+  const brim = polyline(all);
+  brim.closePath();
+  const fr = all.filter((q) => q.z >= 0).sort((a, b) => a.x - b.x);
+
+  // Shadow on the head.
+  x.save();
+  x.clip(bodyPath);
+  x.clip(capClip(H, 0.48, 1));
+  fillRect(x, H, "rgba(10,10,50,0.10)");
+  x.restore();
+
+  x.fillStyle = lin(x, 0, -H.ry * 0.9, 0, -H.ry * 0.3, [[0, "#2563EB"], [1, "#1E3A8A"]]);
+  x.fill(brim);
+
+  // Tall cone; the tip trails behind motion.
+  const baseR = 0.56, by = 0.72;
+  const bl = proj(H, [-baseR, by, 0]);
+  const br = proj(H, [baseR, by, 0]);
+  const c = proj(H, [0, by, 0]);
+  const lean = 0.06 + H.physDx * 0.12;
+  const top = {
+    x: c.x + Math.sin(lean) * H.ry * 0.25 + H.physDx * H.rx * 0.18,
+    y: c.y - H.ry * 1.55 + Math.abs(H.physDx) * H.ry * 0.08,
+  };
+  const capFront = frontArc(H, by, baseR / ringR(by)).filter((q) => q.x >= bl.x - 1 && q.x <= br.x + 1);
+  const cone = new Path2D();
+  cone.moveTo(bl.x, bl.y);
+  cone.quadraticCurveTo(bl.x + H.rx * 0.1, bl.y - H.ry * 0.75, top.x, top.y);
+  cone.quadraticCurveTo(br.x - H.rx * 0.1, br.y - H.ry * 0.75, br.x, br.y);
+  for (let i = capFront.length - 1; i >= 0; i--) cone.lineTo(capFront[i].x, capFront[i].y);
+  cone.closePath();
+  x.fillStyle = lin(x, bl.x, top.y, br.x, bl.y, [[0, "#3B82F6"], [0.55, "#1D4ED8"], [1, "#172554"]]);
+  x.fill(cone);
+
+  x.save();
+  x.clip(cone);
+  // Side shading.
+  x.fillStyle = lin(x, bl.x, 0, br.x, 0, [[0, "rgba(255,255,255,0.2)"], [0.4, "rgba(255,255,255,0)"], [1, "rgba(0,0,0,0.18)"]]);
+  x.fill(cone);
+  // Gold band at the base.
+  const fc = proj(H, [0, by, baseR]);
+  const lift = H.ry * 0.1;
+  const band = new Path2D();
+  band.moveTo(bl.x - 2, bl.y - lift);
+  band.quadraticCurveTo(fc.x, 2 * (fc.y - lift) - (bl.y + br.y) / 2, br.x + 2, br.y - lift);
+  stroke(x, band, "#FBBF24", H.ry * 0.13, "butt");
+
+  if (!simplified) {
+    // Crescent moon + star emblem and a few sparkles.
+    const ex = (bl.x + br.x) / 2 + (top.x - (bl.x + br.x) / 2) * 0.42;
+    const ey = bl.y + (top.y - bl.y) * 0.42;
+    const mr = H.R * 0.12;
+    const mx = ex - H.R * 0.08, my = ey + H.R * 0.04;
+    x.save();
+    const cut = new Path2D();
+    cut.rect(mx - mr * 2, my - mr * 2, mr * 4, mr * 4);
+    cut.ellipse(mx - mr + mr * 0.5 + mr, my - mr - mr * 0.25 + mr, mr, mr, 0, 0, Math.PI * 2);
+    x.clip(cut, "evenodd");
+    x.fillStyle = "#FEF3C7";
+    x.fill(ellipse(x, mx, my, mr, mr));
+    x.restore();
+    x.fillStyle = "#FDE68A";
+    x.fill(starPath5(ex + H.R * 0.14, ey - H.R * 0.14, H.R * 0.085, H.R * 0.036));
+    for (const [tx, ty, sc] of [[0.3, 0.2, 0.8], [0.65, 0.62, 0.7], [0.4, 0.78, 0.55]] as const) {
+      const px = bl.x + (br.x - bl.x) * tx + (top.x - (bl.x + br.x) / 2) * ty;
+      const py = bl.y + (top.y - bl.y) * ty;
+      const r = H.R * 0.045 * sc;
+      const cross = new Path2D();
+      cross.moveTo(px - r, py); cross.lineTo(px + r, py);
+      cross.moveTo(px, py - r); cross.lineTo(px, py + r);
+      stroke(x, cross, "rgba(253,230,138,0.85)", r * 0.45);
+    }
+  }
+  x.restore();
+
+  // Gold trim on the front edge of the brim.
+  strokeRuns(x, fr, () => true, "#FDE68A", H.R * 0.045);
+}
+
 let scratch: HTMLCanvasElement | null = null;
 
 /** Draws into an offscreen copy and composites it at `alpha`, so overlapping parts do not ghost. */
@@ -922,8 +1298,10 @@ function layer(x: Ctx, alpha: number, fn: (c: Ctx) => void) {
   x.restore();
 }
 
-const isHat = (o: Outfit) => o === "beanie" || o === "santaHat" || o === "partyHat" || o === "crown" || o === "witchHat" || o === "nightcap";
-const followsRoll = (o: Outfit) => o === "sunglasses" || o === "roundGlasses" || o === "bow" || o === "scarf" || o === "pumpkin";
+const isHat = (o: Outfit) => o === "beanie" || o === "santaHat" || o === "partyHat" || o === "crown" || o === "witchHat" || o === "nightcap" ||
+  o === "earmuffs" || o === "bandana" || o === "wizardHat";
+const followsRoll = (o: Outfit) => o === "sunglasses" || o === "roundGlasses" || o === "bow" || o === "scarf" || o === "pumpkin" ||
+  o === "necktie" || o === "monocle" || o === "headband";
 
 /** Does this outfit turn with the body when he rolls (so the engine turns the whole canvas)? */
 export function outfitFollowsRoll(o: Outfit | null): boolean {
@@ -980,6 +1358,15 @@ export function drawOutfitBehind(x: Ctx, w: WardrobeState) {
     case "witchHat":
       layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawWitchHatBack(c, H); c.restore(); }));
       break;
+    case "wizardHat":
+      layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawWizardHatBack(c, H); c.restore(); }));
+      break;
+    case "earmuffs":
+      layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawEarmuffs(c, H, false); c.restore(); }));
+      break;
+    case "bandana":
+      layer(x, alpha, (c) => body(c, w, () => { c.save(); lift(c); drawBandanaKnot(c, H, false); c.restore(); }));
+      break;
     default:
       break;
   }
@@ -992,6 +1379,9 @@ function drawFollowing(c: Ctx, outfit: Outfit, H: MochiH, bodyPath: Path2D, simp
     case "scarf": drawScarf(c, H); break;
     case "pumpkin": drawPumpkin(c, H, bodyPath, simplified); break;
     case "bow": drawBow(c, H); break;
+    case "necktie": drawNecktie(c, H); break;
+    case "monocle": drawMonocle(c, H, bodyPath); break;
+    case "headband": drawHeadband(c, H); break;
     default: break;
   }
 }
@@ -1019,7 +1409,8 @@ export function drawOutfitFront(x: Ctx, w: WardrobeState) {
       body(c, w, () => {
         c.save();
         if (outfit === "bow") c.scale(Math.max(0.001, posP), Math.max(0.001, posP));
-        else if (outfit !== "pumpkin") c.translate(0, (1 - p) * (outfit === "scarf" ? 0.3 : 0.25) * H.ry);
+        else if (outfit === "headband") c.translate(0, -(1 - posP) * H.ry * 0.5);
+        else if (outfit !== "pumpkin") c.translate(0, (1 - p) * (outfit === "scarf" || outfit === "necktie" ? 0.3 : 0.25) * H.ry);
         drawFollowing(c, outfit, H, bodyPath, simplified);
         c.restore();
       }),
@@ -1047,6 +1438,9 @@ export function drawOutfitFront(x: Ctx, w: WardrobeState) {
         case "partyHat": drawPartyHat(c, H, simplified); break;
         case "crown": drawCrownFront(c, H, bodyPath, simplified); break;
         case "witchHat": drawWitchHatFront(c, H, bodyPath); break;
+        case "earmuffs": drawEarmuffs(c, H, true); break;
+        case "bandana": drawBandana(c, H, bodyPath, simplified); break;
+        case "wizardHat": drawWizardHatFront(c, H, bodyPath); break;
         default: break;
       }
       c.restore();

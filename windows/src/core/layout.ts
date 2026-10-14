@@ -39,7 +39,11 @@ export type BotStateName =
   | "sleeping"
   | "dizzy";
 
-export type BotEmoteName = "love" | "surprised" | "proud" | "wink" | "yawn" | "happy" | "annoyed" | "dance";
+export type BotEmoteName = "love" | "surprised" | "proud" | "wink" | "yawn" | "happy" | "annoyed" | "dance"
+  // The Mac's newer fifteen (BotEmote in IslandTypes.swift): the names are the same on every platform.
+  | "sleepy" | "confused" | "excited" | "shy" | "sad"
+  | "curious" | "bored" | "scared" | "grumpy" | "smug"
+  | "laughing" | "crying" | "relieved" | "determined" | "flustered";
 
 export type AgentLayoutMode = "none" | "grid" | "pills" | "column";
 
