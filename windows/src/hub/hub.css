@@ -147,3 +147,24 @@
 .ws > .sh-folder, .ws-picker > .sh-folder { flex: 0 0 auto; }
 .tk-jinx { opacity: 0.55; }
 .tk-jinx.on { opacity: 1; border-color: rgba(57,255,20,0.55); color: #39FF14; }
+
+/* ── Motion & feedback (additive) ───────────────────────────────────────── */
+.hub-body > * { transform-origin: 50% 0; }
+@keyframes hub-in { from { opacity: 0; transform: translateX(var(--dx, 12px)); } to { opacity: 1; transform: none; } }
+.hub-enter { animation: hub-in 0.24s cubic-bezier(0.3, 1.1, 0.4, 1) both; }
+.hub-tabs.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); }
+.hub-tabs.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 22px); mask-image: linear-gradient(90deg, transparent, #000 22px); }
+.hub-tabs.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
+.hub-tabs button, .hub-btn, .qk-btn, .tk-day, .tk-box { transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease-out; }
+.hub-tabs button:hover { opacity: 0.9; }
+.hub-btn:active, .qk-btn:active, .tk-day:active, .hub-tabs button:active { transform: scale(0.95); }
+.hub-btn:disabled:active, .qk-btn:disabled:active { transform: none; }
+.tk-box:hover { border-color: rgba(255,255,255,0.65); }
+.tk-box:active { transform: scale(0.85); }
+.sh-row { transition: background 0.15s ease; }
+.sh-row:hover { background: rgba(255,255,255,0.08); }
+@keyframes tk-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.tk-new { animation: tk-in 0.3s cubic-bezier(0.3, 1.2, 0.4, 1) both; }
+@keyframes tk-pop { 0% { transform: scale(0.8); } 55% { transform: scale(1.3); } 100% { transform: scale(1); } }
+.tk-box.pop { animation: tk-pop 0.3s ease-out; }
+.hub-wrap :is(button, input, textarea, select):focus-visible { outline: 2px solid rgba(129,140,248,0.85); outline-offset: 1px; }

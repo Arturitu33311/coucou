@@ -65,6 +65,12 @@ export function buildHub(actions: ViewActions): ViewHost {
   let mounted = "";
   // The strip scrolls sideways and its scrollbar is hidden: the ordinary mouse wheel (up and down)
   // moves it, as a touchpad's sideways swipe already does.
+  // A soft fade on the side that has more tabs, so the strip does not look cut off.
+  const edges = () => {
+    tabs.classList.toggle("fade-l", tabs.scrollLeft > 2);
+    tabs.classList.toggle("fade-r", tabs.scrollLeft + tabs.clientWidth < tabs.scrollWidth - 2);
+  };
+  tabs.addEventListener("scroll", edges, { passive: true });
   tabs.addEventListener(
     "wheel",
     (e) => {
@@ -100,16 +106,28 @@ export function buildHub(actions: ViewActions): ViewHost {
         // With ten tabs the last ones are off to the right: bring the chosen one into view.
         if (active && tabs.clientWidth > 0) {
           const a = active as HTMLElement;
-          if (a.offsetLeft < tabs.scrollLeft) tabs.scrollLeft = a.offsetLeft - 8;
-          else if (a.offsetLeft + a.offsetWidth > tabs.scrollLeft + tabs.clientWidth) tabs.scrollLeft = a.offsetLeft + a.offsetWidth - tabs.clientWidth + 8;
+          if (a.offsetLeft < tabs.scrollLeft) tabs.scrollTo({ left: a.offsetLeft - 8, behavior: "smooth" });
+          else if (a.offsetLeft + a.offsetWidth > tabs.scrollLeft + tabs.clientWidth) {
+            tabs.scrollTo({ left: a.offsetLeft + a.offsetWidth - tabs.clientWidth + 8, behavior: "smooth" });
+          }
         }
+        edges();
       }
       if (!toolById(State.hubTab)) State.hubTab = TOOLS[0]?.id ?? "";
       const current = host(State.hubTab);
       if (mounted !== State.hubTab && current) {
+        const from = TOOLS.findIndex((t) => t.id === mounted);
+        const to = TOOLS.findIndex((t) => t.id === State.hubTab);
         mounted = State.hubTab;
         clear(body);
         body.append(current.el);
+        // The panel slides in from the side its tab sits on; the very first one just appears.
+        if (from >= 0) {
+          current.el.style.setProperty("--dx", `${to > from ? 12 : -12}px`);
+          current.el.classList.remove("hub-enter");
+          void current.el.offsetWidth; // restart the animation when the same panel comes back
+          current.el.classList.add("hub-enter");
+        }
       }
       current?.sync();
     },
