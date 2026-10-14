@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from jinx_thread import Thread  # noqa: E402
+from jinx_thread import EMOTES, Thread, valid_mood  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
@@ -46,6 +46,116 @@ class Deps:
     defer_mirror: Optional[Callable[[], None]] = None
     # La Jinx real (Hermes): se usa para mostrar en el hilo lo hablado por Telegram. None = sin Hermes.
     hermes: Optional[object] = None
+    # Su `emotion_state` (el STATE.md del servidor) para `op: mood`: () -> dict, o lanza. None = no hay de dónde leerlo.
+    state: Optional[Callable[[], dict]] = None
+    # La hora local (0-23) para el ánimo de noche. None = el reloj de este equipo.
+    hour: Optional[Callable[[], int]] = None
+
+
+# ---------- ánimo ----------
+#
+# Hermes no devuelve ánimo con sus respuestas (solo texto): el ánimo de fondo sale de su `emotion_state`
+# (STATE.md del servidor, lo escribe el hook persona-engine-turn en cada mensaje de Alan) y el de una respuesta,
+# si algún día el cerebro la termina con la etiqueta oculta `[[mood:<emote>]]`, de esa etiqueta.
+
+_MOOD_TAG_RE = re.compile(r"[ \t]*\[\[\s*mood\s*:\s*([^\]]*?)\s*\]\]", re.IGNORECASE)
+
+
+def split_mood(text):
+    """(texto sin etiquetas, emote|None). Quita TODA etiqueta `[[mood:…]]`, válida o no; el emote es el de
+    la última etiqueta válida. Sin etiqueta o con una desconocida no hay emote (los clientes usan el texto)."""
+    if not isinstance(text, str) or "[[" not in text:
+        return text, None
+    mood = None
+    for m in _MOOD_TAG_RE.finditer(text):
+        mood = valid_mood(m.group(1).strip().lower()) or mood
+    return _MOOD_TAG_RE.sub("", text).strip(), mood
+
+
+def parse_emotion_state(md):
+    """Las dimensiones numéricas de `emotion_state:` en el frontmatter de STATE.md, más `last_update` y
+    `last_trigger_type` si están. Solo lo plano (dos espacios de sangría): baselines e inertia se saltan.
+    None si no hay frontmatter, bloque o ninguna dimensión."""
+    lines = (md or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+    out, inside = {}, False
+    for ln in lines[1:]:
+        if ln.strip() == "---":
+            break
+        if not inside:
+            inside = ln.rstrip() == "emotion_state:"
+            continue
+        if not ln.startswith("  "):
+            break  # sangría 0: se acabó el bloque
+        if ln.startswith("   "):
+            continue  # más hondo: baselines.*, inertia.*
+        key, _, val = ln.strip().partition(":")
+        val = val.strip().strip("'\"")
+        if key in ("last_update", "last_trigger_type") and val:
+            out[key] = val
+            continue
+        try:
+            out[key] = float(val)
+        except ValueError:
+            continue
+    return out if any(isinstance(v, float) for v in out.values()) else None
+
+
+# Umbrales sobre la escala real de Hermes: cada dimensión va de 0 a 120 y sus líneas base son
+# affection 70, trust 75, patience 65, energy 68 (emotion_calculator.py); con los valores de un día normal
+# (afecto 70, confianza 76, paciencia 66, energía 83) no hay ánimo de fondo: eso es lo esperado.
+MOOD_GRUMPY_PATIENCE = 30   # paciencia ≤ esto: gruñona
+MOOD_SAD_TRUST = 30         # confianza ≤ esto: triste
+MOOD_HAPPY_WARMTH = 78      # calidez ≥ esto: contenta (la línea base de la calidez es ~70)
+MOOD_SLEEPY_WARMTH = 40     # calidez ≤ esto: sin ganas
+MOOD_SLEEPY_ENERGY = 30     # energía ≤ esto: sin ganas
+NIGHT_FROM, NIGHT_TO = 22, 6  # de 22:00 a 05:59 (hora local): somnolienta
+
+
+def baseline_emote(emotion_state, hour):
+    """El ánimo de fondo de Jinx, un emote de EMOTES o None. Pura.
+
+    calidez = media de affection, trust y patience (las otras —worry, jealousy, boredom— suben cuando va
+    peor, no mejor). Primera regla que cumple: paciencia ≤ 30 → grumpy · confianza ≤ 30 → sad ·
+    calidez ≥ 78 → happy · calidez ≤ 40 o energía ≤ 30 → sleepy · de 22 a 6 h → sleepy · si no, None.
+    Una dimensión que falta o no es un número no cuenta (su regla no se aplica)."""
+    if not isinstance(emotion_state, dict):
+        return None
+
+    def num(key):
+        v = emotion_state.get(key)
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    patience, trust, energy = num("patience"), num("trust"), num("energy")
+    parts = [num("affection"), trust, patience]
+    warmth = sum(parts) / 3 if all(p is not None for p in parts) else None
+    if patience is not None and patience <= MOOD_GRUMPY_PATIENCE:
+        return "grumpy"
+    if trust is not None and trust <= MOOD_SAD_TRUST:
+        return "sad"
+    if warmth is not None and warmth >= MOOD_HAPPY_WARMTH:
+        return "happy"
+    if (warmth is not None and warmth <= MOOD_SLEEPY_WARMTH) or (energy is not None and energy <= MOOD_SLEEPY_ENERGY):
+        return "sleepy"
+    if isinstance(hour, int) and not isinstance(hour, bool) and (hour >= NIGHT_FROM or hour < NIGHT_TO):
+        return "sleepy"
+    return None
+
+
+def _mood_event(deps):
+    """`op: mood`: el ánimo de fondo. Nunca falla: sin STATE.md → emote null, source "text"."""
+    try:
+        state = deps.state() if deps.state else None
+    except Exception:  # noqa: BLE001 - el servidor puede no contestar; los clientes siguen con el texto
+        state = None
+    if not isinstance(state, dict):
+        return {"ev": "mood", "emote": None, "source": "text", "emotion_state": None}
+    try:
+        hour = deps.hour() if deps.hour else time.localtime().tm_hour
+    except Exception:  # noqa: BLE001
+        hour = None
+    return {"ev": "mood", "emote": baseline_emote(state, hour), "source": "state", "emotion_state": state}
 
 
 _TOKEN_RE = re.compile(r"(?:bot)?\d{6,}(?::|%3A)[A-Za-z0-9_-]{20,}", re.IGNORECASE)
@@ -124,12 +234,16 @@ def _pull_hermes(deps):
     incoming = []
     for m in items:
         role = "jinx" if m.get("role") == "assistant" else "user"
-        text = str(m.get("text", ""))
+        # La etiqueta de ánimo nunca llega al hilo: lo local ya se guardó sin ella y la comparación es por texto.
+        text, mood = split_mood(str(m.get("text", "")))
         if not text.strip() or (role, text.strip()) in known:
             continue
         src = "jinx" if role == "jinx" else "tg"
-        incoming.append({"id": "h%s:%s" % (m.get("id"), src), "ts": float(m.get("ts") or 0), "src": src,
-                         "text": text, "cid": None, "mirrored": True})
+        line = {"id": "h%s:%s" % (m.get("id"), src), "ts": float(m.get("ts") or 0), "src": src,
+                "text": text, "cid": None, "mirrored": True}
+        if mood and src == "jinx":
+            line["mood"] = mood
+        incoming.append(line)
     return len(deps.thread.merge(incoming)) if incoming else 0
 
 
@@ -148,8 +262,10 @@ def _send(req, deps):
         cached = deps.thread.answer_for(cid)
         if cached:
             yield {"ev": "ack"}
-            yield {"ev": "done", "mode": "cached", "text": cached["text"],
-                   "mirrored": _settle_mirror(deps, ids)}
+            done = {"ev": "done", "mode": "cached", "text": cached["text"], "mirrored": _settle_mirror(deps, ids)}
+            if valid_mood(cached.get("mood")):
+                done["mood"] = cached["mood"]
+            yield done
             return
         deps.thread.append(src, text, cid=cid)
         yield {"ev": "ack"}
@@ -158,9 +274,14 @@ def _send(req, deps):
         except Exception as e:  # noqa: BLE001 - el modelo puede fallar de mil formas
             yield _err("no pude generar respuesta: %s" % e)
             return
+        # La etiqueta oculta de ánimo se quita ANTES de guardar y de espejar a Telegram; el emote viaja aparte.
+        out, mood = split_mood((out or "").strip())
         out = (out or "").strip() or "(sin respuesta)"
-        line = deps.thread.append("jinx", out, cid=cid)
-        yield {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _settle_mirror(deps, ids)}
+        line = deps.thread.append("jinx", out, cid=cid, mood=mood)
+        done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _settle_mirror(deps, ids)}
+        if mood:
+            done["mood"] = mood  # solo si la respuesta traía una etiqueta válida; nunca el ánimo de fondo
+        yield done
 
 
 def handle(req, deps):
@@ -178,7 +299,16 @@ def handle(req, deps):
         if not isinstance(lines, list) or not isinstance(have, list):
             yield _err("merge necesita lines y have")
             return
-        added = deps.thread.merge(lines)
+        # Una línea que llegue con la etiqueta (p. ej. de un cerebro en el teléfono) se limpia igual que aquí.
+        clean = []
+        for d in lines:
+            if isinstance(d, dict) and isinstance(d.get("text"), str) and "[[" in d["text"]:
+                text, mood = split_mood(d["text"])
+                d = dict(d, text=text)
+                if mood and d.get("src") == "jinx":
+                    d["mood"] = mood
+            clean.append(d)
+        added = deps.thread.merge(clean)
         _pull_hermes(deps)
         sent_ids = {d["id"] for d in lines if isinstance(d, dict) and isinstance(d.get("id"), str)}
         if deps.defer_mirror is not None:
@@ -191,6 +321,8 @@ def handle(req, deps):
         yield {"ev": "merged", "added": len(added),
                "items": deps.thread.since({h for h in have if isinstance(h, str)}),
                "mirrored_ids": mirrored_ids}
+    elif op == "mood":
+        yield _mood_event(deps)
     elif op == "core":
         yield {"ev": "core", "core": deps.core_text, "memory": deps.memory_text}
     elif op == "provision":
@@ -306,6 +438,20 @@ def ssh_runner(payload, timeout=85):
     return json.loads(lines[-1])
 
 
+STATE_CMD = os.environ.get("JINX_STATE_CMD", "cat /home/alan/.hermes/STATE.md")
+
+
+def ssh_state_reader(timeout=12, runner=subprocess.run):
+    """El `emotion_state` de Hermes: STATE.md del servidor, leído por ssh (solo lectura, con tope de tiempo).
+    No se lee por el montaje del servidor: un montaje colgado bloquearía al gateway. Lanza si no hay estado."""
+    p = runner(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", HERMES_SSH, STATE_CMD],
+               capture_output=True, text=True, timeout=timeout)
+    state = parse_emotion_state(p.stdout)
+    if state is None:
+        raise RuntimeError("STATE.md sin emotion_state")
+    return state
+
+
 class HermesBrain:
     """La Jinx real, con su memoria, sus herramientas y la conversación de Telegram."""
 
@@ -416,7 +562,8 @@ def build_real_deps(base=BASE, defer=False):
     return Deps(thread, brain, LazyTelegramMirror(token, chat),
                 jinx_brain.core, memory,
                 lambda: {"openrouter_key": jinx_brain.key or "", "telegram_token": token(), "chat": chat()},
-                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes)
+                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
+                state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader)
 
 
 def flush_mirror_main():

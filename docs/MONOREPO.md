@@ -33,6 +33,22 @@ The PC (Rust) and the phone (Kotlin) must behave the same on two things, and eac
 
 Change both together, then run `scripts/check-contracts.sh`.
 
+### Jinx's mood (gateway contract)
+
+Where Jinx's mood comes from, in the order the clients use it (`windows/src-tauri/src/jinx_gateway.rs`, `windows/src/core/jinx-mood.ts`,
+`android/.../coucou/assist/JinxMood.kt`; gateway side `jinx/jinx-assist/jinx_chat.py`):
+
+1. `done.mood` (and `mood` on a `history`/`merge` line of hers): one of the 19 names `happy love proud surprised excited
+   confused shy sad curious bored scared grumpy smug laughing crying relieved determined flustered sleepy`, or absent.
+   Never her background mood: only a mood that came with that reply (the hidden tag `[[mood:<emote>]]`, stripped by the
+   gateway before the thread and Telegram; **not enabled**: nothing asks the brain for it yet).
+2. Else the text rules pinned by `jinx-mood-vectors.json`.
+3. `{"op":"mood"}` → `{"ev":"mood","emote":<emote>|null,"source":"state"|"text","emotion_state":{…}|null}`: her background
+   mood now, from `emotion_state` in the server's `~/.hermes/STATE.md` (read over ssh) by `baseline_emote(state, hour)`.
+   Dimensions are 0–120; `source:"text"` means the state could not be read.
+
+An unknown name is ignored by every client. Hermes itself returns no mood with its replies (only text).
+
 ## Taking changes from Coucou's upstream
 
 ```
