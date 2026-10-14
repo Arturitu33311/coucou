@@ -1073,7 +1073,9 @@ class SmartIslandOverlayService : AccessibilityService() {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, com.agupta07505.smartisland.MainActivity::class.java),
+            // The Coucou app, on its island tab (SmartIsland's screen lives there now).
+            Intent(this, com.agupta07505.smartisland.coucou.CoucouTasksActivity::class.java)
+                .putExtra(com.agupta07505.smartisland.coucou.CoucouTasksActivity.EXTRA_TAB, "Island"),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             else

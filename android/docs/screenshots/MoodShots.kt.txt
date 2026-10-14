@@ -41,3 +41,16 @@ class MoodShots {
         }
     }
 }
+class IslandTabShots {
+    @get:Rule val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6)
+
+    @Test fun island() = paparazzi.snapshot(name = "island-tab") {
+        com.agupta07505.smartisland.coucou.ui.CoucouTheme {
+            CoucouScaffold(CoucouTab.Island, {}) { m, _ ->
+                androidx.compose.foundation.layout.Box(m) {
+                    com.agupta07505.smartisland.ui.SmartIslandTheme(darkTheme = true) { com.agupta07505.smartisland.ui.SmartIslandHomeScreen() }
+                }
+            }
+        }
+    }
+}

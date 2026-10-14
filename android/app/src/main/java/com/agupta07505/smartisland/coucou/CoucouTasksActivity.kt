@@ -89,9 +89,16 @@ import java.util.Locale
 class CoucouTasksActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // What SmartIsland's own activity did on opening: bring its services back if the system stopped them.
+        com.agupta07505.smartisland.util.SystemServiceRecovery.requestRecovery(this)
         enableEdgeToEdge()
         val tab = CoucouTab.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_TAB) } ?: CoucouTab.Tasks
         setContent { CoucouHome(initial = tab) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        com.agupta07505.smartisland.util.SystemServiceRecovery.requestRecovery(this)
     }
 
     companion object {

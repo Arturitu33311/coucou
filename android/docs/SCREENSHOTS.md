@@ -16,3 +16,8 @@ The tabs' contents are stateless (`AssistContent`, `TasksContent`, `CoucouScaffo
 `Setup` reads the real settings; `TallShots` puts a throwaway key in place so the connection cards show. Paparazzi
 shrinks tall images to 1000 px, hence the four offset screens of Ajustes. Dates follow the JVM's locale (English
 there, the phone's language on the phone).
+
+`MoodShots.kt.txt` draws Jinx's sixteen moods (`jinx-moods.png`) and the **Isla** tab (`island-tab.png`). The island
+tab is SmartIsland's own screen, which asks the power service layoutlib does not have: in the scratch copy only,
+wrap `isIgnoringBatteryOptimizations` in `SmartIslandHomeScreen.kt` with `runCatching { … }.getOrDefault(true)`.
+

@@ -38,7 +38,7 @@
         android:name=".SmartIslandApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="Coucou"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
@@ -46,15 +46,12 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SmartIsland">
 
+        <!-- SmartIsland's own screen: now the "Isla" tab of the Coucou app (one launcher icon). Kept for
+             anything that still opens it directly: the accessibility settings link here, so it stays exported. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.SmartIsland">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.SmartIsland" />
 
         <activity
             android:name=".coucou.CoucouTasksActivity"
@@ -104,7 +101,7 @@
         <service
             android:name=".service.SmartIslandNotificationListenerService"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="Coucou"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

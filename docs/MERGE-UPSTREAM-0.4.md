@@ -82,9 +82,16 @@ Compilar e instalar: `cd windows && npm ci && npx tauri build --no-bundle`, lueg
       Telegram con su origen; lo que escribes aparece en Telegram como `💻 …`; la línea de estado dice quién
       contestó (Hermes o respaldo). Ajustes → Hub → *Jinx through* = *Hermes API* recupera el camino anterior.
 - [ ] Jinx con *Hermes API*: chat, respuestas en streaming, tarjeta de permiso.
-- [ ] Android, app Coucou rediseñada: el icono «Coucou» abre Pendientes, la tecla lateral abre Jinx, y las tres
-      pestañas (Jinx · Pendientes · Ajustes) funcionan; el teclado no tapa el campo de Jinx; un recordatorio abre
-      Pendientes. Capturas sin teléfono: `android/docs/SCREENSHOTS.md`.
+- [ ] Android, **una sola app**: en el lanzador queda un único icono «Coucou» (ya no «Smart Island»; puede hacer
+      falta quitar el acceso directo viejo de la pantalla de inicio). Abre Pendientes; la tecla lateral abre Jinx;
+      las cuatro pestañas (Jinx · Pendientes · Isla · Ajustes) funcionan; **Isla** es la pantalla de SmartIsland de
+      siempre (permisos, modos, diseño) en su tema oscuro; tocar la notificación fija de la isla abre esa pestaña;
+      Ajustes de Android → Accesibilidad → «Smart Island Service» → ajustes sigue abriendo la pantalla de la isla.
+      El teclado no tapa el campo de Jinx; un recordatorio abre Pendientes. Capturas: `android/docs/SCREENSHOTS.md`.
+- [ ] **Ánimo de Jinx en Mochi:** escribirle algo que la haga reír o disculparse. PC: al llegar su respuesta,
+      Mochi hace el emote (ríe, se pone triste, corazones…; ~3 s). Cel: el Mochi de la cabecera del chat pone esa
+      cara mientras su respuesta es la última (15 min); los avisos de Jinx en la isla también. Las 16 caras:
+      `android/docs/screenshots/jinx-moods.png`. Una respuesta neutra no cambia nada (es a propósito).
 - [ ] Android: `cd android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` (aquí pasó con un
       espejo de Maven Central: 354 tests) e `install -r` en S21 y S22.
 - [ ] Hub (Today, Tasks, Pomodoro, Notes, Clipboard…) y presence entre portátil y móvil.
@@ -94,5 +101,7 @@ Compilar e instalar: `cd windows && npm ci && npx tauri build --no-bundle`, lueg
 - [ ] Idioma en Ajustes (por ejemplo, español) y vuelta a "sistema".
 - [ ] Con la isla oculta, 0 % de CPU (`top`).
 - [ ] Panel VGA: `jinx/vga-panel/deploy.sh` solo desde el portátil, si se quiere publicar.
+- [ ] Servidor de presencia (`jinx/vga-panel/server/mochi_presence.py`): acepta ahora los nombres de ánimo de Jinx
+      (Love, Sad, Laughing…). Solo se nota tras desplegarlo; sin desplegar, el móvil deduce el ánimo del texto.
 
 Lo que no esté bien se arregla sobre esta rama antes de fusionarla en `unify/monorepo`.
