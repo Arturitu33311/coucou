@@ -14,6 +14,30 @@ qué merece la pena traer.
 > ejecutado nada** (el entorno era Linux, sin Xcode ni SDK de Android). Las valoraciones de "vale la pena"
 > son de criterio, no de haber probado las funciones.
 
+> **Actualización (14 oct 2026, sobre `unify/monorepo` en `452e95a`): §2, §4, §5.2 y §8 se han quedado viejos.**
+> Este análisis se hizo antes de unificar el monorepo. Desde entonces:
+>
+> - `android/` es nuestra app (SmartIsland, GPL-3.0) y el original tiene **otra** app en el mismo `android/`.
+>   Las dos chocan (15 archivos, `android/LICENSE` incluido). **Nunca se toma `android/` del original**:
+>   ver `docs/MONOREPO.md`.
+> - `windows/` ya no es la 0.1.1 del original: lleva unas 22 600 líneas nuestras (Jinx, presence, tareas,
+>   enlace por ssh con el móvil…). El ensayo de merge da **47 archivos en conflicto** (unos 130 bloques), no 2:
+>   unos 30 en `windows/`, 15 en `android/` y los 3 bloques de Swift de §4, que siguen igual.
+>   `windows/src/mochi/outfits.ts`, `wardrobe.ts`, `src-tauri/src/agents.rs` e `island/agents.ts` los escribieron
+>   los dos lados por separado.
+> - Los commits de Mochi de §3 (`5440f3a`, `1475442`, `aca9129`) ya están en `unify/monorepo` (merge `2879e04`).
+>   Siguen existiendo **solo en Swift**: ni el Mochi de PC ni el de Android tienen esas 15 emociones y 6 atuendos.
+> - Resuelto un punto de §9: el Portfolio del original guarda las claves de los exchanges en el Keychain.
+>
+> **Plan vigente** (no se usa Mac, así que la parte Swift no es prioritaria):
+>
+> 1. Merge completo de `upstream/main` en una rama desde `unify/monorepo`, con `android/` siempre de nuestro lado.
+>    En `windows/`, resolver por capas y comprobar cada una: `hook/` (`cargo test`) → `src-tauri/`
+>    (`cargo check`) → `src/core` (`tsc`) → `island/`, `views/`, `settings/` → `mochi/` (base del original,
+>    más nuestros extras de PC; tests del panel VGA). Los 3 bloques de Swift se resuelven con los dos lados, sin compilar.
+> 2. Después, portar a TypeScript las 15 emociones y los 6 atuendos de §3 sobre el `engine.ts`/`outfits.ts`
+>    del original (que ya trae `BotEmoteName`, `EMOTE_EYE` y `triggerEmote`), con los mismos ids.
+
 ---
 
 ## 1. Cómo reproducir el análisis

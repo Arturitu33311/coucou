@@ -36,11 +36,27 @@ Change both together, then run `scripts/check-contracts.sh`.
 ## Taking changes from Coucou's upstream
 
 ```
+git remote add upstream https://github.com/Louis-CFM/coucou   # once
 git fetch upstream
-git merge upstream/main        # or: git log HEAD..upstream/main --oneline  to look first
+git merge-tree --write-tree --name-only HEAD upstream/main    # dry run: lists the conflicts, touches nothing
+git merge --no-commit upstream/main
 ```
 
-Upstream only touches the directories it knows (`windows/`, `NotchBuddy/`, `relay/`, docs); `android/` and `jinx/` are ours.
+**`android/` is never taken from upstream.** Since its 0.4.0, upstream has its own Android app (MIT, by another author)
+in `android/`, the same directory as ours (GPL-3.0, SmartIsland-based). They are unrelated apps. On every merge:
+
+```
+git checkout HEAD -- android/                                   # our side for the files both have
+git diff --name-only --diff-filter=A HEAD -- android/ | xargs -r git rm -qf  # drop the files only upstream has
+git diff --cached --stat HEAD -- android/                       # must print nothing
+```
+
+Upstream's `windows/src-tauri/src/phone_link/` pairs with *its* Android app, not ours (ours goes over ssh, see
+`android/COUCOU.md`). It is off by default; keep it rather than delete it, or every merge conflicts on it again.
+
+`jinx/` is ours alone. `windows/` has our own features on top of upstream's (Jinx, presence, tasks, the ssh phone link):
+expect conflicts there, and run the checks in `CLAUDE.md` plus `scripts/check-contracts.sh` before committing a merge.
+`jinx/vga-panel` bundles `windows/src/mochi/wardrobe.ts`: run its tests whenever a merge touches `windows/src/mochi/`.
 
 ## The VGA panel
 
