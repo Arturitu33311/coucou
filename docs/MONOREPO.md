@@ -56,6 +56,18 @@ a minute). The rules live in one module, `jinx/jinx-assist/jinx_baseline.py` (`b
 (`presence.rs` → `Presence.jinxMood` → `mochi/scene.ts wornEmote`) and the phone (`MochiPresence` → `JinxBackground` →
 `MochiReactions.calmOrJinx`, and the chat header) wear it whenever nothing else moves him; null means calm.
 
+### Where things run (server first, the laptop as fallback)
+
+| Piece | Main (server) | Fallback (laptop) | Clients' rule |
+|---|---|---|---|
+| Jinx's gateway `jinx-chat` + shared thread + Telegram mirror | `~/bin/jinx-chat` (`deploy-gateway-server.sh`); phones reach it through `server-dispatch` (forced command of their key) | `~/bin/jinx-chat` (`install.sh`) | `Failover` (ChatApi.kt) / `jinx_gateway.rs`: server first; unreachable → laptop, server skipped 2 min; server without the gateway → laptop, skipped 10 min; a `send` that broke after reaching the server is never re-sent to the laptop |
+| Lines the laptop answered while the server was down | — | `jinx-chat --sync-to-server` (op merge both ways; run it on a timer) | — |
+| Presence + her background mood | `mochi_presence.py` (`deploy.sh`) | devices decide among themselves (`decide`/`Arbiter`) | presence contract below |
+| Pendientes | `coucou_pendientes.py` (`deploy-server.sh`) | — | — |
+| Hermes | server | — | the gateway finds it locally on the server (`default_hermes_host`), over ssh from the laptop |
+
+The laptop finds the server as the ssh host `server` (`~/.ssh/config`; `COUCOU_JINX_SERVER` overrides it, `""` turns it off).
+
 ### Which device has Mochi (presence contract)
 
 One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.

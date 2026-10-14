@@ -39,15 +39,106 @@ pub fn path() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
+/// The server whose gateway is asked first (an ssh host): `COUCOU_JINX_SERVER` ("" turns it off), else
+/// `server` when `~/.ssh/config` has that host (what the deploy scripts use). None: only this laptop's.
+pub fn server_host() -> Option<String> {
+    if let Ok(h) = std::env::var("COUCOU_JINX_SERVER") {
+        return (!h.trim().is_empty()).then(|| h.trim().to_string());
+    }
+    let config = std::fs::read_to_string(crate::platform::home_dir().join(".ssh").join("config")).unwrap_or_default();
+    has_host(&config, "server").then(|| "server".to_string())
+}
+
+/// `Host` lines of an ssh config name `host` (one of their patterns, exactly). Pure.
+pub fn has_host(config: &str, host: &str) -> bool {
+    config.lines().any(|l| {
+        let mut words = l.split_whitespace();
+        matches!(words.next(), Some(k) if k.eq_ignore_ascii_case("host")) && words.any(|w| w == host)
+    })
+}
+
+/// The gateway's command on the server (run by its shell, from the home directory): what install.sh writes there.
+const SERVER_CMD: &str = "bin/jinx-chat";
+
 /// Which way Jinx is reached, from the `jinxBackend` setting: "gateway", "hermes", or "auto" (the
-/// gateway when it is installed, as on the phones; the Hermes API otherwise).
+/// gateway when there is one, on the server or here, as on the phones; the Hermes API otherwise).
 pub fn use_gateway(setting: &str) -> bool {
     match setting {
         "hermes" => false,
         "gateway" => true,
-        _ => path().is_some(),
+        _ => path().is_some() || server_host().is_some(),
     }
 }
+
+// ── Server first, this laptop only when the server fails ─────────────────────────
+//
+// Same rules as the phone's Failover (ChatApi.kt):
+//  - the server could not be reached → this laptop, and the server is skipped for DOWN;
+//  - the server answered but not as Jinx's gateway (not installed there yet) → this laptop, skipped for NO_GATEWAY;
+//  - the server's gateway answered → that answer, even an error;
+//  - a `send` that broke after reaching the server → that error, never here (it may be in the server's thread).
+
+const DOWN: Duration = Duration::from_secs(120);
+const NO_GATEWAY: Duration = Duration::from_secs(600);
+
+/// How one host's attempt went.
+#[derive(Debug, PartialEq)]
+pub enum Attempt {
+    /// It printed this (it may or may not be the gateway).
+    Output(String),
+    /// It could not be reached at all: nothing was sent.
+    Unreachable(String),
+    /// It was reached, then broke (a timeout, a crash).
+    Broken(String),
+}
+
+/// Whether the output is Jinx's gateway (JSON lines with "ev"). Pure.
+pub fn is_gateway_output(raw: &str) -> bool {
+    !parse_events(raw).is_empty()
+}
+
+/// The failover's memory: until when the server is skipped.
+#[derive(Default)]
+pub struct Failover {
+    skip_until: Option<Instant>,
+}
+
+impl Failover {
+    /// One request: the server, then (when the rules say) this laptop. Pure but for the two closures.
+    pub fn ask(
+        &mut self,
+        op: &str,
+        now: Instant,
+        server: impl FnOnce() -> Attempt,
+        local: impl FnOnce() -> Attempt,
+    ) -> Result<String, String> {
+        let here = |a: Attempt| match a {
+            Attempt::Output(o) => Ok(o),
+            Attempt::Unreachable(e) | Attempt::Broken(e) => Err(e),
+        };
+        if self.skip_until.is_some_and(|t| now < t) {
+            return here(local());
+        }
+        match server() {
+            Attempt::Output(o) if is_gateway_output(&o) => {
+                self.skip_until = None;
+                Ok(o)
+            }
+            Attempt::Output(_) => {
+                self.skip_until = Some(now + NO_GATEWAY);
+                here(local())
+            }
+            Attempt::Unreachable(_) => {
+                self.skip_until = Some(now + DOWN);
+                here(local())
+            }
+            Attempt::Broken(e) if op == "send" => Err(e),
+            Attempt::Broken(_) => here(local()),
+        }
+    }
+}
+
+static FAILOVER: std::sync::Mutex<Failover> = std::sync::Mutex::new(Failover { skip_until: None });
 
 /// A message id the gateway can deduplicate a retry by. Unique per process run and message.
 pub fn new_cid() -> String {
@@ -94,39 +185,69 @@ pub fn outcome(events: &[Value]) -> Result<(String, String, Option<String>), Str
     Err("Jinx's gateway gave no answer".into())
 }
 
-/// Runs the gateway with one request and returns its events. Blocking: call it off the main thread.
+/// Runs the gateway with one request (the server's first, see [`Failover`]) and returns its events.
+/// Blocking: call it off the main thread.
 fn run(request: &Value, timeout: Duration) -> Result<Vec<Value>, String> {
-    let gateway = path().ok_or("Jinx's gateway is not installed (~/bin/jinx-chat; see jinx/jinx-assist/install.sh)")?;
-    let mut child = Command::new(&gateway)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("Cannot start Jinx's gateway: {e}"))?;
+    let op = request["op"].as_str().unwrap_or("?").to_string();
+    let local = || match path() {
+        Some(gateway) => attempt(Command::new(gateway), request, timeout, false),
+        None => Attempt::Unreachable("Jinx's gateway is not on the server nor here (~/bin/jinx-chat; see jinx/jinx-assist/install.sh)".into()),
+    };
+    let raw = match server_host() {
+        Some(host) => {
+            let server = || {
+                let mut ssh = Command::new("ssh");
+                ssh.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host, SERVER_CMD]);
+                attempt(ssh, request, timeout, true)
+            };
+            // (The lock is held through the request: one at a time, as the gateway itself serialises them.)
+            let mut f = FAILOVER.lock().unwrap_or_else(|e| e.into_inner());
+            f.ask(&op, Instant::now(), server, local)?
+        }
+        None => match local() {
+            Attempt::Output(o) => o,
+            Attempt::Unreachable(e) | Attempt::Broken(e) => return Err(e),
+        },
+    };
+    Ok(parse_events(&raw))
+}
+
+/// Runs one gateway command with the request on its stdin. Over ssh, exit 255 is ssh's own failure: the
+/// server was not reached (nothing was sent).
+fn attempt(mut cmd: Command, request: &Value, timeout: Duration, over_ssh: bool) -> Attempt {
+    let mut child = match cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
+        Ok(c) => c,
+        Err(e) => return Attempt::Unreachable(format!("Cannot start Jinx's gateway: {e}")),
+    };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(format!("{request}\n").as_bytes());
     }
-    let mut stdout = child.stdout.take().ok_or("Jinx's gateway has no output")?;
+    let Some(mut stdout) = child.stdout.take() else {
+        return Attempt::Broken("Jinx's gateway has no output".into());
+    };
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = (&mut stdout).take(MAX_OUTPUT as u64).read_to_end(&mut buf);
         buf
     });
     let started = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("Jinx took too long to answer".into());
+                return Attempt::Broken("Jinx took too long to answer".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Attempt::Broken(e.to_string()),
         }
+    };
+    let out = String::from_utf8_lossy(&reader.join().unwrap_or_default()).into_owned();
+    if over_ssh && status.code() == Some(255) && !is_gateway_output(&out) {
+        return Attempt::Unreachable("the server does not answer".into());
     }
-    let out = reader.join().unwrap_or_default();
-    Ok(parse_events(&String::from_utf8_lossy(&out)))
+    Attempt::Output(out)
 }
 
 /// The tail of the shared thread: `{id, ts, src, text, …}`, oldest first.
@@ -234,6 +355,47 @@ mod tests {
         assert!(use_gateway("gateway"));
     }
 
+    const OK: &str = "{\"ev\":\"done\",\"mode\":\"hermes\",\"text\":\"hola\"}";
+    const LOCAL: &str = "{\"ev\":\"done\",\"mode\":\"or\",\"text\":\"aquí\"}";
+
+    #[test]
+    fn the_server_first_and_this_laptop_only_when_it_fails() {
+        let mut f = Failover::default();
+        let t0 = Instant::now();
+        let local = || Attempt::Output(LOCAL.into());
+        // Answered by the server: this laptop is not asked.
+        assert_eq!(f.ask("send", t0, || Attempt::Output(OK.into()), || panic!("asked here")), Ok(OK.into()));
+        // Out of reach: here, and the server is skipped for a while.
+        assert_eq!(f.ask("send", t0, || Attempt::Unreachable("x".into()), local), Ok(LOCAL.into()));
+        assert_eq!(f.ask("history", t0 + DOWN - Duration::from_secs(1), || panic!("asked the server"), local), Ok(LOCAL.into()));
+        assert_eq!(f.ask("history", t0 + DOWN, || Attempt::Output(OK.into()), local), Ok(OK.into()));
+        // The server without the gateway (the pendientes script, a shell error): here, skipped longer.
+        let t1 = t0 + DOWN;
+        assert_eq!(f.ask("history", t1, || Attempt::Output("{\"ok\":false}".into()), local), Ok(LOCAL.into()));
+        assert_eq!(f.ask("history", t1 + DOWN, || panic!("asked the server"), local), Ok(LOCAL.into()));
+        assert_eq!(f.ask("history", t1 + NO_GATEWAY, || Attempt::Output(OK.into()), local), Ok(OK.into()));
+    }
+
+    #[test]
+    fn the_gateways_own_error_is_the_answer_and_a_broken_send_is_not_sent_twice() {
+        let mut f = Failover::default();
+        let t = Instant::now();
+        let err = "{\"ev\":\"error\",\"msg\":\"src desconocido\"}";
+        assert_eq!(f.ask("send", t, || Attempt::Output(err.into()), || panic!("asked here")), Ok(err.into()));
+        assert_eq!(f.ask("send", t, || Attempt::Broken("timeout".into()), || panic!("sent twice")), Err("timeout".into()));
+        // A read is safe to ask here instead.
+        assert_eq!(f.ask("history", t, || Attempt::Broken("timeout".into()), || Attempt::Output(LOCAL.into())), Ok(LOCAL.into()));
+    }
+
+    #[test]
+    fn the_server_host_comes_from_the_ssh_config() {
+        assert!(has_host("Host server\n  HostName 100.92.254.125\n", "server"));
+        assert!(has_host("host laptop server\n", "server"));
+        assert!(!has_host("Host servidor\n", "server"));
+        assert!(!has_host("  HostName server\n", "server"));
+        assert!(!has_host("", "server"));
+    }
+
     /// The real round trip, against a stand-in gateway script.
     #[cfg(unix)]
     #[test]
@@ -253,11 +415,14 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::env::set_var("COUCOU_JINX_CHAT", &script);
+        // Only the stand-in: no server is asked from a test.
+        std::env::set_var("COUCOU_JINX_SERVER", "");
         let req = json!({ "op": "send", "text": "x", "cid": new_cid(), "src": SRC });
         let got = run(&req, Duration::from_secs(10)).and_then(|e| outcome(&e));
         let items = history(5);
         let mood = background_mood();
         std::env::remove_var("COUCOU_JINX_CHAT");
+        std::env::remove_var("COUCOU_JINX_SERVER");
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(got, Ok(("ok pc".to_string(), "or".to_string(), Some("proud".to_string()))));
         assert_eq!(items.unwrap()[0]["src"], "s21");

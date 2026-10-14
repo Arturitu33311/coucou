@@ -55,7 +55,7 @@ sealed interface ChatEvent {
     data class Secrets(val openrouterKey: String, val telegramToken: String, val chat: String) : ChatEvent
 }
 
-class ChatException(message: String) : Exception(message)
+open class ChatException(message: String) : Exception(message)
 
 /** The requests and events `jinx-chat` on the laptop speaks (see the spec). Pure: tested on the JVM. */
 object ChatProtocol {

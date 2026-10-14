@@ -87,6 +87,22 @@ class StateParseTest(unittest.TestCase):
             jinx_chat.ssh_state_reader(runner=lambda cmd, **kw: P("nada"))
 
 
+class HermesWhereTest(unittest.TestCase):
+    def test_over_ssh_from_the_laptop_and_as_is_on_the_server(self):
+        cmd = "/home/alan/.hermes/hermes-agent/venv/bin/python /home/alan/.hermes/scripts/jinx_hermes_chat.py"
+        self.assertEqual(jinx_chat.hermes_argv(cmd, "server")[:4], ["ssh", "-o", "BatchMode=yes", "-o"])
+        self.assertEqual(jinx_chat.hermes_argv(cmd, "server")[-2:], ["server", cmd])
+        for local in ("local", "", "  "):
+            self.assertEqual(jinx_chat.hermes_argv(cmd, local), cmd.split())
+        self.assertEqual(jinx_chat.hermes_argv("cat /home/alan/.hermes/STATE.md", "local"), ["cat", "/home/alan/.hermes/STATE.md"])
+
+    def test_on_the_server_hermes_is_found_here_on_the_laptop_over_ssh(self):
+        cmd = "/srv/venv/bin/python /srv/scripts/jinx_hermes_chat.py"
+        self.assertEqual(jinx_chat.default_hermes_host(cmd, exists=lambda p: True), "local")
+        self.assertEqual(jinx_chat.default_hermes_host(cmd, exists=lambda p: p.endswith("python")), "server")
+        self.assertEqual(jinx_chat.default_hermes_host(cmd, exists=lambda p: False), "server")
+
+
 class BaselineEmoteTest(unittest.TestCase):
     def b(self, hour=14, **kw):
         return jinx_chat.baseline_emote(_st(**kw), hour)

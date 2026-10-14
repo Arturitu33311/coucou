@@ -53,7 +53,8 @@ class LaptopChatApi(
     private var openedAt = 0L
     private var lastUsed = 0L
 
-    private fun ask(request: String, timeoutSec: Long): String = askLocked(request, timeoutSec, SystemClock.elapsedRealtime())
+    /** One request, its raw output. [GatewayUnreachable] when the host cannot be reached at all. */
+    fun ask(request: String, timeoutSec: Long): String = askLocked(request, timeoutSec, SystemClock.elapsedRealtime())
 
     @Synchronized
     private fun askLocked(request: String, timeoutSec: Long, queuedAt: Long): String {
@@ -81,7 +82,7 @@ class LaptopChatApi(
                     }
                 }
             } catch (e: SshException) {
-                throw ChatException(e.message ?: "la laptop no responde")
+                throw GatewayUnreachable(e.message ?: "la laptop no responde")
             }
             try {
                 val t = SystemClock.elapsedRealtime()
@@ -119,9 +120,85 @@ class LaptopChatApi(
     override fun core() = ChatProtocol.expect<ChatEvent.Core>(ask(ChatProtocol.core(), 20))
     override fun provision() = ChatProtocol.expect<ChatEvent.Secrets>(ask(ChatProtocol.provision(), 20))
 
-    private companion object {
+    companion object {
         /** A laptop that is not there is known in 3 s, not in `Ssh`'s default 8. */
         const val PROBE_MS = 3_000
         const val SEND_TIMEOUT_SEC = 90L
     }
 }
+
+/** The host could not be reached at all (no connection, no login): nothing was sent. */
+class GatewayUnreachable(message: String) : ChatException(message)
+
+/**
+ * Where a request goes: the server first, the laptop only if the server fails. Pure (the clock and the two
+ * hosts are passed in), tested. The rules, same as the PC's (jinx_gateway.rs):
+ *  - the server could not be reached → the laptop, and the server is skipped for [DOWN_MS];
+ *  - the server answered but not as Jinx's gateway (it does not have it yet) → the laptop, skipped for [NO_GATEWAY_MS];
+ *  - the server's gateway answered → that answer, even an error (it is up; the error is real);
+ *  - the connection broke after a `send` reached the server → that error, never the laptop: the message may
+ *    already be in the server's thread, and the repository retries it with the same cid.
+ */
+class Failover(private val now: () -> Long) {
+    @Volatile private var skipUntil = 0L
+
+    /** Whether the last answer came from the laptop (for the badge). */
+    @Volatile var onFallback = false
+        private set
+
+    fun ask(op: String, server: () -> String, laptop: () -> String): String {
+        if (now() < skipUntil) return laptop().also { onFallback = true }
+        val raw = try {
+            server()
+        } catch (e: GatewayUnreachable) {
+            skipUntil = now() + DOWN_MS
+            return laptop().also { onFallback = true }
+        } catch (e: ChatException) {
+            if (op == "send") throw e
+            return laptop().also { onFallback = true }
+        }
+        if (!isGatewayOutput(raw)) {
+            skipUntil = now() + NO_GATEWAY_MS
+            return laptop().also { onFallback = true }
+        }
+        onFallback = false
+        return raw
+    }
+
+    companion object {
+        const val DOWN_MS = 2 * 60_000L
+        const val NO_GATEWAY_MS = 10 * 60_000L
+
+        /** Jinx's gateway prints JSON lines with "ev"; anything else (the pendientes script, a shell error) is not it. */
+        fun isGatewayOutput(raw: String): Boolean = raw.lineSequence().any { l ->
+            runCatching { org.json.JSONObject(l.trim()).has("ev") }.getOrDefault(false)
+        }
+    }
+}
+
+/** Jinx's gateway on the server, with the laptop's as the fallback (see [Failover]). */
+class FailoverChatApi(
+    private val server: LaptopChatApi,
+    private val laptop: LaptopChatApi,
+    val failover: Failover = Failover { SystemClock.elapsedRealtime() },
+) : ChatApi, Closeable {
+    private fun ask(request: String, timeoutSec: Long): String {
+        val op = runCatching { org.json.JSONObject(request).optString("op") }.getOrDefault("?")
+        return failover.ask(op, { server.ask(request, timeoutSec) }, { laptop.ask(request, timeoutSec) })
+    }
+
+    override fun send(text: String, cid: String, src: String) =
+        ChatProtocol.expectDone(ask(ChatProtocol.send(text, cid, src), LaptopChatApi.SEND_TIMEOUT_SEC))
+
+    override fun merge(lines: List<ChatLine>, have: List<String>) =
+        ChatProtocol.expect<ChatEvent.Merged>(ask(ChatProtocol.merge(lines, have), 30))
+
+    override fun core() = ChatProtocol.expect<ChatEvent.Core>(ask(ChatProtocol.core(), 20))
+    override fun provision() = ChatProtocol.expect<ChatEvent.Secrets>(ask(ChatProtocol.provision(), 20))
+
+    override fun close() {
+        server.close()
+        laptop.close()
+    }
+}
+

@@ -82,7 +82,11 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     private val personas = PersonaStore(File(app.filesDir, "jinx-persona.json"))
     private val secrets = KeystoreSecrets(app)
     private val deviceId = PhoneSettings.deviceId(app)
-    private val laptopApi = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) }
+    // Jinx's gateway on the server first; the laptop's only when the server fails (see Failover).
+    private val laptopApi = FailoverChatApi(
+        server = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.SERVER) },
+        laptop = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) },
+    )
     private val modelStore = ModelStore(File(app.filesDir, "models"), GemmaModel.spec)
     private val localBrain = LocalModelBrain(
         modelReady = { modelStore.state() == ModelState.Ready },

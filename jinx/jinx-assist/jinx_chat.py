@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -355,16 +356,34 @@ def _read(path):
         return f.read()
 
 
-HERMES_SSH = os.environ.get("JINX_HERMES_SSH", "server")
 HERMES_CMD = os.environ.get(
     "JINX_HERMES_CMD",
     "/home/alan/.hermes/hermes-agent/venv/bin/python /home/alan/.hermes/scripts/jinx_hermes_chat.py")
 
 
+def default_hermes_host(cmd=HERMES_CMD, exists=os.path.exists):
+    """Dónde está Hermes si nadie lo dice: aquí mismo cuando su intérprete y su puente están en esta máquina
+    (el gateway corre en el servidor), si no el servidor por ssh (el gateway de respaldo del portátil). Pura."""
+    argv = shlex.split(cmd)
+    return "local" if argv and all(exists(a) for a in argv if a.startswith("/")) else "server"
+
+
+HERMES_SSH = os.environ.get("JINX_HERMES_SSH") or default_hermes_host()
+
+
+def hermes_argv(cmd, host=None):
+    """Cómo se corre un comando de Hermes: por ssh al servidor desde el portátil; tal cual cuando el gateway
+    corre en el propio servidor (JINX_HERMES_SSH=local o vacío). Pura."""
+    host = HERMES_SSH if host is None else host
+    if host.strip() in ("", "local"):
+        return shlex.split(cmd)
+    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, cmd]
+
+
 def ssh_runner(payload, timeout=85):
-    """Una petición al puente de Hermes por ssh; devuelve el evento JSON o lanza si no hay respuesta."""
+    """Una petición al puente de Hermes (por ssh, o local en el servidor); devuelve el evento JSON o lanza."""
     p = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", HERMES_SSH, HERMES_CMD],
+        hermes_argv(HERMES_CMD),
         input=json.dumps(payload) + "\n", capture_output=True, text=True, timeout=timeout)
     lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
     if not lines:
@@ -378,7 +397,7 @@ STATE_CMD = os.environ.get("JINX_STATE_CMD", "cat /home/alan/.hermes/STATE.md")
 def ssh_state_reader(timeout=12, runner=subprocess.run):
     """El `emotion_state` de Hermes: STATE.md del servidor, leído por ssh (solo lectura, con tope de tiempo).
     No se lee por el montaje del servidor: un montaje colgado bloquearía al gateway. Lanza si no hay estado."""
-    p = runner(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", HERMES_SSH, STATE_CMD],
+    p = runner(hermes_argv(STATE_CMD),
                capture_output=True, text=True, timeout=timeout)
     state = parse_emotion_state(p.stdout)
     if state is None:
@@ -522,9 +541,65 @@ def flush_mirror_main():
     return 0
 
 
+# ---------- el portátil como respaldo del servidor ----------
+#
+# El gateway principal corre en el servidor; el del portátil solo atiende cuando el servidor falla (los clientes
+# deciden: Failover en ChatApi.kt y jinx_gateway.rs). Lo que el portátil atendió entonces vive en SU hilo: al
+# volver el servidor, `jinx-chat --sync-to-server` se lo pasa (op merge: deduplica por id y no vuelve a espejar a
+# Telegram lo ya espejado) y se trae lo del servidor, así los dos hilos vuelven a ser el mismo.
+
+SYNC_HOST = os.environ.get("JINX_SYNC_HOST", "server")
+SYNC_CMD = os.environ.get("JINX_SYNC_CMD", "bin/jinx-chat")
+SYNC_LINES = 500
+
+
+def sync_to_server(thread, ask, limit=SYNC_LINES):
+    """Pasa al servidor las últimas `limit` líneas de este hilo y trae las suyas. `ask(req) -> [eventos]`.
+    Devuelve (las que el servidor añadió, las que se añadieron aquí). Lanza si el servidor no contesta como
+    gateway (nada cambia aquí)."""
+    mine = thread.read()[-limit:]
+    events = ask({"op": "merge", "lines": mine, "have": [d["id"] for d in thread.read()]})
+    merged = next((e for e in events if isinstance(e, dict) and e.get("ev") == "merged"), None)
+    if merged is None:
+        err = next((e.get("msg") for e in events if isinstance(e, dict) and e.get("ev") == "error"), None)
+        raise RuntimeError(err or "el servidor no contestó como gateway")
+    items = merged.get("items") if isinstance(merged.get("items"), list) else []
+    # Lo que el servidor ya espejó cuenta como espejado aquí también (y al revés lo hizo el merge del servidor).
+    mirrored = set(merged.get("mirrored_ids") or [])
+    here = thread.merge(items)
+    if mirrored:
+        thread.mark_mirrored(mirrored)
+    return merged.get("added", 0), len(here)
+
+
+def ssh_gateway_ask(req, host=SYNC_HOST, cmd=SYNC_CMD, timeout=60):
+    """Una petición al gateway del servidor por ssh: sus eventos."""
+    p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, cmd],
+                       input=json.dumps(req, ensure_ascii=False) + "\n", capture_output=True, text=True, timeout=timeout)
+    out = []
+    for ln in p.stdout.splitlines():
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            continue
+    return out
+
+
+def sync_main():
+    try:
+        sent, got = sync_to_server(Thread(BASE), ssh_gateway_ask)
+    except Exception as e:  # noqa: BLE001 - servidor caído: se reintenta en la próxima pasada
+        sys.stdout.write("sync: el servidor no está (%s)\n" % e)
+        return 1
+    sys.stdout.write("sync: %d líneas nuevas en el servidor, %d aquí\n" % (sent, got))
+    return 0
+
+
 def main(stdin=sys.stdin, stdout=sys.stdout):
     if "--flush-mirror" in sys.argv[1:]:
         return flush_mirror_main()
+    if "--sync-to-server" in sys.argv[1:]:
+        return sync_main()
     raw = stdin.readline()
     try:
         req = json.loads(raw) if raw.strip() else {}
