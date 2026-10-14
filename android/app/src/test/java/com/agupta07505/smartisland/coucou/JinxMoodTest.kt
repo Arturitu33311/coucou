@@ -42,4 +42,32 @@ class JinxMoodTest {
         assertEquals(MochiMood.Listening, JinxMood.headerMood(listOf(line("jinx", "El servidor responde.", now)), false, now))
         assertEquals(MochiMood.Sad, JinxMood.headerMood(listOf(line("jinx", "lo siento", now * 1000)), false, now))
     }
+
+    @Test fun `the mood she sent wins over her words, and a bad one is ignored`() {
+        assertEquals("sad", JinxMood.resolve("sad", "jajaja 😂"))
+        assertEquals("laughing", JinxMood.resolve(null, "jajaja"))
+        assertEquals("laughing", JinxMood.resolve("furious", "jajaja"))
+        assertEquals("laughing", JinxMood.resolve("Sad", "jajaja")) // exact names only
+        assertNull(JinxMood.resolve(null, "El servidor responde."))
+        assertEquals(MochiMood.Sad, JinxMood.moodOfReply("sad", "jajaja"))
+        assertEquals(MochiMood.Laughing, JinxMood.moodOfReply(null, "jajaja"))
+    }
+
+    @Test fun `the chat's Mochi uses the mood of the line before reading its words`() {
+        val now = 1_000_000.0
+        val withMood = ChatLine("m", now, "jinx", "El servidor responde.", null, true, mood = "proud")
+        assertEquals(MochiMood.Proud, JinxMood.headerMood(listOf(withMood), false, now))
+        val contradicting = ChatLine("n", now, "jinx", "jaja 😂", null, true, mood = "crying")
+        assertEquals(MochiMood.Crying, JinxMood.headerMood(listOf(contradicting), false, now))
+        // A mood that is not Mochi's falls back to the words.
+        val bogus = ChatLine("o", now, "jinx", "jaja", null, true, mood = "nope")
+        assertEquals(MochiMood.Laughing, JinxMood.headerMood(listOf(bogus), false, now))
+    }
+
+    @Test fun `the nineteen names are all faces on the phone`() {
+        assertEquals(19, JinxMood.EMOTES.size)
+        assertEquals(19, JinxMood.EMOTES.toSet().size)
+        for (e in JinxMood.EMOTES) assertNotNull(e, JinxMood.moodOf(e))
+        for (e in JinxMood.EMOTES) assertEquals(e, JinxMood.validEmote(e))
+    }
 }

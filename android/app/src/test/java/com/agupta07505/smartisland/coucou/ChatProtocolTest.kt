@@ -36,6 +36,28 @@ class ChatProtocolTest {
         assertEquals(ChatEvent.Done("or", "x", true), old)
     }
 
+    @Test fun doneCarriesJinxsMoodOnlyWhenItIsOneOfMochisEmotes() {
+        val ok = ChatProtocol.parse("""{"ev":"done","mode":"hermes","text":"x","mood":"laughing"}""").single()
+        assertEquals(ChatEvent.Done("hermes", "x", true, "laughing"), ok)
+        for (bad in listOf("\"mood\":\"furious\"", "\"mood\":\"Happy\"", "\"mood\":3", "\"mood\":null", "\"mood\":\"\"")) {
+            val ev = ChatProtocol.parse("""{"ev":"done","mode":"hermes","text":"x",$bad}""").single() as ChatEvent.Done
+            assertEquals(bad, null, ev.mood)
+        }
+        assertEquals(null, (ChatProtocol.parse("""{"ev":"done","mode":"or","text":"x"}""").single() as ChatEvent.Done).mood)
+    }
+
+    @Test fun aThreadLineKeepsItsMoodThroughTheWireAndNeverInventsOne() {
+        val line = ChatLine("c:jinx", 1.0, "jinx", "hola", "c", true, mood = "love")
+        val back = ChatProtocol.lineFromJson(ChatProtocol.lineToJson(line))
+        assertEquals("love", back!!.mood)
+        assertEquals(line, back)
+        // No mood: the key is not even written (the wire format is the old one).
+        val plain = ChatLine("d:jinx", 2.0, "jinx", "adiós", "d", true)
+        assertEquals(false, ChatProtocol.lineToJson(plain).has("mood"))
+        assertEquals(null, ChatProtocol.lineFromJson(JSONObject("""{"id":"e","ts":3,"src":"jinx","text":"x","mood":"nope"}"""))!!.mood)
+        assertEquals(null, ChatProtocol.lineFromJson(JSONObject("""{"id":"e","ts":3,"src":"jinx","text":"x","mood":null}"""))!!.mood)
+    }
+
     @Test fun expectDoneReturnsTheAnswer() {
         val done = ChatProtocol.expectDone("{\"ev\":\"ack\"}\n{\"ev\":\"done\",\"mode\":\"cached\",\"text\":\"x\"}")
         assertEquals("x", done.text)

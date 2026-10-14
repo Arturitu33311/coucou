@@ -57,7 +57,7 @@ class ChatRepository(
         laptop?.let { api ->
             try {
                 val done = api.send(user.text, cid, deviceId)
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored))
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored, done.mood))
                 if (done.mirrored) store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, Via.Laptop)
             } catch (_: ChatException) {

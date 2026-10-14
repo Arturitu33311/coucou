@@ -41,6 +41,21 @@ object JinxMood {
         Rule("happy", listOf("😊", "🙂", "😄", "😁", "😃", "😀", "🤗", ":)", ":D"), listOf("hola", "buenos dias", "buenas tardes", "feliz", "me alegra*", "que bien", "perfecto", "excelente", "claro")),
     )
 
+    /**
+     * The nineteen mood names the gateway sends (`done.mood`, a line's `mood`, `op: mood`): Mochi's emotes, the
+     * same list as the PC's JINX_EMOTES and the gateway's jinx_thread.EMOTES. In MochiMood each is its `emote`.
+     */
+    val EMOTES: List<String> = listOf(
+        "happy", "love", "proud", "surprised", "excited", "confused", "shy", "sad", "curious", "bored",
+        "scared", "grumpy", "smug", "laughing", "crying", "relieved", "determined", "flustered", "sleepy",
+    )
+
+    /** [name] when it is exactly one of [EMOTES], else null: whatever else the gateway says is ignored. */
+    fun validEmote(name: String?): String? = name?.takeIf { it in EMOTES }
+
+    /** The emote for one of her replies: the mood she sent when valid, else what her words read as. */
+    fun resolve(mood: String?, text: String?): String? = validEmote(mood) ?: emote(text)
+
     /** Lower case, no accents (ñ → n too). */
     fun fold(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
@@ -71,6 +86,9 @@ object JinxMood {
     /** What Mochi's face shows for this reply of Jinx's. */
     fun moodOfText(text: String?): MochiMood? = moodOf(emote(text))
 
+    /** The face for a reply with her own mood (when she sent one), else for her words. */
+    fun moodOfReply(mood: String?, text: String?): MochiMood? = moodOf(resolve(mood, text))
+
     /** How long her last reply sets Mochi's face in the chat; after that he just listens again. */
     const val FRESH_S = 15 * 60
 
@@ -84,6 +102,7 @@ object JinxMood {
         // The gateway stamps seconds; a millisecond stamp is read as such.
         val ts = if (last.ts > 1e11) last.ts / 1000.0 else last.ts
         if (nowS - ts > FRESH_S) return MochiMood.Listening
-        return moodOfText(last.text) ?: MochiMood.Listening
+        // The mood she sent with the line wins; her words are only the fallback.
+        return moodOfReply(last.mood, last.text) ?: MochiMood.Listening
     }
 }
