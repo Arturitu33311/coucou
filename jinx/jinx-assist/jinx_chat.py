@@ -600,8 +600,10 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
     needs_real = isinstance(req, dict) and req.get("op") in ("send", "core", "provision", "merge")
     t_start = time.time()
     try:
+        # Las ops ligeras (history, mood) no necesitan cerebro ni bóveda; mood sí necesita poder leer el estado.
         deps = build_real_deps(defer=True) if needs_real else Deps(
-            Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE)
+            Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE,
+            state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader)
     except Exception as e:  # noqa: BLE001
         stdout.write(json.dumps(_err("gateway sin cerebro: %s" % e)) + "\n")
         return 0

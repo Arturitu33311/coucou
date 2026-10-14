@@ -256,6 +256,24 @@ class MoodGatewayTest(unittest.TestCase):
             raise RuntimeError("ssh caído")
         self.assertEqual(self.events({"op": "mood"}, state=boom), [expected])
 
+    def test_main_answers_op_mood_without_building_the_brain(self):
+        """`jinx-chat` takes the light path for mood (no vault, no brain) and it still reads the state."""
+        import io
+        import json
+        import unittest.mock as mock
+
+        out = io.StringIO()
+        with mock.patch.object(jinx_chat, "BASE", self.dir.name), \
+                mock.patch.object(jinx_chat, "build_real_deps", side_effect=AssertionError("brain built")), \
+                mock.patch.object(jinx_chat, "ssh_state_reader",
+                                  return_value={"affection": 95.0, "trust": 80.0, "patience": 70.0, "energy": 60.0}), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("JINX_NO_HERMES", None)
+            jinx_chat.main(io.StringIO('{"op":"mood"}\n'), out)
+        ev = json.loads(out.getvalue().splitlines()[0])
+        self.assertEqual((ev["ev"], ev["source"]), ("mood", "state"))
+        self.assertIn(ev["emote"], (None,) + jinx_chat.EMOTES)
+
 
 if __name__ == "__main__":
     unittest.main()
