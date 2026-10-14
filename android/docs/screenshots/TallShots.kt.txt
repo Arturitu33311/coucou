@@ -1,0 +1,44 @@
+package com.agupta07505.smartisland.coucou
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import app.cash.paparazzi.DeviceConfig
+import app.cash.paparazzi.Paparazzi
+import com.agupta07505.smartisland.coucou.phone.Setup
+import com.agupta07505.smartisland.coucou.ui.CoucouTheme
+import org.junit.Rule
+import org.junit.Test
+import java.io.File
+import java.security.KeyPairGenerator
+
+/** Ajustes from top to bottom (four screens of it), with a phone key in place so the connection cards show. */
+class TallShots {
+    @get:Rule val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6)
+
+    @Test fun settingsWithKey() {
+        val dir = paparazzi.context.applicationContext.filesDir
+        val kp = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
+        File(dir, "coucou-phone-key.pub").writeBytes(kp.public.encoded)
+        File(dir, "coucou-phone-key.enc").writeBytes(byteArrayOf(1))
+        for (part in 0..3) {
+            paparazzi.snapshot(name = "settings-part$part") {
+                CoucouTheme {
+                    CoucouScaffold(CoucouTab.Settings, {}) { m, _ ->
+                        Box(m) {
+                            Setup(
+                                Modifier.wrapContentHeight(Alignment.Top, unbounded = true).requiredHeight(4000.dp)
+                                    .offset(y = (-700 * part).dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

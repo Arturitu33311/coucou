@@ -9,6 +9,25 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import com.agupta07505.smartisland.coucou.ui.Chip
+import com.agupta07505.smartisland.coucou.ui.CoucouColors
+import com.agupta07505.smartisland.coucou.ui.EmptyState
+import com.agupta07505.smartisland.coucou.ui.GroupLabel
+import com.agupta07505.smartisland.coucou.ui.ScreenHeader
+import com.agupta07505.smartisland.coucou.ui.SectionCard
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -63,21 +82,26 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** The task list: add one in a sentence (the time is read out of it), tick it, delete it. */
+/**
+ * The Coucou app's entry for the pendientes (the launcher icon, a reminder's notification, the island):
+ * the app opened on that tab. `EXTRA_TAB` picks another one.
+ */
 class CoucouTasksActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0B0B10), surface = Color(0xFF16161C))) {
-                TasksScreen()
-            }
-        }
+        val tab = CoucouTab.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_TAB) } ?: CoucouTab.Tasks
+        setContent { CoucouHome(initial = tab) }
+    }
+
+    companion object {
+        const val EXTRA_TAB = "coucou_tab"
     }
 }
 
+/** The pendientes with their state: the list, the sentence being typed, the day picked, the sync with Jinx. */
 @Composable
-private fun TasksScreen() {
+internal fun TasksScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var tasks by remember { mutableStateOf(CoucouTasks.list(context)) }
     var input by remember { mutableStateOf("") }
@@ -102,68 +126,172 @@ private fun TasksScreen() {
             .onFailure { error = it.message }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
-            .padding(16.dp),
+    TasksContent(
+        tasks = tasks,
+        input = input,
+        onInput = { input = it },
+        onAdd = { add() },
+        picking = picking,
+        dayPicked = whenState.dayStart != null,
+        onTogglePicker = { picking = !picking },
+        picker = { WhenPickerPanel(whenState) },
+        error = error,
+        syncError = outcome.error?.takeIf { jinxOn },
+        jinxOn = jinxOn,
+        onDone = { id, done -> tasks = CoucouTasks.setDone(context, id, done).also { Haptics.tap(context) } },
+        onDelete = { id -> tasks = CoucouTasks.delete(context, id) },
+        modifier = modifier,
+    )
+}
+
+/** The pendientes, stateless (drawn as they are given, so a test can draw them). */
+@Composable
+internal fun TasksContent(
+    tasks: List<CoucouTask>,
+    input: String,
+    onInput: (String) -> Unit,
+    onAdd: () -> Unit,
+    picking: Boolean,
+    dayPicked: Boolean,
+    onTogglePicker: () -> Unit,
+    picker: @Composable () -> Unit,
+    error: String?,
+    syncError: String?,
+    jinxOn: Boolean,
+    onDone: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    now: Long = System.currentTimeMillis() / 1000,
+) {
+    val open = tasks.filter { !it.done }.sortedWith(compareBy({ it.remindAt ?: Long.MAX_VALUE }, { it.created }))
+    val done = tasks.filter { it.done }.sortedByDescending { it.completedAt ?: 0 }
+    val late = open.count { (it.remindAt ?: Long.MAX_VALUE) < now }
+    val subtitle = when {
+        open.isEmpty() -> "Nada por hacer"
+        late > 0 -> "${open.size} por hacer · $late vencida${if (late > 1) "s" else ""}"
+        else -> "${open.size} por hacer"
+    }
+
+    LazyColumn(
+        modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(bottom = 24.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MochiGlyph(size = 34.dp, mood = MochiMood.Idle, outfit = rememberMochiOutfit(MochiMood.Idle))
-            Spacer(Modifier.width(12.dp))
-            Text("Tasks", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            IconButton(onClick = { context.startActivity(android.content.Intent(context, PhoneSetupActivity::class.java)) }) {
-                Icon(Icons.Rounded.Settings, "Phone link", tint = Color.White.copy(alpha = 0.6f))
-            }
-        }
-        Spacer(Modifier.padding(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                placeholder = { Text("llamar a mamá a las 17:30 · en 20 min", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { add() }),
+        item(key = "header") {
+            ScreenHeader(
+                title = "Pendientes",
+                subtitle = subtitle,
+                leading = { MochiGlyph(size = 40.dp, mood = if (late > 0) MochiMood.Alert else MochiMood.Idle, outfit = rememberMochiOutfit(MochiMood.Idle)) },
+                actions = { if (jinxOn) Chip(if (syncError == null) "con Jinx" else "sin sync", dot = if (syncError == null) CoucouColors.Accent else CoucouColors.Warning) },
             )
-            WhenCalendarButton(picked = whenState.dayStart != null) { picking = !picking }
         }
-        if (picking) {
-            Spacer(Modifier.padding(4.dp))
-            WhenPickerPanel(whenState)
-        }
-        error?.let { Text(it, color = Color(0xFFF5A524), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
-        Spacer(Modifier.padding(4.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            val open = tasks.filter { !it.done }.sortedWith(compareBy({ it.remindAt ?: Long.MAX_VALUE }, { it.created }))
-            val done = tasks.filter { it.done }.sortedByDescending { it.completedAt ?: 0 }
-            items(open + done, key = { it.id }) { t ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = t.done, onCheckedChange = { tasks = CoucouTasks.setDone(context, t.id, it).also { Haptics.tap(context) } })
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            t.title,
-                            color = Color.White.copy(alpha = if (t.done) 0.4f else 1f),
-                            textDecoration = if (t.done) TextDecoration.LineThrough else null,
-                            fontSize = 15.sp,
-                        )
-                        t.remindAt?.takeIf { !t.done }?.let {
-                            val late = it < System.currentTimeMillis() / 1000
-                            Text(
-                                "⏰ " + SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault()).format(Date(it * 1000)),
-                                color = if (late) Color(0xFFF5A524) else Color.White.copy(alpha = 0.5f),
-                                fontSize = 12.sp,
-                            )
-                        }
-                    }
-                    IconButton(onClick = { tasks = CoucouTasks.delete(context, t.id) }) {
-                        Icon(Icons.Rounded.Close, "Delete", tint = Color.White.copy(alpha = 0.5f))
-                    }
+        item(key = "add") {
+            SectionCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextField(
+                        value = input,
+                        onValueChange = onInput,
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("llamar a mamá a las 17:30 · en 20 min", color = CoucouColors.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = CoucouColors.SurfaceHigh,
+                            unfocusedContainerColor = CoucouColors.SurfaceHigh,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = CoucouColors.Accent,
+                            focusedTextColor = CoucouColors.Text,
+                            unfocusedTextColor = CoucouColors.Text,
+                        ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { onAdd() }),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    WhenCalendarButton(picked = dayPicked, onClick = onTogglePicker)
+                    IconButton(
+                        onClick = onAdd,
+                        enabled = input.isNotBlank(),
+                        colors = IconButtonDefaults.iconButtonColors(
+                            containerColor = CoucouColors.Accent,
+                            contentColor = Color(0xFF04140D),
+                            disabledContainerColor = CoucouColors.SurfaceHigh,
+                            disabledContentColor = CoucouColors.TextTertiary,
+                        ),
+                    ) { Icon(Icons.Rounded.Add, "Añadir") }
                 }
+                if (picking) picker()
+                Text(
+                    "Escribe la hora en la frase («mañana a las 9», «en 20 min») o elige un día en el calendario.",
+                    color = CoucouColors.TextTertiary, fontSize = 12.sp,
+                )
+                error?.let { Text(it, color = CoucouColors.Warning, fontSize = 12.5.sp) }
             }
-            outcome.error?.takeIf { jinxOn }?.let { e -> item { Text("Sync: $e", color = Color(0xFFF5A524), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) } }
+        }
+        syncError?.let { e ->
+            item(key = "sync") {
+                Text(
+                    "No pude sincronizar con Jinx: $e",
+                    color = CoucouColors.Warning, fontSize = 12.5.sp,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .background(CoucouColors.Warning.copy(alpha = 0.10f)).padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+        if (open.isEmpty() && done.isEmpty()) {
+            item(key = "empty") { EmptyState("Nada pendiente", "Lo que añadas aquí te lo recuerda Mochi en la isla, y Jinx también lo ve.") }
+        }
+        if (open.isNotEmpty()) item(key = "open-label") { GroupLabel("Por hacer") }
+        items(open, key = { it.id }) { t -> TaskRow(t, now, onDone, onDelete) }
+        if (done.isNotEmpty()) item(key = "done-label") { GroupLabel("Hechas") }
+        items(done, key = { it.id }) { t -> TaskRow(t, now, onDone, onDelete) }
+    }
+}
+
+private val whenFormat = SimpleDateFormat("EEE d MMM · HH:mm", Locale.getDefault())
+
+@Composable
+private fun TaskRow(t: CoucouTask, now: Long, onDone: (String, Boolean) -> Unit, onDelete: (String) -> Unit) {
+    val late = !t.done && (t.remindAt ?: Long.MAX_VALUE) < now
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(if (t.done) CoucouColors.Surface.copy(alpha = 0.6f) else CoucouColors.Surface)
+            .clickable { onDone(t.id, !t.done) }
+            .padding(start = 6.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(22.dp).clip(CircleShape)
+                    .background(if (t.done) CoucouColors.Accent else Color.Transparent)
+                    .border(2.dp, if (t.done) CoucouColors.Accent else if (late) CoucouColors.Warning else CoucouColors.TextTertiary, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (t.done) Icon(Icons.Rounded.Check, "Hecha", tint = Color(0xFF04140D), modifier = Modifier.size(15.dp))
+            }
+        }
+        Column(Modifier.weight(1f).padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                t.title,
+                color = CoucouColors.Text.copy(alpha = if (t.done) 0.4f else 1f),
+                textDecoration = if (t.done) TextDecoration.LineThrough else null,
+                fontSize = 15.sp,
+            )
+            val meta = buildList {
+                t.remindAt?.takeIf { !t.done }?.let { add((if (late) "Vencida · " else "") + whenFormat.format(Date(it * 1000))) }
+                if (t.jinx) add("con Jinx")
+                t.origin?.let { add("de $it") }
+            }
+            if (meta.isNotEmpty()) {
+                Text(
+                    meta.joinToString("  ·  "),
+                    color = if (late) CoucouColors.Warning else CoucouColors.TextTertiary,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        IconButton(onClick = { onDelete(t.id) }) {
+            Icon(Icons.Rounded.Close, "Borrar", tint = CoucouColors.TextTertiary, modifier = Modifier.size(18.dp))
         }
     }
 }

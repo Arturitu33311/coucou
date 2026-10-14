@@ -82,6 +82,9 @@ Compilar e instalar: `cd windows && npm ci && npx tauri build --no-bundle`, lueg
       Telegram con su origen; lo que escribes aparece en Telegram como `💻 …`; la línea de estado dice quién
       contestó (Hermes o respaldo). Ajustes → Hub → *Jinx through* = *Hermes API* recupera el camino anterior.
 - [ ] Jinx con *Hermes API*: chat, respuestas en streaming, tarjeta de permiso.
+- [ ] Android, app Coucou rediseñada: el icono «Coucou» abre Pendientes, la tecla lateral abre Jinx, y las tres
+      pestañas (Jinx · Pendientes · Ajustes) funcionan; el teclado no tapa el campo de Jinx; un recordatorio abre
+      Pendientes. Capturas sin teléfono: `android/docs/SCREENSHOTS.md`.
 - [ ] Android: `cd android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` (aquí pasó con un
       espejo de Maven Central: 354 tests) e `install -r` en S21 y S22.
 - [ ] Hub (Today, Tasks, Pomodoro, Notes, Clipboard…) y presence entre portátil y móvil.

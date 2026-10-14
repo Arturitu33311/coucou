@@ -59,7 +59,7 @@
         <activity
             android:name=".coucou.CoucouTasksActivity"
             android:exported="true"
-            android:label="Coucou tasks"
+            android:label="Coucou"
             android:theme="@style/Theme.SmartIsland">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -76,7 +76,7 @@
         <activity
             android:name=".coucou.phone.PhoneSetupActivity"
             android:exported="false"
-            android:label="Coucou phone link"
+            android:label="Coucou · Ajustes"
             android:theme="@style/Theme.SmartIsland" />
 
         <receiver

@@ -48,7 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.agupta07505.smartisland.coucou.CoucouHome
 import com.agupta07505.smartisland.coucou.CoucouRuntime
+import com.agupta07505.smartisland.coucou.CoucouTab
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
 import com.agupta07505.smartisland.coucou.ui.MochiEmerald
 import com.agupta07505.smartisland.coucou.ui.MochiGlyph
@@ -254,109 +257,37 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** The assistant's panel: the shared conversation, one input, which brain answered, and Claude Code at a glance. */
+/**
+ * The assistant's entry (the side key, Digital assistant app): the Coucou app opened on Jinx's tab, so the
+ * pendientes and the settings are one tap away.
+ */
 class JinxAssistActivity : ComponentActivity() {
-    private val model: AssistModel by viewModels()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0B0B10), surface = Color(0xFF16161C))) {
-                AssistScreen(model)
-            }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        model.onOpen()
+        setContent { CoucouHome(initial = CoucouTab.Jinx) }
     }
 }
 
+/** Jinx's tab with its model: brings the laptop's lines and retries what was pending each time it is shown. */
 @Composable
-private fun AssistScreen(model: AssistModel) {
+internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
     val ui by model.ui.collectAsState()
     val agents by CoucouRuntime.agentUi.collectAsState()
-    var draft by remember { mutableStateOf("") }
-    val list = rememberLazyListState()
-    LaunchedEffect(ui.lines.size) { if (ui.lines.isNotEmpty()) list.animateScrollToItem(ui.lines.lastIndex) }
-
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().imePadding().padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MochiGlyph(size = 32.dp, tint = MochiEmerald, mood = if (ui.busy) MochiMood.Thinking else MochiMood.Listening)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Jinx", color = Color.White, fontSize = 18.sp)
-                if (ui.badge.isNotEmpty()) Text(ui.badge, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
-            }
-            TextButton(onClick = { model.syncNow() }) { Text("Sincronizar") }
-            TextButton(onClick = { model.provision() }) { Text("Provisionar (1.ª vez)") }
-        }
-        if (agents.sessions.isNotEmpty()) {
-            Text(
-                agents.sessions.joinToString(" · ") { "${it.project}: ${it.state.name.lowercase()}" },
-                color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 2,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        ModelRow(ui, onDownload = { model.downloadModel() }, onTest = { model.testLocalModel() })
-        if (ui.notice.isNotEmpty()) {
-            Text(ui.notice, color = Color(0xFFFFB74D), fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
-        }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp),
-            state = list,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(ui.lines, key = { it.id }) { l -> Bubble(l) }
-        }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Escríbele a Jinx") },
-            enabled = !ui.busy,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { model.send(draft); draft = "" }),
-        )
+    LifecycleResumeEffect(model) {
+        model.onOpen()
+        onPauseOrDispose { }
     }
-}
-
-@Composable
-private fun ModelRow(ui: AssistUi, onDownload: () -> Unit, onTest: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        val label = when {
-            ui.modelBusy && ui.modelPercent >= 0 -> "Modelo local: descargando ${ui.modelPercent} %"
-            ui.model == ModelState.Ready -> "Modelo local: listo (sin conexión)"
-            ui.model is ModelState.Partial -> "Modelo local: descarga a medias"
-            else -> "Modelo local: no descargado"
-        }
-        Text(label, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, modifier = Modifier.weight(1f))
-        if (ui.model == ModelState.Ready) {
-            TextButton(onClick = onTest, enabled = !ui.modelBusy) { Text("Probar") }
-        } else {
-            TextButton(onClick = onDownload, enabled = !ui.modelBusy) { Text("Descargar 2.6 GB") }
-        }
-    }
-}
-
-@Composable
-private fun Bubble(l: ChatLine) {
-    val mine = !l.fromJinx
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-        Column(
-            Modifier
-                .background(if (mine) Color(0xFF1F3B2E) else Color(0xFF16161C), RoundedCornerShape(14.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Text(l.text, color = Color.White, fontSize = 15.sp)
-            l.sourceLabel?.let { Text(it, color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp) }
-        }
-    }
+    AssistContent(
+        ui = ui,
+        sessions = agents.sessions,
+        onSend = { model.send(it) },
+        onSync = { model.syncNow() },
+        onProvision = { model.provision() },
+        onDownloadModel = { model.downloadModel() },
+        onTestModel = { model.testLocalModel() },
+        modifier = modifier,
+    )
 }
 
 private const val MAX_DOWNLOAD_TRIES = 30
