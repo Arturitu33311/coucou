@@ -5,7 +5,7 @@
 //
 // Here the gateway runs locally — no ssh. Its answers reach the island as the same `jinx` events the
 // Hermes API path sends (jinx.rs), so the island does not care which one answered:
-//   { kind: "done", text, mode }    mode: hermes | or | local | cached
+//   { kind: "done", text, mode, mood? }    mode: hermes | or | local | cached; mood: one of EMOTES, when sent
 //   { kind: "error", message }
 
 use std::io::{Read, Write};
@@ -66,14 +66,26 @@ pub fn parse_events(out: &str) -> Vec<Value> {
         .collect()
 }
 
-/// A `send`'s outcome: the answer and the brain that gave it, or what went wrong.
-pub fn outcome(events: &[Value]) -> Result<(String, String), String> {
+/// The mood names Jinx's gateway may send: Mochi's emotes (the phone's `JinxMood.EMOTES`, the gateway's
+/// `jinx_thread.EMOTES`). Anything else is dropped, and the island reads the mood from her text instead.
+pub const EMOTES: [&str; 19] = [
+    "happy", "love", "proud", "surprised", "excited", "confused", "shy", "sad", "curious", "bored", "scared",
+    "grumpy", "smug", "laughing", "crying", "relieved", "determined", "flustered", "sleepy",
+];
+
+fn valid_emote(v: &Value) -> Option<String> {
+    v.as_str().filter(|m| EMOTES.contains(m)).map(str::to_string)
+}
+
+/// A `send`'s outcome: the answer, the brain that gave it and — when the reply carried one — her mood,
+/// or what went wrong.
+pub fn outcome(events: &[Value]) -> Result<(String, String, Option<String>), String> {
     for ev in events.iter().rev() {
         match ev["ev"].as_str() {
             Some("done") => {
                 let text = ev["text"].as_str().unwrap_or_default().to_string();
                 let mode = ev["mode"].as_str().unwrap_or_default().to_string();
-                return Ok((text, mode));
+                return Ok((text, mode, valid_emote(&ev["mood"])));
             }
             Some("error") => return Err(ev["msg"].as_str().unwrap_or("Jinx did not answer").to_string()),
             _ => {}
@@ -130,6 +142,20 @@ pub fn history(n: u32) -> Result<Vec<Value>, String> {
     Err("Jinx's gateway gave no history".into())
 }
 
+/// Jinx's background mood now (`op: mood`: from her `emotion_state` on the server, with the hour): an emote
+/// from [`EMOTES`], or `None` when she has none or the gateway could not read her state.
+pub fn background_mood() -> Result<Option<String>, String> {
+    let events = run(&json!({ "op": "mood" }), HISTORY_TIMEOUT)?;
+    for ev in &events {
+        match ev["ev"].as_str() {
+            Some("mood") => return Ok(valid_emote(&ev["emote"])),
+            Some("error") => return Err(ev["msg"].as_str().unwrap_or("error").to_string()),
+            _ => {}
+        }
+    }
+    Err("Jinx's gateway gave no mood".into())
+}
+
 /// Is the gateway there and answering? What to tell the user.
 pub fn test() -> Result<String, String> {
     let lines = history(500)?.len();
@@ -143,7 +169,13 @@ pub fn send(app: AppHandle, input: String) {
     tauri::async_runtime::spawn_blocking(move || {
         let request = json!({ "op": "send", "text": input, "cid": cid, "src": SRC });
         let payload = match run(&request, SEND_TIMEOUT).and_then(|events| outcome(&events)) {
-            Ok((text, mode)) => json!({ "kind": "done", "text": text, "mode": mode }),
+            Ok((text, mode, mood)) => {
+                let mut done = json!({ "kind": "done", "text": text, "mode": mode });
+                if let Some(mood) = mood {
+                    done["mood"] = json!(mood);
+                }
+                done
+            }
             Err(message) => {
                 log::line("jinx: the gateway did not answer".to_string());
                 json!({ "kind": "error", "message": message })
@@ -162,7 +194,20 @@ mod tests {
         let out = "{\"ev\":\"ack\"}\nnoise\n{\"ev\":\"done\",\"mode\":\"hermes\",\"text\":\"Hola\",\"mirrored\":true}\n";
         let events = parse_events(out);
         assert_eq!(events.len(), 2);
-        assert_eq!(outcome(&events), Ok(("Hola".to_string(), "hermes".to_string())));
+        assert_eq!(outcome(&events), Ok(("Hola".to_string(), "hermes".to_string(), None)));
+    }
+
+    #[test]
+    fn the_mood_is_the_one_the_gateway_sent_if_it_is_a_known_emote() {
+        let done = |mood: &str| parse_events(&format!("{{\"ev\":\"done\",\"mode\":\"hermes\",\"text\":\"x\"{mood}}}\n"));
+        assert_eq!(outcome(&done(",\"mood\":\"laughing\"")).unwrap().2, Some("laughing".to_string()));
+        // not one of the nineteen (or not a string): no mood, the island reads her text
+        assert_eq!(outcome(&done(",\"mood\":\"furious\"")).unwrap().2, None);
+        assert_eq!(outcome(&done(",\"mood\":\"Happy\"")).unwrap().2, None);
+        assert_eq!(outcome(&done(",\"mood\":3")).unwrap().2, None);
+        assert_eq!(outcome(&done(",\"mood\":null")).unwrap().2, None);
+        assert_eq!(outcome(&done("")).unwrap().2, None);
+        assert_eq!(EMOTES.len(), 19);
     }
 
     #[test]
@@ -201,7 +246,8 @@ mod tests {
             &script,
             "#!/bin/sh\nread line\ncase \"$line\" in\n\
              *'\"op\": \"history\"'*|*'\"op\":\"history\"'*) echo '{\"ev\":\"history\",\"items\":[{\"id\":\"a\",\"ts\":1,\"src\":\"s21\",\"text\":\"hola\"}]}' ;;\n\
-             *'\"src\":\"pc\"'*) echo '{\"ev\":\"ack\"}'; echo '{\"ev\":\"done\",\"mode\":\"or\",\"text\":\"ok pc\"}' ;;\n\
+             *'\"op\":\"mood\"'*) echo '{\"ev\":\"mood\",\"emote\":\"sleepy\",\"source\":\"state\",\"emotion_state\":null}' ;;\n\
+             *'\"src\":\"pc\"'*) echo '{\"ev\":\"ack\"}'; echo '{\"ev\":\"done\",\"mode\":\"or\",\"text\":\"ok pc\",\"mood\":\"proud\"}' ;;\n\
              *) echo '{\"ev\":\"error\",\"msg\":\"src\"}' ;;\nesac\n",
         )
         .unwrap();
@@ -210,9 +256,11 @@ mod tests {
         let req = json!({ "op": "send", "text": "x", "cid": new_cid(), "src": SRC });
         let got = run(&req, Duration::from_secs(10)).and_then(|e| outcome(&e));
         let items = history(5);
+        let mood = background_mood();
         std::env::remove_var("COUCOU_JINX_CHAT");
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(got, Ok(("ok pc".to_string(), "or".to_string())));
+        assert_eq!(got, Ok(("ok pc".to_string(), "or".to_string(), Some("proud".to_string()))));
         assert_eq!(items.unwrap()[0]["src"], "s21");
+        assert_eq!(mood, Ok(Some("sleepy".to_string())));
     }
 }

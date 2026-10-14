@@ -52,6 +52,25 @@ function wordRegex(word: string): RegExp {
 
 const COMPILED = JINX_MOOD_RULES.map((r) => ({ emote: r.emote, emoji: r.emoji, words: r.words.map(wordRegex) }));
 
+/** The nineteen mood names the gateway sends (`done.mood`, `op: mood`): Mochi's emotes. Same list on the phone. */
+export const JINX_EMOTES: readonly BotEmoteName[] = [
+  "happy", "love", "proud", "surprised", "excited", "confused", "shy", "sad", "curious", "bored",
+  "scared", "grumpy", "smug", "laughing", "crying", "relieved", "determined", "flustered", "sleepy",
+];
+
+/** `x` when it is one of [JINX_EMOTES] (exact name), else null: whatever else the gateway says is ignored. */
+export function validJinxEmote(x: unknown): BotEmoteName | null {
+  return typeof x === "string" && (JINX_EMOTES as readonly string[]).includes(x) ? (x as BotEmoteName) : null;
+}
+
+/**
+ * The emote for one of her replies: the mood Jinx sent with it when it is valid, else what her text reads as.
+ * (Her background mood — `op: mood` — is not this: it never replaces the mood of a reply.)
+ */
+export function replyEmote(mood: unknown, text: string | null | undefined): BotEmoteName | null {
+  return validJinxEmote(mood) ?? jinxEmote(text);
+}
+
 /** The emote Jinx's reply carries, or null when it reads neutral. */
 export function jinxEmote(text: string | null | undefined): BotEmoteName | null {
   if (!text) return null;

@@ -6,7 +6,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { JINX_ID, State, type ChatMessage } from "../core/state";
 import { threadMessages } from "../core/jinx-thread";
-import { jinxEmote } from "../core/jinx-mood";
+import { replyEmote } from "../core/jinx-mood";
 import type { Island } from "./island";
 
 type Approval = { kind: "approval"; runId: string; requestId: string; command: string; description: string };
@@ -15,7 +15,7 @@ type JinxEvent =
   | { kind: "tool"; name: string; preview: string }
   | Approval
   | { kind: "resolved"; requestId: string }
-  | { kind: "done"; text: string; mode?: string }
+  | { kind: "done"; text: string; mode?: string; mood?: string }
   | { kind: "error"; message: string };
 
 /** How long Mochi shows the mood of Jinx's reply: long enough to be seen when the island opens on it. */
@@ -172,7 +172,8 @@ function handle(island: Island, ev: JinxEvent) {
       }
       if (ev.mode) State.jinxMode = ev.mode;
       {
-        const emote = jinxEmote(ev.text || streaming?.content);
+        // The mood Jinx sent with the reply wins; without one, what her words read as.
+        const emote = replyEmote(ev.mood, ev.text || streaming?.content);
         Sound.play("finish");
         finish(island, "finished");
         // Mochi wears the mood of what she said (after `finish`, so the emote is not drawn over).
