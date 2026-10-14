@@ -54,7 +54,14 @@ enum class Outfit(val id: String, val label: String) {
     SantaHat("santaHat", "Santa hat"),
     BunnyEars("bunnyEars", "Bunny ears"),
     Headphones("headphones", "Headphones"),
-    Nightcap("nightcap", "Night cap");
+    Nightcap("nightcap", "Night cap"),
+    // The Mac's newer six (MochiWardrobe.swift): the ids are the same on every platform.
+    Necktie("necktie", "Necktie"),
+    Monocle("monocle", "Monocle"),
+    Headband("headband", "Headband"),
+    Earmuffs("earmuffs", "Earmuffs"),
+    Bandana("bandana", "Bandana"),
+    WizardHat("wizardHat", "Wizard hat");
 
     companion object {
         const val AUTO = "auto"
@@ -115,6 +122,9 @@ object Wardrobe {
      */
     fun fit(o: Outfit): Float = when (o) {
         Outfit.WitchHat -> 0.66f
+        Outfit.WizardHat -> 0.60f
+        Outfit.Earmuffs -> 0.78f
+        Outfit.Necktie, Outfit.Bandana -> 0.88f
         Outfit.PartyHat -> 0.74f
         Outfit.BunnyEars -> 0.78f
         Outfit.SantaHat, Outfit.Nightcap -> 0.80f
@@ -820,6 +830,352 @@ private fun DrawScope.headphones(h: Head, front: Boolean, t: Float) {
     }
 }
 
+// ── Necktie, monocle, headband, earmuffs, bandana, wizard hat ────────────────
+// Ports of the Mac's newer accessories (MochiOutfitDrawing.swift) as windows/src/mochi/wardrobe.ts
+// has them. Same ids, same geometry; the phone's Mochi never rolls, so there is no roll pass.
+
+/** Strokes the runs of [pts] that pass [keep], breaking the line wherever points are dropped. */
+private fun DrawScope.strokeRuns(pts: List<P3>, keep: (P3) -> Boolean, color: Color, width: Float) {
+    val path = Path()
+    var running = false
+    for (q in pts) {
+        if (keep(q)) {
+            if (running) path.lineTo(q.x, q.y) else { path.moveTo(q.x, q.y); running = true }
+        } else running = false
+    }
+    stroke(path, color, width)
+}
+
+private fun starPath5(cx: Float, cy: Float, outer: Float, inner: Float) = Path().apply {
+    for (i in 0 until 10) {
+        val a = -PI.toFloat() / 2f + i * PI.toFloat() / 5f
+        val r = if (i % 2 == 0) outer else inner
+        val px = cx + cos(a) * r
+        val py = cy + sin(a) * r
+        if (i == 0) moveTo(px, py) else lineTo(px, py)
+    }
+    close()
+}
+
+private fun DrawScope.necktie(h: Head) {
+    val r = h.R
+    val s = 1.02f
+    val yCollar = -0.56f
+    val collar = frontArc(h, yCollar, s)
+    if (collar.isEmpty()) return
+    strokeRuns(collar, { true }, c(0xCBD5E1), r * 0.13f)
+    strokeRuns(collar, { true }, Color.White, r * 0.09f)
+
+    val k = surf(h, yCollar, 0f, s * 1.02f)
+    if (k.z <= -0.2f) return
+    val sq = max(0.45f, k.z) // narrows as Mochi turns away
+    translate(k.x, k.y) {
+        scale(sq, 1f, Offset.Zero) {
+            for (sd in listOf(-1f, 1f)) {
+                val pt = Path().apply {
+                    moveTo(sd * r * 0.04f, -r * 0.05f)
+                    lineTo(sd * r * 0.3f, -r * 0.1f)
+                    lineTo(sd * r * 0.14f, r * 0.13f)
+                    close()
+                }
+                drawPath(pt, Color.White)
+                stroke(pt, c(0xCBD5E1), r * 0.02f)
+            }
+            // The tie swings from the knot with the body's motion.
+            rotate(-h.physDx * 0.35f * 180f / PI.toFloat(), Offset.Zero) {
+                val blade = Path().apply {
+                    moveTo(-r * 0.06f, r * 0.07f)
+                    lineTo(r * 0.06f, r * 0.07f)
+                    lineTo(r * 0.13f, r * 0.62f)
+                    lineTo(0f, r * 0.78f)
+                    lineTo(-r * 0.13f, r * 0.62f)
+                    close()
+                }
+                drawPath(blade, lin(-r * 0.13f, 0f, r * 0.13f, 0f, 0f to c(0x3B82F6), 1f to c(0x1D4ED8)))
+                if (!h.simplified) {
+                    clipPath(blade) {
+                        for (i in 0 until 4) {
+                            val y0 = r * (0.16f + i * 0.16f)
+                            val st = Path().apply { moveTo(-r * 0.2f, y0); lineTo(r * 0.2f, y0 + r * 0.12f) }
+                            stroke(st, c(0xFBBF24, 0.85f), r * 0.035f, StrokeCap.Butt)
+                        }
+                    }
+                }
+                val knot = Path().apply {
+                    moveTo(-r * 0.09f, -r * 0.05f)
+                    lineTo(r * 0.09f, -r * 0.05f)
+                    lineTo(r * 0.06f, r * 0.09f)
+                    lineTo(-r * 0.06f, r * 0.09f)
+                    close()
+                }
+                drawPath(knot, c(0x1E40AF))
+            }
+        }
+    }
+}
+
+private fun DrawScope.monocle(h: Head, body: Path) {
+    val re = eyes(h).firstOrNull { it.sd > 0 } ?: return
+    if (!re.visible) return
+    val d = h.R * 0.54f
+    clipPath(body) {
+        // The chain hangs from the rim and sags with motion.
+        val sx = re.x + d / 2 * re.fx * 0.7f
+        val sy = re.y + d * 0.36f
+        val ex = h.rx * 1.02f
+        val ey = h.ry * 0.45f
+        val chain = Path().apply {
+            moveTo(sx, sy)
+            quadraticTo((sx + ex) / 2 - h.physDx * h.R * 0.25f, max(sy, ey) + h.R * (0.22f + h.physDy * 0.15f), ex, ey)
+        }
+        drawPath(
+            chain, c(0xB8860B),
+            style = Stroke(
+                width = h.R * 0.028f, cap = StrokeCap.Round,
+                pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(h.R * 0.035f, h.R * 0.045f)),
+            ),
+        )
+        translate(re.x, re.y) {
+            scale(re.fx, re.fy, Offset.Zero) {
+                val lens = oval(0f, 0f, d / 2, d / 2)
+                drawPath(lens, rad(-d * 0.15f, -d * 0.15f, d * 0.6f, 0f to rgba(217, 240, 255, 0.08f), 1f to rgba(191, 224, 255, 0.30f)))
+                drawPath(lens, c(0xD4AF37), style = Stroke(width = h.R * 0.075f))
+                drawPath(oval(0f, 0f, d / 2 - h.R * 0.05f, d / 2 - h.R * 0.05f), c(0x8A6A10, 0.6f), style = Stroke(width = h.R * 0.02f))
+                val glint = Path().apply {
+                    val rr = d / 2 - h.R * 0.07f
+                    val a0 = PI.toFloat() * 1.1f
+                    val a1 = PI.toFloat() * 1.4f
+                    moveTo(cos(a0) * rr, sin(a0) * rr)
+                    for (k in 1..8) {
+                        val a = a0 + (a1 - a0) * k / 8f
+                        lineTo(cos(a) * rr, sin(a) * rr)
+                    }
+                }
+                stroke(glint, Color.White.copy(alpha = 0.65f), h.R * 0.035f)
+                // A little ring where the chain is fastened.
+                val lr = h.R * 0.035f
+                drawPath(oval(d * 0.35f, d * 0.36f, lr, lr), c(0xD4AF37), style = Stroke(width = h.R * 0.02f))
+            }
+        }
+    }
+}
+
+private fun DrawScope.headband(h: Head) {
+    val s = 1.04f
+    val y0 = 0.32f
+    val arc = frontArc(h, y0, s)
+    if (arc.isEmpty()) return
+    strokeRuns(arc, { true }, c(0xDB2777), h.ry * 0.19f)
+    strokeRuns(arc, { true }, c(0xF472B6), h.ry * 0.14f)
+    strokeRuns(arc.map { P3(it.x, it.y - h.ry * 0.03f, it.z) }, { true }, Color.White.copy(alpha = 0.35f), h.ry * 0.035f)
+
+    // The bow sits at a fixed spot on the band and turns with the head.
+    val lon = 0.8f
+    val b = surf(h, y0 + 0.04f, lon, s * 1.03f)
+    if (b.z <= -0.15f) return
+    val w = h.R * 0.17f
+    val sq = max(0.4f, cos(lon + h.yaw))
+    translate(b.x, b.y) {
+        rotate((0.3f + h.yaw * 0.3f + h.physDx * 0.15f) * 180f / PI.toFloat(), Offset.Zero) {
+            scale(sq, 1f, Offset.Zero) {
+                for (sd in listOf(-1f, 1f)) {
+                    val wing = Path().apply {
+                        moveTo(0f, 0f)
+                        cubicTo(sd * w * 0.55f, -w * 0.85f, sd * w * 1.35f, -w * 0.55f, sd * w * 1.15f, 0f)
+                        cubicTo(sd * w * 1.35f, w * 0.55f, sd * w * 0.55f, w * 0.85f, 0f, 0f)
+                    }
+                    drawPath(wing, lin(0f, -w, 0f, w, 0f to c(0xF9A8D4), 1f to c(0xDB2777)))
+                }
+                drawPath(oval(0f, 0f, w * 0.22f, w * 0.28f), c(0xBE185D))
+            }
+        }
+    }
+}
+
+/** Over-the-head band: left ear → crown → right ear, in the head's side plane. */
+private fun earmuffBandPts(h: Head): List<P3> {
+    val s = 1.06f
+    val n = 16
+    val yLow = 0.12f
+    val pts = ArrayList<P3>()
+    for (i in 0..n) {
+        val y = yLow + (1f - yLow) * i / n
+        val r = ringR(y) * s
+        pts.add(proj(h, -r, y * 1.05f, 0f))
+    }
+    for (i in n - 1 downTo 0) {
+        val y = yLow + (1f - yLow) * i / n
+        val r = ringR(y) * s
+        pts.add(proj(h, r, y * 1.05f, 0f))
+    }
+    return pts
+}
+
+/** The front pass draws what faces the viewer; the behind pass the far side. */
+private fun DrawScope.earmuffs(h: Head, front: Boolean) {
+    val keep: (P3) -> Boolean = { if (front) it.z >= -0.02f else it.z < -0.02f }
+    val band = earmuffBandPts(h)
+    strokeRuns(band, keep, c(0x4B5563), h.R * 0.1f)
+    strokeRuns(band, keep, c(0x9CA3AF), h.R * 0.055f)
+    for (sd in listOf(-1f, 1f)) {
+        val cc = proj(h, sd * 1.04f, 0.12f, 0f)
+        if (!keep(cc)) continue
+        pompom(cc.x + h.physDx * h.rx * 0.08f, cc.y + h.physDy * h.ry * 0.08f, h.R * 0.27f, c(0xFBCFE8), c(0xEC4899))
+    }
+}
+
+/** Knot with two ribbon tails; drawn in front or behind the body depending on which way he faces. */
+private fun DrawScope.bandanaKnot(h: Head, front: Boolean) {
+    val k = surf(h, 0.42f, 1.2f, 1.03f * 1.04f)
+    if (if (front) k.z <= 0f else k.z > 0f) return
+    val r = h.R
+    val sway = h.physDx * 0.45f
+    translate(k.x, k.y) {
+        for ((angle, len) in listOf(0.55f to 0.42f, 1.15f to 0.36f)) {
+            rotate((angle + sway) * 180f / PI.toFloat(), Offset.Zero) {
+                val tail = Path().apply {
+                    moveTo(0f, 0f)
+                    quadraticTo(r * len * 0.5f, -r * 0.13f, r * len, 0f)
+                    quadraticTo(r * len * 0.5f, r * 0.1f, 0f, 0f)
+                }
+                drawPath(tail, lin(0f, 0f, r * len, 0f, 0f to c(0xEF4444), 1f to c(0x991B1B)))
+            }
+        }
+        drawPath(oval(0f, 0f, r * 0.1f, r * 0.08f), c(0xDC2626))
+    }
+}
+
+private fun DrawScope.bandana(h: Head, body: Path) {
+    val s = 1.03f
+    val yEdge = 0.40f
+    val head = outfitPath(h.rx * s, h.ry * s)
+
+    // Shadow on the head under the edge.
+    clipPath(body) { clipPath(capClip(h, yEdge - 0.1f, 1f)) { fillAll(h, rgba(70, 20, 10, 0.10f)) } }
+
+    // Cloth cap.
+    clipPath(capClip(h, yEdge, s)) {
+        drawPath(head, lin(h.rx * 0.5f, -h.ry * 1.1f, -h.rx * 0.6f, h.ry * 0.2f, 0f to c(0xF87171), 1f to c(0xB91C1C)))
+        if (!h.simplified) {
+            clipPath(head) {
+                // Paisley-ish pattern: dots with a tiny ring around the larger ones.
+                val dots = listOf(
+                    Triple(-0.3f, 0.75f, true), Triple(0.25f, 0.8f, true), Triple(0f, 0.95f, false),
+                    Triple(-0.55f, 0.92f, false), Triple(0.55f, 0.9f, false), Triple(-0.05f, 0.62f, false),
+                )
+                for ((lon, y, ringed) in dots) {
+                    val q = surf(h, y, lon, s)
+                    if (q.z <= 0.05f) continue
+                    val r = h.R * 0.05f * q.z
+                    drawPath(oval(q.x, q.y, r, r), Color.White.copy(alpha = 0.8f))
+                    if (ringed) drawPath(oval(q.x, q.y, r * 2, r * 2), Color.White.copy(alpha = 0.45f), style = Stroke(width = r * 0.45f))
+                }
+                // Fold creases radiating from the knot side.
+                for ((lon, y) in listOf(0.7f to 0.62f, 0.45f to 0.78f)) {
+                    val a = surf(h, yEdge + 0.04f, 1.15f, s)
+                    val b = surf(h, y, lon, s)
+                    if (b.z <= 0f) continue
+                    val cr = Path().apply {
+                        moveTo(a.x, a.y)
+                        quadraticTo((a.x + b.x) / 2, min(a.y, b.y) - h.R * 0.05f, b.x, b.y)
+                    }
+                    stroke(cr, rgba(90, 0, 0, 0.22f), h.R * 0.04f)
+                }
+            }
+        }
+    }
+
+    // Rolled edge band.
+    clipPath(capClip(h, yEdge - 0.02f, s)) {
+        clipPath(invert(capClip(h, yEdge + 0.1f, s), h)) { drawPath(head, c(0x991B1B)) }
+    }
+
+    // Top highlight.
+    clipPath(capClip(h, yEdge, s)) {
+        clipPath(head) {
+            drawPath(head, rad(h.rx * 0.3f, -h.ry * 0.85f, h.R * 0.45f, 0f to Color.White.copy(alpha = 0.3f), 1f to Color.White.copy(alpha = 0f)))
+        }
+    }
+    bandanaKnot(h, true)
+}
+
+private fun wizardBrim(h: Head): List<P3> = (0..120).map { i ->
+    val a = -PI.toFloat() + i / 120f * 2f * PI.toFloat()
+    val wob = 1f + 0.03f * sin(a * 3f + 0.4f)
+    proj(h, 1.30f * wob * sin(a), 0.68f, 1.30f * wob * cos(a))
+}
+
+private fun DrawScope.wizardHatBack(h: Head) {
+    drawPath(poly(wizardBrim(h), true), lin(0f, -h.ry, 0f, -h.ry * 0.4f, 0f to c(0x1E3A8A), 1f to c(0x172554)))
+}
+
+private fun DrawScope.wizardHatFront(h: Head, body: Path) {
+    val all = wizardBrim(h)
+    val fr = all.filter { it.z >= 0f }.sortedBy { it.x }
+
+    // Shadow on the head.
+    clipPath(body) { clipPath(capClip(h, 0.48f, 1f)) { fillAll(h, rgba(10, 10, 50, 0.10f)) } }
+    drawPath(poly(all, true), lin(0f, -h.ry * 0.9f, 0f, -h.ry * 0.3f, 0f to c(0x2563EB), 1f to c(0x1E3A8A)))
+
+    // Tall cone; the tip trails behind motion.
+    val baseR = 0.56f
+    val by = 0.72f
+    val bl = proj(h, -baseR, by, 0f)
+    val br = proj(h, baseR, by, 0f)
+    val cen = proj(h, 0f, by, 0f)
+    val lean = 0.06f + h.physDx * 0.12f
+    val topX = cen.x + sin(lean) * h.ry * 0.25f + h.physDx * h.rx * 0.18f
+    val topY = cen.y - h.ry * 1.55f + abs(h.physDx) * h.ry * 0.08f
+    val capFront = frontArc(h, by, baseR / ringR(by)).filter { it.x >= bl.x - 1 && it.x <= br.x + 1 }
+    val cone = Path().apply {
+        moveTo(bl.x, bl.y)
+        quadraticTo(bl.x + h.rx * 0.1f, bl.y - h.ry * 0.75f, topX, topY)
+        quadraticTo(br.x - h.rx * 0.1f, br.y - h.ry * 0.75f, br.x, br.y)
+        for (i in capFront.indices.reversed()) lineTo(capFront[i].x, capFront[i].y)
+        close()
+    }
+    drawPath(cone, lin(bl.x, topY, br.x, bl.y, 0f to c(0x3B82F6), 0.55f to c(0x1D4ED8), 1f to c(0x172554)))
+    clipPath(cone) {
+        // Side shading.
+        drawPath(cone, lin(bl.x, 0f, br.x, 0f, 0f to Color.White.copy(alpha = 0.2f), 0.4f to Color.White.copy(alpha = 0f), 1f to Color.Black.copy(alpha = 0.18f)))
+        // Gold band at the base.
+        val fc = proj(h, 0f, by, baseR)
+        val lift = h.ry * 0.1f
+        val band = Path().apply {
+            moveTo(bl.x - 2, bl.y - lift)
+            quadraticTo(fc.x, 2 * (fc.y - lift) - (bl.y + br.y) / 2, br.x + 2, br.y - lift)
+        }
+        stroke(band, c(0xFBBF24), h.ry * 0.13f, StrokeCap.Butt)
+        if (!h.simplified) {
+            // Crescent moon + star emblem and a few sparkles.
+            val ex = (bl.x + br.x) / 2 + (topX - (bl.x + br.x) / 2) * 0.42f
+            val ey = bl.y + (topY - bl.y) * 0.42f
+            val mr = h.R * 0.12f
+            val mx = ex - h.R * 0.08f
+            val my = ey + h.R * 0.04f
+            val cut = Path().apply {
+                fillType = PathFillType.EvenOdd
+                addRect(Rect(mx - mr * 2, my - mr * 2, mx + mr * 2, my + mr * 2))
+                addOval(Rect(mx + mr * 0.5f - mr, my - mr * 0.25f - mr, mx + mr * 0.5f + mr, my - mr * 0.25f + mr))
+            }
+            clipPath(cut) { drawPath(oval(mx, my, mr, mr), c(0xFEF3C7)) }
+            drawPath(starPath5(ex + h.R * 0.14f, ey - h.R * 0.14f, h.R * 0.085f, h.R * 0.036f), c(0xFDE68A))
+            for ((tx, ty, sc) in listOf(Triple(0.3f, 0.2f, 0.8f), Triple(0.65f, 0.62f, 0.7f), Triple(0.4f, 0.78f, 0.55f))) {
+                val px = bl.x + (br.x - bl.x) * tx + (topX - (bl.x + br.x) / 2) * ty
+                val py = bl.y + (topY - bl.y) * ty
+                val r = h.R * 0.045f * sc
+                val cross = Path().apply {
+                    moveTo(px - r, py); lineTo(px + r, py)
+                    moveTo(px, py - r); lineTo(px, py + r)
+                }
+                stroke(cross, c(0xFDE68A, 0.85f), r * 0.45f)
+            }
+        }
+    }
+    // Gold trim on the front edge of the brim.
+    strokeRuns(fr, { true }, c(0xFDE68A), h.R * 0.045f)
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 private fun back(t: Float): Float {
@@ -843,11 +1199,15 @@ fun DrawScope.drawOutfitBehind(outfit: Outfit, head: Head, cx: Float, cy: Float,
     translate(cx, cy) {
         when (outfit) {
             Outfit.Headphones -> headphones(head, false, t)
-            Outfit.BunnyEars, Outfit.Crown, Outfit.WitchHat -> translate(0f, -(1f - posP) * head.ry) {
+            Outfit.BunnyEars, Outfit.Crown, Outfit.WitchHat,
+            Outfit.WizardHat, Outfit.Earmuffs, Outfit.Bandana -> translate(0f, -(1f - posP) * head.ry) {
                 scale(hat, hat, Offset.Zero) {
                     when (outfit) {
                         Outfit.BunnyEars -> bunnyEars(head)
                         Outfit.Crown -> crownPart(head, -1)
+                        Outfit.WizardHat -> wizardHatBack(head)
+                        Outfit.Earmuffs -> earmuffs(head, false)
+                        Outfit.Bandana -> bandanaKnot(head, false)
                         else -> witchHatBack(head)
                     }
                 }
@@ -875,6 +1235,9 @@ fun DrawScope.drawOutfitFront(
                 if (outfit == Outfit.Sunglasses) sunglasses(head, body) else roundGlasses(head, body)
             }
             Outfit.Scarf -> translate(0f, (1f - p) * 0.3f * head.ry) { scarf(head) }
+            Outfit.Necktie -> translate(0f, (1f - p) * 0.3f * head.ry) { necktie(head) }
+            Outfit.Monocle -> translate(0f, eyeDy + (1f - p) * 0.25f * head.ry) { monocle(head, body) }
+            Outfit.Headband -> translate(0f, -(1f - posP) * head.ry * 0.5f) { headband(head) }
             Outfit.Pumpkin -> pumpkin(head, body)
             Outfit.Bow -> scale(max(0.001f, posP), max(0.001f, posP), Offset.Zero) { bow(head) }
             else -> translate(0f, -(1f - posP) * head.ry) {
@@ -886,6 +1249,9 @@ fun DrawScope.drawOutfitFront(
                         Outfit.PartyHat -> partyHat(head)
                         Outfit.Crown -> crownFront(head, body)
                         Outfit.WitchHat -> witchHatFront(head, body)
+                        Outfit.WizardHat -> wizardHatFront(head, body)
+                        Outfit.Earmuffs -> earmuffs(head, true)
+                        Outfit.Bandana -> bandana(head, body)
                         else -> Unit
                     }
                 }

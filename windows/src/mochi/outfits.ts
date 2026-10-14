@@ -8,7 +8,9 @@
 export type Outfit =
   | "partyHat" | "beanie" | "crown" | "sunglasses" | "roundGlasses" | "bow" | "scarf"
   | "witchHat" | "pumpkin" | "santaHat" | "bunnyEars"
-  | "headphones" | "nightcap";
+  | "headphones" | "nightcap"
+  // The Mac's newer six (MochiWardrobe.swift): the ids are the same on every platform.
+  | "necktie" | "monocle" | "headband" | "earmuffs" | "bandana" | "wizardHat";
 
 /** Settings value: "auto" lets the rules below pick, "none" keeps him bare. */
 export type OutfitSetting = "auto" | "none" | Outfit;
@@ -29,6 +31,12 @@ export const OUTFIT_CHOICES: readonly { value: OutfitSetting; label: string }[] 
   { value: "bunnyEars", label: "Bunny ears" },
   { value: "headphones", label: "Headphones" },
   { value: "nightcap", label: "Night cap" },
+  { value: "necktie", label: "Necktie" },
+  { value: "monocle", label: "Monocle" },
+  { value: "headband", label: "Headband" },
+  { value: "earmuffs", label: "Earmuffs" },
+  { value: "bandana", label: "Bandana" },
+  { value: "wizardHat", label: "Wizard hat" },
 ];
 
 const KNOWN = new Set<string>(OUTFIT_CHOICES.map((c) => c.value).filter((v) => v !== "auto" && v !== "none"));
