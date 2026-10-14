@@ -1,48 +1,72 @@
-//! coucou-hook — the relay Claude Code runs on every hook event.
+//! coucou-hook — the relay Claude Code (and every other agent) runs on each hook
+//! event.
 //!
-//! Reads the hook JSON on stdin, adds a little terminal context, and hands it to
+//! Reads the hook JSON on stdin, maps the agent's event and field names onto
+//! Claude Code's (normalize.rs), adds a little terminal context, and hands it to
 //! Coucou over the named pipe `\\.\pipe\coucou-<sid>` (Windows) or the Unix
 //! socket `$XDG_RUNTIME_DIR/coucou.sock` (Linux).
 //!
-//! Hard rule (docs/CLAUDE.md): **never block Claude Code.**
-//! * If the pipe does not exist — Coucou is closed — we exit 0 immediately with
-//!   nothing on stdout, and the session carries on untouched.
+//! Hard rule (docs/CLAUDE.md): **never block the agent.**
+//! * If the pipe does not exist — Coucou is closed — we exit 0 immediately, with
+//!   only the "no opinion" reply the agent expects (reply.rs), and the session
+//!   carries on untouched.
 //! * Every step runs under a deadline enforced by the main thread, so a pipe that
 //!   accepts the connection and then stops reading cannot wedge the session
 //!   either: we abandon the worker and exit.
-//! * Only `PermissionRequest` and the dedicated `--ask` hook wait for an answer,
-//!   because answering from the island is the whole point. No answer means empty
-//!   stdout, and Claude Code asks in the terminal exactly as if Coucou were not
-//!   installed.
+//! * Only `PermissionRequest` waits for an answer, because approving from the
+//!   island is the whole point. No answer means no decision, and the agent asks
+//!   in its terminal exactly as if Coucou were not installed.
 //!
 //! `coucou-hook --remote` is not a hook: it is the command a phone's ssh key is restricted to, and it
 //! pipes the ssh channel to Coucou's phone-link socket (Linux).
 //!
-//! Usage: `coucou-hook [--agent <name>] [--ask] <EventName>` (the name is also
-//! read from the JSON). `--ask` is the PreToolUse hook scoped to
-//! `AskUserQuestion`: Coucou shows the options and the relay hands the chosen
-//! answers back to Claude Code through `updatedInput`.
+//! `coucou-hook --ask` is the older PreToolUse hook scoped to `AskUserQuestion`, still honoured for the
+//! settings.json files that have it: the island's answers go back through `updatedInput`.
+//!
+//! Usage: `coucou-hook [--agent <name>] [--ask] [<EventName>]` (the event name is also
+//! read from the JSON; `--agent` is absent for Claude Code), or
+//! `coucou-hook --statusline` as Claude Code's status line command (plan usage,
+//! see statusline.rs): it passes the plan limits on and runs the status line the
+//! user had before, so that keeps working.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
-/// Budget for getting a pipe connection. Beyond this Claude Code wins, always.
+use serde_json::{Map, Value};
+
+mod normalize;
+mod reply;
+
+/// Budget for getting a pipe connection. Beyond this the agent wins, always.
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
 /// Whole-run budget for an event nobody waits on: connect and write, no more.
 const FIRE_AND_FORGET_BUDGET: Duration = Duration::from_secs(2);
 /// How long a permission prompt may stay on screen before the terminal takes over.
 const DECISION_BUDGET: Duration = Duration::from_secs(110);
-/// Same for an AskUserQuestion card. Under the 130 s timeout written to
+/// Same for an AskUserQuestion card of the `--ask` hook. Under the 130 s timeout written to
 /// settings.json, over the app's own 120 s, so the app always answers first.
 const ASK_BUDGET: Duration = Duration::from_secs(125);
 
 /// Fields that are pointless to forward and can be enormous (a whole file read,
 /// a full command output). The island never shows them.
-const DROPPED_FIELDS: &[&str] = &["tool_response", "transcript_path"];
+const DROPPED_FIELDS: &[&str] = &["tool_response", "tool_output", "transcript_path"];
 /// Longest string forwarded for any single field; the island truncates to far
 /// less than this anyway.
 const MAX_FIELD_LEN: usize = 2_000;
+
+mod statusline;
+
+/// The live diff needs the whole text of a file edit, once it has happened:
+/// PostToolUse of these tools keeps its edit strings far longer than the rest.
+const DIFF_TOOLS: &[&str] = &["Edit", "MultiEdit", "Write"];
+/// The `tool_input` keys holding the text being replaced or written.
+const DIFF_FIELDS: &[&str] = &["old_string", "new_string", "content"];
+/// Per edit string. The island stops diffing at 200 KB anyway (DiffEngine).
+const MAX_DIFF_FIELD_LEN: usize = 256 * 1024;
+/// For all edit strings of one event together, so the line stays well under the
+/// 1 MiB the app reads from the pipe even once JSON-escaped.
+const MAX_DIFF_TOTAL: usize = 512 * 1024;
 
 #[cfg(windows)]
 mod win;
@@ -54,109 +78,142 @@ mod unix;
 #[cfg(target_os = "linux")]
 use unix::connect;
 
+/// What the command line says: `--agent <name>` and the event name.
+struct Args {
+    agent: String,
+    event: String,
+    /// The `--ask` hook (see the top of this file).
+    ask: bool,
+}
+
+fn args() -> Args {
+    let mut agent = String::new();
+    let mut event = String::new();
+    let mut ask = false;
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        if arg == "--agent" {
+            agent = it.next().unwrap_or_default();
+        } else if arg == "--ask" {
+            ask = true;
+        } else if event.is_empty() {
+            event = arg;
+        }
+    }
+    Args { agent, event, ask }
+}
+
+/// One event, ready to forward.
+struct Event {
+    /// The payload as one line of JSON.
+    line: String,
+    /// The canonical event name.
+    name: String,
+    /// For Claude Code's AskUserQuestion, the question as it was asked.
+    question: Option<Value>,
+}
+
 fn main() {
+    if std::env::args().skip(1).any(|a| a == "--statusline") {
+        statusline::run();
+    }
     // The one command a phone's ssh key may run: join its channel to Coucou's phone link.
     #[cfg(target_os = "linux")]
     if std::env::args().skip(1).any(|a| a == "--remote") {
         unix::run_remote();
     }
-    let Some(Event { payload, name: event, ask, agent }) = read_event() else { std::process::exit(0) };
+    let args = args();
+    let mut raw = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut raw);
+    let env = |key: &str| std::env::var(key).ok();
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
-    let waits_for_answer = event == "PermissionRequest" || ask.is_some();
-    let budget = if ask.is_some() {
-        ASK_BUDGET
-    } else if waits_for_answer {
-        DECISION_BUDGET
-    } else {
-        FIRE_AND_FORGET_BUDGET
+    if args.ask {
+        ask_hook(&raw, &args, &env, &cwd);
+    }
+    let Some(event) = prepare(&raw, &args, &env, &cwd) else {
+        // Nothing we could forward. An agent that needs JSON still gets its
+        // "no opinion" — Copilot is fail-closed and would deny without it.
+        let name = normalize::event(&args.event);
+        print(reply::stdout(&args.agent, name, None, None));
+        std::process::exit(0);
     };
+
+    // Only an agent whose decisions the island can give waits for one; any other
+    // would be held for nothing, its decision being thrown away (reply.rs).
+    let waits_for_answer = event.name == "PermissionRequest" && reply::takes_decisions(&args.agent);
+    let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
 
     // The worker owns every blocking call. If it overruns the budget we simply
     // stop listening and exit: the process dying takes the pipe handle with it.
     // (No catch_unwind here — the release profile is panic = "abort", so it would
     // be dead code. `talk` is written to have nothing to panic on instead.)
     let (tx, rx) = mpsc::channel::<Option<String>>();
+    let line = event.line.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(talk(&payload, waits_for_answer));
+        let _ = tx.send(talk(&line, waits_for_answer));
     });
 
-    let mut output = None;
-    if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        output = match &ask {
-            Some(questions) => answer_json(&decision, questions),
-            None => decision_json(&decision),
-        };
-    }
-    // Nothing to print: Claude Code asks in the terminal, as if we were not here.
-    // Some other agents want a JSON reply regardless (see `silent_reply`).
-    if let Some(json) = output.or_else(|| silent_reply(&agent, &event)) {
-        let mut out = std::io::stdout();
-        let _ = writeln!(out, "{json}");
-        let _ = out.flush();
-    }
+    let decision = rx.recv_timeout(budget).ok().flatten();
+    print(reply::stdout(&args.agent, &event.name, decision.as_deref(), event.question.as_ref()));
     std::process::exit(0);
 }
 
-/// The event names other agents use, in Claude Code's. Anything else (all of
-/// Claude Code's own) passes through unchanged. Same table as upstream's relay.
-fn normalize_event(name: &str) -> String {
-    match name {
-        "BeforeTool" | "BeforeToolSelection" | "pre_tool_use" => "PreToolUse",
-        "AfterTool" | "AfterModel" | "PostInvocation" | "post_tool_use" => "PostToolUse",
-        "BeforeAgent" | "PreInvocation" | "user_prompt_submit" => "UserPromptSubmit",
-        "AfterAgent" => "Stop",
-        "startup" | "session_start" => "SessionStart",
-        "exit" | "session_end" => "SessionEnd",
-        other => other,
+/// The `--ask` hook: forward an AskUserQuestion call whole, wait for the island's answers and hand
+/// them to Claude Code as the tool's own input. Anything else — another tool, no answer, a malformed
+/// one — leaves no trace and Claude Code asks in the terminal.
+fn ask_hook(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &str) -> ! {
+    let Some((line, questions)) = prepare_ask(raw, args, env, cwd) else { std::process::exit(0) };
+    let (tx, rx) = mpsc::channel::<Option<String>>();
+    std::thread::spawn(move || {
+        let _ = tx.send(talk(&line, true));
+    });
+    let reply = rx.recv_timeout(ASK_BUDGET).ok().flatten();
+    print(reply.and_then(|r| answer_json(&r, &questions)));
+    std::process::exit(0);
+}
+
+/// The line to forward for the `--ask` hook and the question list to echo back, or `None` when the
+/// call is not an AskUserQuestion with a list of questions. A question is the key of its answer, so
+/// nothing in it is shortened.
+fn prepare_ask(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &str) -> Option<(String, Value)> {
+    let raw = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(raw);
+    let mut payload = serde_json::from_slice::<Value>(raw).ok()?;
+    let map = payload.as_object_mut()?;
+    if map.get("tool_name").and_then(Value::as_str) != Some("AskUserQuestion") {
+        return None;
     }
-    .to_string()
-}
-
-/// What an agent other than Claude Code needs on stdout when the island has no
-/// decision: Gemini CLI, Antigravity and Muse Code read an empty JSON object as
-/// "no opinion"; Copilot CLI fails closed on a PermissionRequest, so it must be
-/// told to ask in its own terminal. Claude Code (and anyone else) gets silence.
-fn silent_reply(agent: &str, event: &str) -> Option<String> {
-    match agent {
-        "copilot" if event == "PermissionRequest" => Some(r#"{"permissionDecision":"ask"}"#.into()),
-        "gemini" | "antigravity" | "muse" => Some("{}".into()),
-        _ => None,
+    let questions = map.get("tool_input").and_then(|i| i.get("questions")).cloned().filter(Value::is_array)?;
+    if let Some(tag) = agent_tag(&args.agent, env) {
+        map.insert("coucou_agent".into(), Value::String(tag));
     }
+    map.insert("hook_event_name".into(), Value::String("PreToolUse".into()));
+    map.insert("coucou_kind".into(), Value::String("ask_user_question".into()));
+    for field in DROPPED_FIELDS {
+        map.remove(*field);
+    }
+    if map.get("cwd").and_then(Value::as_str).map(str::is_empty).unwrap_or(true) && !cwd.is_empty() {
+        map.insert("cwd".into(), Value::String(cwd.to_string()));
+    }
+    add_terminal_context(map, env);
+    let mut line = payload.to_string();
+    line.push('\n');
+    Some((line, questions))
 }
 
-/// The documented PermissionRequest output. Anything we do not recognise prints
-/// nothing at all rather than guessing — silence is the safe answer.
-/// See https://code.claude.com/docs/en/hooks
-fn decision_json(decision: &str) -> Option<String> {
-    let behavior = match decision.trim() {
-        // "always" still answers a plain allow; remembering it is the island's
-        // business, not Claude Code's.
-        "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
-        "deny" => r#"{"behavior":"deny","message":"Denied from Coucou"}"#.to_string(),
-        _ => return None,
-    };
-    Some(format!(
-        r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{behavior}}}}}"#
-    ))
-}
-
-/// The output of the `--ask` hook: the answers the island collected, handed to
-/// Claude Code as the tool's own input so the question never reaches the
-/// terminal. `response` is the app's one-line JSON,
+/// The output of the `--ask` hook. `response` is the app's one-line JSON,
 /// `{"permissionDecision":"answer","answers":{"<question>":"<label>" | ["<label>", …]}}`.
-/// Anything else — `ask`, garbage, an answer of the wrong shape — prints nothing
-/// and Claude Code asks in the terminal.
-fn answer_json(response: &str, questions: &serde_json::Value) -> Option<String> {
-    let reply: serde_json::Value = serde_json::from_str(response.trim()).ok()?;
+/// Anything else — `ask`, garbage, an answer of the wrong shape — prints nothing.
+fn answer_json(response: &str, questions: &Value) -> Option<String> {
+    let reply: Value = serde_json::from_str(response.trim()).ok()?;
     if reply.get("permissionDecision")?.as_str()? != "answer" {
         return None;
     }
     let answers = reply.get("answers")?.as_object()?;
-    // A string for a single-select question, a list of strings for a multi-select
-    // one. Nothing else is something Claude Code knows what to do with.
-    let well_formed = answers.values().all(|v| {
-        v.is_string() || v.as_array().is_some_and(|a| a.iter().all(serde_json::Value::is_string))
-    });
+    // A string for a single-select question, a list of strings for a multi-select one.
+    let well_formed = answers
+        .values()
+        .all(|v| v.is_string() || v.as_array().is_some_and(|a| a.iter().all(Value::is_string)));
     if answers.is_empty() || !well_formed || !questions.is_array() {
         return None;
     }
@@ -172,102 +229,74 @@ fn answer_json(response: &str, questions: &serde_json::Value) -> Option<String> 
     )
 }
 
-/// What the relay read from stdin and argv.
-struct Event {
-    /// The JSON line to forward to the app.
-    payload: String,
-    name: String,
-    /// `Some(questions)` for the `--ask` hook on an `AskUserQuestion` call: the
-    /// original, untruncated list, to be echoed back next to the answers.
-    ask: Option<serde_json::Value>,
-    /// The `--agent` name, empty for Claude Code.
-    agent: String,
+fn print(line: Option<String>) {
+    if let Some(line) = line {
+        let mut out = std::io::stdout();
+        let _ = writeln!(out, "{line}");
+        let _ = out.flush();
+    }
 }
 
-/// Reads stdin and returns the payload to forward plus the event name.
-fn read_event() -> Option<Event> {
-    let mut raw = Vec::new();
-    if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
-        return None;
-    }
+/// The payload to forward, from the raw stdin bytes. `env` reads an environment
+/// variable and `cwd` is the working directory, so tests stay pure.
+fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &str) -> Option<Event> {
     // Some shells hand us a UTF-8 BOM; serde_json would choke on it.
-    if raw.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        raw.drain(..3);
-    }
-
-    let mut payload = serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
+    let raw = raw.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(raw);
+    let mut payload = serde_json::from_slice::<Value>(raw).ok()?;
     let map = payload.as_object_mut()?;
 
-    // Parse argv: "coucou-hook.exe [--agent <name>] [<EventName>]"
-    // --agent tags the payload with coucou_agent so the app routes to the right pill.
-    // Absent or invalid names are validated and discarded by the app, not here.
-    let mut agent = String::new();
-    let mut arg_event = String::new();
-    let mut ask_mode = false;
-    {
-        let mut it = std::env::args().skip(1);
-        while let Some(arg) = it.next() {
-            if arg == "--agent" {
-                agent = it.next().unwrap_or_default();
-            } else if arg == "--ask" {
-                ask_mode = true;
-            } else if arg_event.is_empty() {
-                arg_event = arg;
-            }
+    // Which agent this hook was installed for, so the app routes it to the right
+    // pill. Absent means Claude Code, so existing hook commands keep working
+    // unchanged; invalid names are discarded by the app, not here. A Claude Code
+    // session started from the Claude desktop app is tagged `claude-desktop`.
+    if let Some(tag) = agent_tag(&args.agent, env) {
+        map.insert("coucou_agent".into(), Value::String(tag));
+    }
+    // Claude Code in Cursor's terminal goes on the Cursor pill (Mac #120).
+    if !map.contains_key("term_editor") {
+        if let Some(editor) = term_editor(env) {
+            map.insert("term_editor".into(), Value::String(editor.into()));
         }
     }
-    // Which agent this hook was installed for. Absent means Claude Code,
-    // so existing hook commands keep working unchanged.
-    if !agent.is_empty() {
-        map.insert("coucou_agent".into(), serde_json::Value::String(agent.clone()));
-    }
-    let event = map
-        .get("hook_event_name")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(arg_event);
-    // Other agents name their events differently; the app only knows Claude Code's.
-    let event = normalize_event(&event);
-    map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
 
-    // `--ask` is registered with the matcher "AskUserQuestion", but a hook that
-    // fires for anything else must leave no trace: nothing forwarded, nothing
-    // printed.
-    let mut ask = None;
-    if ask_mode {
-        if map.get("tool_name").and_then(|v| v.as_str()) != Some("AskUserQuestion") {
-            return None;
-        }
-        // No question list, nothing to answer: the terminal gets it.
-        let questions = map.get("tool_input").and_then(|i| i.get("questions")).cloned()?;
-        if !questions.is_array() {
-            return None;
-        }
-        ask = Some(questions);
-        map.insert("coucou_kind".into(), serde_json::Value::String("ask_user_question".into()));
-    }
+    let raw_event = map
+        .get("hook_event_name")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| args.event.clone());
+    normalize::fields(map, env);
+    let name = normalize::refine(normalize::event(&raw_event), map);
+    map.insert("hook_event_name".into(), Value::String(name.clone()));
 
     for field in DROPPED_FIELDS {
         map.remove(*field);
     }
 
-    let cwd_missing = map
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(str::is_empty)
-        .unwrap_or(true);
-    if cwd_missing {
-        if let Ok(cwd) = std::env::current_dir() {
-            map.insert(
-                "cwd".into(),
-                serde_json::Value::String(cwd.to_string_lossy().to_string()),
-            );
-        }
+    if map.get("cwd").and_then(Value::as_str).map(str::is_empty).unwrap_or(true) && !cwd.is_empty() {
+        map.insert("cwd".into(), Value::String(cwd.to_string()));
     }
 
-    // Which terminal the session runs in. Unlike macOS, Coucou here accepts
-    // events from every terminal, so this is context only — never a filter.
+    add_terminal_context(map, env);
+
+    // Kept whole: what goes back to Claude Code must be its own input, not the
+    // shortened copy the island is shown.
+    let question = (map.get("tool_name").and_then(Value::as_str) == Some("AskUserQuestion"))
+        .then(|| map.get("tool_input").cloned())
+        .flatten();
+
+    // Every string is capped, except the edit text of a finished Edit /
+    // MultiEdit / Write, which the live diff needs whole (within its own limits).
+    truncate_payload(&mut payload, &name);
+
+    let mut line = payload.to_string();
+    line.push('\n');
+    Some(Event { line, name, question })
+}
+
+/// Which terminal the session runs in. Unlike macOS, Coucou here accepts events
+/// from every terminal, so this is context only — never a filter.
+fn add_terminal_context(map: &mut Map<String, Value>, env: &dyn Fn(&str) -> Option<String>) {
     for (key, var) in [
         ("term_program", "TERM_PROGRAM"),
         ("wt_session", "WT_SESSION"),
@@ -276,40 +305,121 @@ fn read_event() -> Option<Event> {
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
     ] {
         if !map.contains_key(key) {
-            let value = std::env::var(var).unwrap_or_default();
-            map.insert(key.into(), serde_json::Value::String(value));
+            map.insert(key.into(), Value::String(env(var).unwrap_or_default()));
         }
     }
+}
 
-    // A question is the key of its answer, so it must reach the app whole. An
-    // AskUserQuestion payload is a few hundred bytes; there is nothing to trim.
-    if ask.is_none() {
-        truncate_strings(&mut payload);
+/// The `coucou_agent` tag: `--agent` when given, otherwise `claude-desktop` for
+/// a Claude Code session started from the Claude desktop app, which says so in
+/// CLAUDE_CODE_ENTRYPOINT — the same rule as the Mac's relay (#191). Nothing
+/// for a plain Claude Code session.
+fn agent_tag(arg: &str, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    if !arg.is_empty() {
+        return Some(arg.to_string());
     }
+    (env("CLAUDE_CODE_ENTRYPOINT").as_deref() == Some("claude-desktop"))
+        .then(|| "claude-desktop".to_string())
+}
 
-    let mut line = payload.to_string();
-    line.push('\n');
-    Some(Event { payload: line, name: event, ask, agent })
+/// `cursor` when the session runs in Cursor's integrated terminal. Cursor sets
+/// TERM_PROGRAM=vscode like VS Code does, so it is told apart by its own trace
+/// variable, or by its executable behind VS Code's git helper.
+fn term_editor(env: &dyn Fn(&str) -> Option<String>) -> Option<&'static str> {
+    if env("CURSOR_TRACE_ID").is_some_and(|v| !v.is_empty()) {
+        return Some("cursor");
+    }
+    let helper = env("VSCODE_GIT_ASKPASS_NODE").unwrap_or_default();
+    let exe = helper.rsplit(['/', '\\']).next().unwrap_or_default().to_ascii_lowercase();
+    exe.starts_with("cursor").then_some("cursor")
+}
+
+/// Caps the strings of a payload: every field to MAX_FIELD_LEN, except the edit
+/// strings of a finished Edit / MultiEdit / Write, which the live diff needs
+/// whole. If even those had to be cut, `coucou_diff_truncated` tells the island
+/// not to show counts it cannot trust.
+fn truncate_payload(payload: &mut serde_json::Value, event: &str) {
+    let keeps_diff = event == "PostToolUse"
+        && payload
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .is_some_and(|tool| DIFF_TOOLS.contains(&tool));
+    let input = if keeps_diff {
+        payload.as_object_mut().and_then(|map| map.remove("tool_input"))
+    } else {
+        None
+    };
+
+    truncate_strings(payload);
+
+    if let Some(mut input) = input {
+        let mut budget = MAX_DIFF_TOTAL;
+        let mut cut_any = false;
+        cap_diff_strings(&mut input, &mut budget, &mut cut_any);
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("tool_input".into(), input);
+            if cut_any {
+                map.insert("coucou_diff_truncated".into(), serde_json::Value::Bool(true));
+            }
+        }
+    }
+}
+
+/// `tool_input` of a diff tool: edit strings share MAX_DIFF_TOTAL, each capped at
+/// MAX_DIFF_FIELD_LEN; any other string gets the ordinary cap.
+fn cap_diff_strings(value: &mut serde_json::Value, budget: &mut usize, cut_any: &mut bool) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, v) in map.iter_mut() {
+                match v {
+                    serde_json::Value::String(s) if DIFF_FIELDS.contains(&key.as_str()) => {
+                        let limit = MAX_DIFF_FIELD_LEN.min(*budget);
+                        if cut(s, limit) {
+                            *cut_any = true;
+                        }
+                        *budget = budget.saturating_sub(s.len());
+                    }
+                    _ => cap_diff_strings(v, budget, cut_any),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                cap_diff_strings(item, budget, cut_any);
+            }
+        }
+        serde_json::Value::String(s) => {
+            cut(s, MAX_FIELD_LEN);
+        }
+        _ => {}
+    }
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
-fn truncate_strings(value: &mut serde_json::Value) {
+fn truncate_strings(value: &mut Value) {
     match value {
-        serde_json::Value::String(s) => {
-            if s.len() > MAX_FIELD_LEN {
-                // Cut on a char boundary; a lone byte index can split UTF-8.
-                let mut end = MAX_FIELD_LEN;
-                while end > 0 && !s.is_char_boundary(end) {
-                    end -= 1;
-                }
-                s.truncate(end);
-                s.push('…');
-            }
+        Value::String(s) => {
+            cut(s, MAX_FIELD_LEN);
         }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(truncate_strings),
-        serde_json::Value::Object(map) => map.values_mut().for_each(truncate_strings),
+        Value::Array(items) => items.iter_mut().for_each(truncate_strings),
+        Value::Object(map) => map.values_mut().for_each(truncate_strings),
         _ => {}
     }
+}
+
+/// Shortens `s` to at most `max` bytes plus an ellipsis; true if it was cut.
+fn cut(s: &mut String, max: usize) -> bool {
+    if s.len() <= max {
+        return false;
+    }
+    // Cut on a char boundary; a lone byte index can split UTF-8.
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s.push('…');
+    true
 }
 
 /// Connect, send, and — for a permission request — wait for the island's word.
@@ -347,97 +457,45 @@ fn talk(payload: &str, waits_for_answer: bool) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn run(raw: &str, agent: &str, event: &str) -> (Value, Event) {
+        let args = Args { agent: agent.into(), event: event.into(), ask: false };
+        let ev = prepare(raw.as_bytes(), &args, &|_| None, "/home/me/here").expect("forwarded");
+        let v = serde_json::from_str(ev.line.trim_end()).unwrap();
+        (v, ev)
+    }
+
+    fn env_of(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name| vars.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
+    }
+
     #[test]
-    fn decision_json_matches_the_documented_shape() {
+    fn claude_desktop_sessions_are_tagged_and_an_explicit_agent_wins() {
+        let desktop = env_of(&[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")]);
+        assert_eq!(agent_tag("", &desktop).as_deref(), Some("claude-desktop"));
+        assert_eq!(agent_tag("gemini", &desktop).as_deref(), Some("gemini"));
+        assert_eq!(agent_tag("", &env_of(&[("CLAUDE_CODE_ENTRYPOINT", "cli")])), None);
+        assert_eq!(agent_tag("", &env_of(&[])), None);
+    }
+
+    #[test]
+    fn cursor_is_told_apart_from_vs_code() {
+        assert_eq!(term_editor(&env_of(&[("CURSOR_TRACE_ID", "abc")])), Some("cursor"));
         assert_eq!(
-            decision_json("allow").unwrap(),
-            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
+            term_editor(&env_of(&[(
+                "VSCODE_GIT_ASKPASS_NODE",
+                r"C:\Users\me\AppData\Local\Programs\cursor\Cursor.exe"
+            )])),
+            Some("cursor")
         );
         assert_eq!(
-            decision_json("deny").unwrap(),
-            r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#
+            term_editor(&env_of(&[(
+                "VSCODE_GIT_ASKPASS_NODE",
+                r"C:\Users\me\AppData\Local\Programs\Microsoft VS Code\Code.exe"
+            )])),
+            None
         );
-        // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always").unwrap().contains(r#""behavior":"allow""#));
-    }
-
-    #[test]
-    fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("").is_none());
-        assert!(decision_json("maybe").is_none());
-        // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
-    }
-
-    fn questions() -> serde_json::Value {
-        serde_json::json!([{
-            "question": "Which framework?", "header": "Stack", "multiSelect": false,
-            "options": [{ "label": "React", "description": "" }, { "label": "Vue", "description": "" }]
-        }])
-    }
-
-    #[test]
-    fn answers_come_back_as_the_tools_updated_input() {
-        let out = answer_json(
-            r#"{"permissionDecision":"answer","answers":{"Which framework?":"Vue"}}"#,
-            &questions(),
-        )
-        .unwrap();
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let o = &v["hookSpecificOutput"];
-        assert_eq!(o["hookEventName"], "PreToolUse");
-        assert_eq!(o["permissionDecision"], "allow");
-        assert_eq!(o["updatedInput"]["answers"]["Which framework?"], "Vue");
-        assert_eq!(o["updatedInput"]["questions"], questions());
-    }
-
-    #[test]
-    fn a_multi_select_answer_is_a_list() {
-        let out = answer_json(
-            r#"{"permissionDecision":"answer","answers":{"Which framework?":["React","Vue"]}}"#,
-            &questions(),
-        )
-        .unwrap();
-        assert!(out.contains(r#"["React","Vue"]"#));
-    }
-
-    #[test]
-    fn anything_but_a_clean_answer_prints_nothing() {
-        let q = questions();
-        // "Reply in terminal" and every malformed reply fall through to the terminal.
-        assert!(answer_json(r#"{"permissionDecision":"ask"}"#, &q).is_none());
-        assert!(answer_json("", &q).is_none());
-        assert!(answer_json("allow", &q).is_none());
-        assert!(answer_json(r#"{"permissionDecision":"answer"}"#, &q).is_none());
-        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{}}"#, &q).is_none());
-        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":3}}"#, &q).is_none());
-        let not_a_list = serde_json::json!({});
-        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":"a"}}"#, &not_a_list).is_none());
-    }
-
-    #[test]
-    fn other_agents_event_names_become_claude_codes() {
-        assert_eq!(normalize_event("pre_tool_use"), "PreToolUse");
-        assert_eq!(normalize_event("BeforeAgent"), "UserPromptSubmit");
-        assert_eq!(normalize_event("exit"), "SessionEnd");
-        // Claude Code's own names are never touched.
-        for n in ["PreToolUse", "PermissionRequest", "Stop", "Notification", "SessionStart"] {
-            assert_eq!(normalize_event(n), n);
-        }
-    }
-
-    #[test]
-    fn only_the_agents_that_need_a_reply_get_one() {
-        assert_eq!(silent_reply("muse", "Stop").as_deref(), Some("{}"));
-        assert_eq!(silent_reply("gemini", "PreToolUse").as_deref(), Some("{}"));
-        assert_eq!(
-            silent_reply("copilot", "PermissionRequest").as_deref(),
-            Some(r#"{"permissionDecision":"ask"}"#)
-        );
-        assert!(silent_reply("copilot", "Stop").is_none());
-        // Claude Code (no --agent) and unknown agents: silence, as before.
-        assert!(silent_reply("", "PermissionRequest").is_none());
-        assert!(silent_reply("opencode", "Stop").is_none());
+        assert_eq!(term_editor(&env_of(&[("CURSOR_TRACE_ID", "")])), None);
+        assert_eq!(term_editor(&env_of(&[("TERM_PROGRAM", "vscode")])), None);
     }
 
     #[test]
@@ -447,5 +505,178 @@ mod tests {
         let s = v["tool_input"]["content"].as_str().unwrap();
         assert!(s.len() <= MAX_FIELD_LEN + 4);
         assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn claude_code_payloads_are_forwarded_as_they_are() {
+        let (v, ev) = run(r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"/p"}"#, "", "PreToolUse");
+        assert_eq!(ev.name, "PreToolUse");
+        assert!(v.get("coucou_agent").is_none());
+        assert_eq!(v["cwd"], "/p");
+        assert_eq!(v["tool_name"], "Bash");
+    }
+
+    #[test]
+    fn an_agents_event_is_tagged_and_renamed() {
+        // Gemini CLI: its own name in the payload, ours on the command line.
+        let (v, ev) = run(r#"{"hook_event_name":"BeforeTool","toolCall":{"name":"shell","args":{"CommandLine":"ls"}}}"#, "gemini", "PreToolUse");
+        assert_eq!(ev.name, "PreToolUse");
+        assert_eq!(v["hook_event_name"], "PreToolUse");
+        assert_eq!(v["coucou_agent"], "gemini");
+        assert_eq!(v["tool_input"]["command"], "ls");
+        assert_eq!(v["cwd"], "/home/me/here");
+
+        // Copilot CLI sends no event name: the command line's camelCase one is used.
+        let (_, ev) = run(r#"{"toolName":"bash"}"#, "copilot", "permissionRequest");
+        assert_eq!(ev.name, "PermissionRequest");
+
+        // Cursor: a stop that failed, and its tool output left behind.
+        let (v, ev) = run(r#"{"hook_event_name":"stop","status":"error","tool_output":"huge"}"#, "cursor", "");
+        assert_eq!(ev.name, "StopFailure");
+        assert!(v.get("tool_output").is_none());
+    }
+
+    #[test]
+    fn a_question_is_kept_whole_and_only_for_ask_user_question() {
+        let long = "x".repeat(3000);
+        let raw = format!(r#"{{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{{"questions":[{{"question":"{long}"}}]}}}}"#);
+        let (v, ev) = run(&raw, "", "");
+        assert_eq!(ev.question.unwrap()["questions"][0]["question"].as_str().unwrap().len(), 3000);
+        assert!(v["tool_input"]["questions"][0]["question"].as_str().unwrap().ends_with('…'));
+        let (_, ev) = run(r#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}"#, "", "");
+        assert!(ev.question.is_none());
+    }
+
+    #[test]
+    fn what_cannot_be_read_is_not_forwarded() {
+        let args = Args { agent: "copilot".into(), event: "preToolUse".into(), ask: false };
+        for raw in ["", "not json", "[1,2]"] {
+            assert!(prepare(raw.as_bytes(), &args, &|_| None, "/").is_none());
+        }
+        // A BOM is not a reason to drop the event.
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice(br#"{"hook_event_name":"Stop"}"#);
+        assert!(prepare(&bom, &args, &|_| None, "/").is_some());
+    }
+
+    #[test]
+    fn the_live_diff_rule_holds_through_the_normalised_relay() {
+        let big = "z".repeat(10_000);
+        // Claude Code's finished Edit: kept whole.
+        let raw = format!(r#"{{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{{"old_string":"{big}","new_string":"a"}}}}"#);
+        let (v, _) = run(&raw, "", "");
+        assert_eq!(v["tool_input"]["old_string"].as_str().unwrap().len(), big.len());
+        // The same edit before it happens, or an agent's event renamed onto
+        // PreToolUse: the ordinary cap.
+        let raw = format!(r#"{{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{{"old_string":"{big}"}}}}"#);
+        let (v, _) = run(&raw, "", "");
+        assert!(v["tool_input"]["old_string"].as_str().unwrap().len() <= MAX_FIELD_LEN + 4);
+        let raw = format!(r#"{{"hook_event_name":"BeforeTool","tool_name":"Edit","tool_input":{{"content":"{big}"}}}}"#);
+        let (v, ev) = run(&raw, "gemini", "");
+        assert_eq!(ev.name, "PreToolUse");
+        assert!(v["tool_input"]["content"].as_str().unwrap().len() <= MAX_FIELD_LEN + 4);
+    }
+
+    #[test]
+    fn a_finished_edit_keeps_its_text_whole_for_the_live_diff() {
+        let big = "line\n".repeat(4_000); // 20 KB, well past MAX_FIELD_LEN
+        let mut v = serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": { "file_path": "/p/a.ts", "old_string": big, "new_string": big },
+            "cwd": "x".repeat(4_000),
+        });
+        truncate_payload(&mut v, "PostToolUse");
+        assert_eq!(v["tool_input"]["old_string"].as_str().unwrap().len(), big.len());
+        assert_eq!(v["tool_input"]["new_string"].as_str().unwrap().len(), big.len());
+        // Everything else keeps the ordinary cap, and nothing says "cut".
+        assert!(v["cwd"].as_str().unwrap().len() <= MAX_FIELD_LEN + 4);
+        assert!(v.get("coucou_diff_truncated").is_none());
+
+        let mut multi = serde_json::json!({
+            "tool_name": "MultiEdit",
+            "tool_input": { "edits": [{ "old_string": big, "new_string": "x" }] },
+        });
+        truncate_payload(&mut multi, "PostToolUse");
+        assert_eq!(multi["tool_input"]["edits"][0]["old_string"].as_str().unwrap().len(), big.len());
+    }
+
+    #[test]
+    fn edits_are_still_capped_before_they_happen_and_for_other_tools() {
+        let big = "é".repeat(4_000);
+        for (event, tool) in [("PreToolUse", "Edit"), ("PermissionRequest", "Write"), ("PostToolUse", "Bash")] {
+            let mut v = serde_json::json!({ "tool_name": tool, "tool_input": { "content": big } });
+            truncate_payload(&mut v, event);
+            assert!(v["tool_input"]["content"].as_str().unwrap().len() <= MAX_FIELD_LEN + 4, "{event} {tool}");
+        }
+    }
+
+    #[test]
+    fn an_edit_beyond_the_budget_is_cut_and_flagged() {
+        let huge = "x".repeat(MAX_DIFF_FIELD_LEN + 10);
+        let mut v = serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "file_path": "/p/big.txt", "content": huge },
+        });
+        truncate_payload(&mut v, "PostToolUse");
+        assert!(v["tool_input"]["content"].as_str().unwrap().len() <= MAX_DIFF_FIELD_LEN + 4);
+        assert_eq!(v["coucou_diff_truncated"], serde_json::Value::Bool(true));
+
+        // Together, the edit strings never pass the shared budget.
+        let half = "y".repeat(MAX_DIFF_FIELD_LEN - 1);
+        let edits: Vec<_> = (0..4)
+            .map(|_| serde_json::json!({ "old_string": half, "new_string": half }))
+            .collect();
+        let mut multi = serde_json::json!({ "tool_name": "MultiEdit", "tool_input": { "edits": edits } });
+        truncate_payload(&mut multi, "PostToolUse");
+        assert!(multi.to_string().len() < MAX_DIFF_TOTAL + 64 * 1024);
+        assert_eq!(multi["coucou_diff_truncated"], serde_json::Value::Bool(true));
+    }
+
+    fn ask_questions() -> Value {
+        serde_json::json!([{
+            "question": "Which framework?", "header": "Stack", "multiSelect": false,
+            "options": [{ "label": "React", "description": "" }, { "label": "Vue", "description": "" }]
+        }])
+    }
+
+    #[test]
+    fn the_ask_hook_forwards_only_ask_user_question_whole() {
+        let args = Args { agent: String::new(), event: "PreToolUse".into(), ask: true };
+        let long = "q".repeat(3000);
+        let raw = format!(r#"{{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{{"questions":[{{"question":"{long}"}}]}}}}"#);
+        let (line, questions) = prepare_ask(raw.as_bytes(), &args, &|_| None, "/p").expect("forwarded");
+        let v: Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(v["coucou_kind"], "ask_user_question");
+        assert_eq!(v["tool_input"]["questions"][0]["question"].as_str().unwrap().len(), 3000);
+        assert_eq!(questions[0]["question"].as_str().unwrap().len(), 3000);
+        let bash = r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}"#;
+        assert!(prepare_ask(bash.as_bytes(), &args, &|_| None, "/p").is_none());
+        let no_list = r#"{"tool_name":"AskUserQuestion","tool_input":{}}"#;
+        assert!(prepare_ask(no_list.as_bytes(), &args, &|_| None, "/p").is_none());
+    }
+
+    #[test]
+    fn ask_answers_come_back_as_the_tools_updated_input() {
+        let out = answer_json(r#"{"permissionDecision":"answer","answers":{"Which framework?":"Vue"}}"#, &ask_questions()).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let o = &v["hookSpecificOutput"];
+        assert_eq!(o["hookEventName"], "PreToolUse");
+        assert_eq!(o["permissionDecision"], "allow");
+        assert_eq!(o["updatedInput"]["answers"]["Which framework?"], "Vue");
+        assert_eq!(o["updatedInput"]["questions"], ask_questions());
+        let multi = answer_json(r#"{"permissionDecision":"answer","answers":{"Which framework?":["React","Vue"]}}"#, &ask_questions()).unwrap();
+        assert!(multi.contains(r#"["React","Vue"]"#));
+    }
+
+    #[test]
+    fn anything_but_a_clean_ask_answer_prints_nothing() {
+        let q = ask_questions();
+        assert!(answer_json(r#"{"permissionDecision":"ask"}"#, &q).is_none());
+        assert!(answer_json("", &q).is_none());
+        assert!(answer_json("allow", &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer"}"#, &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{}}"#, &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":3}}"#, &q).is_none());
+        assert!(answer_json(r#"{"permissionDecision":"answer","answers":{"q":"a"}}"#, &serde_json::json!({})).is_none());
     }
 }

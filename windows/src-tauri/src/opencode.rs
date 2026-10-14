@@ -18,7 +18,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
-use crate::agents::{Messages, Msg, clip};
+use crate::claude_sessions::{Messages, Msg, clip};
 use crate::platform::home_dir;
 
 /// Run opencode and read its stdout as JSON. Through a temp file, not a pipe:

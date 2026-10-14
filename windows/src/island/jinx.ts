@@ -88,6 +88,7 @@ function showApproval(island: Island, ev: Approval) {
   State.pendingApproval = {
     requestId: ev.requestId,
     sessionId: ev.runId,
+    pillId: JINX_ID,
     tool: "Jinx",
     command: ev.command || ev.description || "…",
     jinxRun: ev.runId,

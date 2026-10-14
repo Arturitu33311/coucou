@@ -38,6 +38,9 @@ qué merece la pena traer.
 > original apenas ha tocado `windows/src/mochi/` desde el 9 de octubre. (`BotEmoteName`, `EMOTE_EYE` y
 > `triggerEmote` existen en los dos lados desde antes de separarse: no son algo que solo tenga el original.)
 >
+> **Hecho (14 oct 2026):** el merge del punto 1 está en `docs/MERGE-UPSTREAM-0.4.md`, con sus decisiones y la lista
+> de pruebas para el portátil.
+>
 > **Plan vigente** (no se usa Mac, así que la parte Swift no es prioritaria):
 >
 > 1. Merge completo de `upstream/main` en una rama desde `unify/monorepo`, con `android/` siempre de nuestro lado.

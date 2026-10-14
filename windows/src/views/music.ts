@@ -16,6 +16,7 @@ import type { ViewActions, ViewHost } from "./views";
 import { Bridge } from "../core/bridge";
 import { State, type MusicInfo, type Settings } from "../core/state";
 import { liveBars, lyricIndex, musicPosition, musicTint, MUSIC_RED } from "../island/music";
+import { t } from "../i18n/i18n";
 
 export interface MusicHost extends ViewHost {
   tick(nowMs: number): void;
@@ -265,9 +266,9 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   const title = marquee("m-title");
   const artist = marquee("m-artist");
 
-  const prev = control(ICONS.backward, 12, "Previous", () => void Bridge.musicControl("previous"));
+  const prev = control(ICONS.backward, 12, t("Previous"), () => void Bridge.musicControl("previous"));
   const play = control(ICONS.pause, 13, "Play / pause", () => void Bridge.musicControl("playpause"));
-  const next = control(ICONS.forward, 12, "Next", () => void Bridge.musicControl("next"));
+  const next = control(ICONS.forward, 12, t("Next"), () => void Bridge.musicControl("next"));
   play.classList.add("main");
 
   const bar = seekBar((fraction) => {

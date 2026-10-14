@@ -1,170 +1,52 @@
-// Claude Code sessions in the chat: which ones are running and in what state, and
-// what is being said in the selected one. Nothing runs unless the chat is on screen
-// (the island costs nothing while it is closed); the Rust side asks Claude Code itself.
+// Agents other than Claude Code, as the island shows them. Ids, names and colours
+// are PillCatalog.swift's (pill `agent_<id>`), so a pill looks the same on every
+// platform.
 
-import { Bridge } from "../core/bridge";
-import { State, type AgentSession, type ChatMessage } from "../core/state";
-
-const POLL_MS = 1200;
-let running = false;
-let tick = 0;
-let nextId = 2_000_000;
-/** The first list has arrived: choosing a target before that would see no agents. */
-let listLoaded = false;
-
-const wanted = () => State.view === "prompt" && State.mode === "expanded";
-const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
-
-export function selectedAgent(): AgentSession | undefined {
-  return State.agents.find((a) => a.id === State.agentId);
+export interface KnownAgent {
+  name: string;
+  color: string;
 }
 
-/** The messages of the selected agent (empty until its transcript has been read). */
-export function agentThread(): ChatMessage[] {
-  const a = selectedAgent();
-  return a ? State.agentThreads[a.sessionId]?.msgs ?? [] : [];
+export const KNOWN_AGENTS: Record<string, KnownAgent> = {
+  cursor: { name: "Cursor", color: "#C0C4CC" },
+  antigravity: { name: "Antigravity", color: "#E879F9" },
+  codex: { name: "Codex", color: "#2DD4BF" },
+  gemini: { name: "Gemini CLI", color: "#8AB4F8" },
+  copilot: { name: "Copilot CLI", color: "#818CF8" },
+  muse: { name: "Muse Code", color: "#38BDF8" },
+  opencode: { name: "OpenCode", color: "#4ADE80" },
+  amp: { name: "Amp", color: "#F59E0B" },
+  hermes: { name: "Hermes", color: "#C084FC" },
+  "claude-desktop": { name: "Claude Desktop", color: "#D97757" },
+};
+
+/**
+ * Agents whose permission requests get an Allow / Deny card, as on the Mac.
+ * Must match `takes_decisions` in the relay (hook/src/reply.rs): any other
+ * agent's request is handed straight back to its terminal.
+ */
+export const APPROVAL_AGENTS = new Set(["codex", "copilot", "muse"]);
+
+/** Same rule as HookServer.validateAgent on macOS. "claude" is reserved. */
+export function validateAgent(raw: string | undefined): string | null {
+  if (!raw || raw.length > 24 || raw === "claude") return null;
+  if (!/^[a-z0-9-]+$/.test(raw)) return null;
+  return raw;
 }
 
-/** Whether the first list of running agents has arrived. */
-export const agentsLoaded = () => listLoaded;
+const FALLBACK_COLORS = ["#22C55E", "#EAB308", "#60A5FA", "#E879F9"];
 
-/** The agent to open on: one that is waiting for you, else one you can message, else any. */
-function bestAgent(list: AgentSession[]): AgentSession | undefined {
-  return list.find((a) => a.state === "blocked") ?? list.find((a) => a.state !== "working") ?? list[0];
-}
-
-/** Starts reading while the chat is open; a no-op when it already is. */
-export function startAgentSync() {
-  if (running || !wanted()) return;
-  running = true;
-  if (State.mochiApi === null) {
-    void Bridge.secretPresent("anthropic-api-key").then((present) => {
-      State.mochiApi = !!present;
-      pickFirstTarget();
-      State.notify();
-    });
+export function agentColor(id: string): string {
+  const known = KNOWN_AGENTS[id];
+  if (known) return known.color;
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (Math.imul(31, h) + id.charCodeAt(i)) | 0;
   }
-  void loop();
+  return FALLBACK_COLORS[Math.abs(h) % FALLBACK_COLORS.length];
 }
 
-/** Read now rather than at the next beat (right after sending a message). */
-export async function syncAgentsNow() {
-  await refreshList();
-  await refreshThread();
-}
-
-async function loop() {
-  try {
-    while (wanted()) {
-      if (tick % 5 === 0) await refreshLimits();
-      if (tick++ % 2 === 0) await refreshList();
-      await refreshThread();
-      await sleep(POLL_MS);
-    }
-  } finally {
-    running = false;
-  }
-}
-
-/** Without an API key Mochi's own chat has nothing to talk to: open on an agent. */
-export function pickFirstTarget() {
-  if (State.chatPicked || State.mochiApi === null || !listLoaded) return;
-  State.chatPicked = true;
-  if (State.chatTarget === "mochi" && State.mochiApi === false) {
-    const best = bestAgent(State.agents);
-    State.chatTarget = best ? "agent" : "new";
-    State.agentId = best?.id ?? null;
-  }
-}
-
-async function refreshLimits() {
-  const limits = (await Bridge.rateLimits()) ?? null;
-  if (JSON.stringify(limits) !== JSON.stringify(State.limits)) {
-    State.limits = limits;
-    State.notify();
-  }
-}
-
-async function refreshList() {
-  let list: AgentSession[];
-  try {
-    list = await Bridge.agentsList();
-  } catch (err) {
-    const message = String(err).replace(/^Error:\s*/, "");
-    if (State.agentsError !== message) {
-      State.agentsError = message;
-      State.notify();
-    }
-    return;
-  }
-  const changed = JSON.stringify(list) !== JSON.stringify(State.agents) || State.agentsError !== null || !listLoaded;
-  listLoaded = true;
-  State.agents = list;
-  State.agentsError = null;
-  // The selected session ended: move to another one rather than show a dead thread.
-  if (State.chatTarget === "agent" && !list.some((a) => a.id === State.agentId)) {
-    State.agentId = bestAgent(list)?.id ?? null;
-    if (!State.agentId) State.chatTarget = "new";
-  }
-  pickFirstTarget();
-  if (changed) State.notify();
-}
-
-async function refreshThread() {
-  const agent = selectedAgent();
-  if (State.chatTarget !== "agent" || !agent?.sessionId) return;
-  const thread = (State.agentThreads[agent.sessionId] ??= { offset: 0, msgs: [] });
-  try {
-    const got = await Bridge.agentMessages(agent.sessionId, thread.offset);
-    if (got.messages.length === 0 && got.offset === thread.offset) return;
-    thread.offset = got.offset;
-    for (const m of got.messages) applyMessage(thread.msgs, m);
-    if (thread.msgs.length > 300) thread.msgs.splice(0, thread.msgs.length - 300);
-    State.notify();
-  } catch {
-    // A session without a transcript yet (just started): the next beat tries again.
-  }
-}
-
-/** One transcript record into a thread; the agent's queue comes and goes (see agents.rs). */
-function applyMessage(msgs: ChatMessage[], m: { role: string; text: string }) {
-  if (m.role === "queued") {
-    msgs.push({ id: nextId++, role: "queued", content: m.text });
-  } else if (m.role === "dequeued") {
-    // It ran (the transcript then records it as a normal message) or was taken back.
-    const i = m.text ? msgs.findIndex((x) => x.role === "queued" && x.content === m.text) : msgs.findIndex((x) => x.role === "queued");
-    if (i >= 0) {
-      if (m.text) msgs[i].role = "user"; // absorbed into the running turn: delivered
-      else msgs.splice(i, 1);
-    }
-  } else if (m.role === "queue-clear") {
-    for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === "queued") msgs.splice(i, 1);
-  } else {
-    msgs.push({ id: nextId++, role: m.role as ChatMessage["role"], content: m.text });
-  }
-}
-
-/** A just-started agent takes a moment to be listed; the chat moves onto it once it is. */
-export async function adoptAgent(id: string) {
-  for (let i = 0; i < 10; i++) {
-    await refreshList();
-    if (State.agents.some((a) => a.id === id)) {
-      State.chatTarget = "agent";
-      State.agentId = id;
-      State.notify();
-      await refreshThread();
-      return;
-    }
-    await sleep(500);
-  }
-  throw new Error("The agent was started but has not shown up in the list yet");
-}
-
-/** A line in the selected agent's thread that did not come from its transcript. */
-export function agentNote(text: string) {
-  const agent = selectedAgent();
-  if (!agent) return;
-  const thread = (State.agentThreads[agent.sessionId] ??= { offset: 0, msgs: [] });
-  thread.msgs.push({ id: nextId++, role: "assistant", content: text });
-  State.notify();
+/** The pill label: the agent's own name when Coucou knows it, else its id. */
+export function agentName(id: string): string {
+  return KNOWN_AGENTS[id]?.name ?? id;
 }

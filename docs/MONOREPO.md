@@ -54,6 +54,11 @@ git diff --cached --stat HEAD -- android/                       # must print not
 Upstream's `windows/src-tauri/src/phone_link/` pairs with *its* Android app, not ours (ours goes over ssh, see
 `android/COUCOU.md`). It is off by default; keep it rather than delete it, or every merge conflicts on it again.
 
+Last full merge: upstream `1456bd3` (Coucou for Windows/Linux 0.4.0), on 14 Oct 2026. What was decided there —
+which side of each overlapping feature stays — is in `docs/MERGE-UPSTREAM-0.4.md`; keep those choices on the next merge.
+Upstream's `.github/workflows/android*.yml` and the Android jobs of `phone-link.yml` are left out for the same reason as
+`android/`: delete them again if a merge brings them back.
+
 `jinx/` is ours alone. `windows/` has our own features on top of upstream's (Jinx, presence, tasks, the ssh phone link):
 expect conflicts there, and run the checks in `CLAUDE.md` plus `scripts/check-contracts.sh` before committing a merge.
 `jinx/vga-panel` bundles `windows/src/mochi/wardrobe.ts`: run its tests whenever a merge touches `windows/src/mochi/`.
