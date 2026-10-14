@@ -475,6 +475,70 @@ final class BotEngine: ObservableObject {
             ])
             miniNextBehavior = CACurrentMediaTime() + 2.6 + Double.random(in: 0...1.5)
 
+        case .sleepy:
+            // Slow droopy nod, occasional ZZZ
+            guard !locks.contains("oy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.5
+                return
+            }
+            anim("oy", keys: [
+                TweenKey(target: 0.08, duration: 480, ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 420, ease: Ease.inOut),
+            ])
+            emit(.z, count: 1)
+            miniNextBehavior = CACurrentMediaTime() + 3.2 + Double.random(in: 0...1.8)
+
+        case .confused:
+            // Slow puzzled tilt, no snap
+            guard !locks.contains("tilt") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.5
+                return
+            }
+            anim("tilt", keys: [
+                TweenKey(target: -0.14, duration: 260, ease: Ease.inOut),
+                TweenKey(target:  0.14, duration: 420, ease: Ease.inOut),
+                TweenKey(target:  0,    duration: 260, ease: Ease.out),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 2.8 + Double.random(in: 0...2.0)
+
+        case .excited:
+            // Little bounce
+            guard !locks.contains("oy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.4
+                return
+            }
+            squash()
+            anim("oy", keys: [
+                TweenKey(target: -0.18, duration: 100, ease: Ease.out),
+                TweenKey(target:  0,    duration: 180, ease: Ease.back),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 1.8 + Double.random(in: 0...1.0)
+
+        case .shy:
+            // Glances away and back
+            anim("yaw", keys: [
+                TweenKey(target: -0.4, duration: 260, ease: Ease.out),
+                TweenKey(target: -0.4, duration: 300, ease: Ease.lin),
+                TweenKey(target:  0,   duration: 280, ease: Ease.inOut),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.5, duration: 260, ease: Ease.out),
+                TweenKey(target: 0,   duration: 500, ease: Ease.inOut),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 3.0 + Double.random(in: 0...2.0)
+
+        case .sad:
+            // Slow droop, no bounce back for a while
+            guard !locks.contains("oy") else {
+                miniNextBehavior = CACurrentMediaTime() + 0.5
+                return
+            }
+            anim("oy", keys: [
+                TweenKey(target: 0.10, duration: 500, ease: Ease.inOut),
+                TweenKey(target: 0,    duration: 600, ease: Ease.inOut),
+            ])
+            miniNextBehavior = CACurrentMediaTime() + 3.6 + Double.random(in: 0...2.2)
+
         default:
             miniNextBehavior = CACurrentMediaTime() + 3.0 + Double.random(in: 0...2.0)
         }
@@ -679,6 +743,77 @@ final class BotEngine: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
                 SoundEngine.shared.play("annoyed")
             }
+
+        case .sleepy:
+            // Slow head droop + nod, like fighting off a nap
+            anim("tilt", keys: [
+                TweenKey(target: 0.10, duration: 420, ease: Ease.inOut),
+                TweenKey(target: 0.10, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 380, ease: Ease.inOut),
+            ])
+            anim("oy", keys: [
+                TweenKey(target: 0.07, duration: 420, ease: Ease.inOut),
+                TweenKey(target: 0.07, duration: CGFloat(max(0, duration - 0.9) * 1000), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 380, ease: Ease.back),
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.emit(.z, count: 1)
+            }
+
+        case .confused:
+            // Slow, puzzled side-to-side head tilt (no snap, unlike .annoyed)
+            anim("tilt", keys: [
+                TweenKey(target: -0.16, duration: 260, ease: Ease.inOut),
+                TweenKey(target:  0.16, duration: 420, ease: Ease.inOut),
+                TweenKey(target: -0.08, duration: 340, ease: Ease.inOut),
+                TweenKey(target:  0,    duration: 260, ease: Ease.out),
+            ])
+
+        case .excited:
+            // Quick double hop + sparkle burst
+            squash()
+            emit(.spark, count: 6)
+            anim("oy", keys: [
+                TweenKey(target: -0.28, duration: 110, ease: Ease.out),
+                TweenKey(target:  0.02, duration: 150, ease: Ease.inOut),
+                TweenKey(target: -0.22, duration: 110, ease: Ease.out),
+                TweenKey(target:  0,    duration: 200, ease: Ease.back),
+            ])
+
+        case .shy:
+            // Looks away and blushes, holding the pose for most of the duration
+            anim("yaw", keys: [
+                TweenKey(target: -0.55, duration: 260, ease: Ease.out),
+                TweenKey(target: -0.55, duration: CGFloat(max(0, duration - 0.6) * 1000), ease: Ease.lin),
+                TweenKey(target:  0,    duration: 340, ease: Ease.inOut),
+            ])
+            anim("blush", keys: [
+                TweenKey(target: 0.8, duration: 260, ease: Ease.out),
+                TweenKey(target: 0.8, duration: CGFloat(max(0, duration - 0.6) * 1000), ease: Ease.lin),
+                TweenKey(target: 0,   duration: 340, ease: Ease.inOut),
+            ])
+            anim("oy", keys: [
+                TweenKey(target: 0.05, duration: 260, ease: Ease.out),
+                TweenKey(target: 0,    duration: 340, ease: Ease.back),
+            ])
+
+        case .sad:
+            // Droops down and squishes slightly, slow to recover
+            anim("oy", keys: [
+                TweenKey(target: 0.12, duration: 380, ease: Ease.inOut),
+                TweenKey(target: 0.12, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 420, ease: Ease.back),
+            ])
+            anim("sy", keys: [
+                TweenKey(target: 0.92, duration: 380, ease: Ease.inOut),
+                TweenKey(target: 0.92, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+                TweenKey(target: 1,    duration: 420, ease: Ease.back),
+            ])
+            anim("tilt", keys: [
+                TweenKey(target: 0.08, duration: 380, ease: Ease.inOut),
+                TweenKey(target: 0.08, duration: CGFloat(max(0, duration - 0.7) * 1000), ease: Ease.lin),
+                TweenKey(target: 0,    duration: 420, ease: Ease.inOut),
+            ])
         }
     }
 
@@ -1121,7 +1256,9 @@ final class BotEngine: ObservableObject {
 
     var outfitFollowsRoll: Bool {
         switch outfit {
-        case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin: return true
+        case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin,
+             .necktie, .monocle, .headband:
+            return true
         default: return false
         }
     }
@@ -1615,6 +1752,11 @@ private func emoteEyeShape(_ e: BotEmote) -> EyeShape {
     case .yawn:      return .tired
     case .happy:     return .happy
     case .annoyed:   return .line
+    case .sleepy:    return .closed
+    case .confused:  return .dot
+    case .excited:   return .star
+    case .shy:       return .line
+    case .sad:       return .tired
     }
 }
 

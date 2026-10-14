@@ -301,7 +301,8 @@ func drawOutfitFrontStatic(
     // Roll-following (glasses, bow, scarf, pumpkin): skip front pass when z < 0 → behind pass handles it.
     // bunnyEars: always in behind pass; not in this set.
     switch outfit {
-    case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin:
+    case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin,
+         .necktie, .monocle, .headband:
         if mProjRoll(H, (0, 0, 1)).z < 0 { return }
     default: break
     }
@@ -319,7 +320,9 @@ func drawOutfitFrontStatic(
     // ── Hat fly-off during roll (beanie, santaHat, partyHat, crown, witchHat) ──────────────────
     let isHatType: Bool
     switch outfit {
-    case .beanie, .santaHat, .partyHat, .crown, .witchHat: isHatType = true
+    case .beanie, .santaHat, .partyHat, .crown, .witchHat,
+         .earmuffs, .bandana, .wizardHat:
+        isHatType = true
     default: isHatType = false
     }
     if isHatType && abs(H.roll) > 0.01 {
@@ -349,6 +352,12 @@ func drawOutfitFrontStatic(
                 drawCrownPart(ctx: &l, H: H, side: 1, simplified: simplified)
             case .witchHat:
                 drawWitchHatFront(ctx: &l, H: H, bodyPath: bodyPath)
+            case .earmuffs:
+                drawEarmuffsFront(ctx: &l, H: H)
+            case .bandana:
+                drawBandanaFront(ctx: &l, H: H, bodyPath: bodyPath, simplified: simplified)
+            case .wizardHat:
+                drawWizardHatFront(ctx: &l, H: H, bodyPath: bodyPath)
             default: break
             }
         }
@@ -417,6 +426,36 @@ func drawOutfitFrontStatic(
         c.scaleBy(x: max(0.001, posP), y: max(0.001, posP))
         c.drawLayer { lCtx in var l = lCtx; drawBowFront(ctx: &l, H: H, bodyPath: bodyPath) }
 
+    case .necktie:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: (1 - p) * 0.3 * H.ry)
+        c.drawLayer { lCtx in var l = lCtx; drawNecktieFront(ctx: &l, H: H) }
+
+    case .monocle:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: (1 - p) * 0.25 * H.ry)
+        c.drawLayer { lCtx in var l = lCtx; drawMonocleFront(ctx: &l, H: H, bodyPath: bodyPath) }
+
+    case .headband:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: -(1 - posP) * H.ry * 0.5)
+        c.drawLayer { lCtx in var l = lCtx; drawHeadbandFront(ctx: &l, H: H) }
+
+    case .earmuffs:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: -(1 - posP) * H.ry * 1.0); c.scaleBy(x: hatScale, y: hatScale)
+        c.drawLayer { lCtx in var l = lCtx; drawEarmuffsFront(ctx: &l, H: H) }
+
+    case .bandana:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: -(1 - posP) * H.ry * 1.0); c.scaleBy(x: hatScale, y: hatScale)
+        c.drawLayer { lCtx in var l = lCtx; drawBandanaFront(ctx: &l, H: H, bodyPath: bodyPath, simplified: simplified) }
+
+    case .wizardHat:
+        var c = baseCtx; c.opacity = layerOpacity
+        c.translateBy(x: 0, y: -(1 - posP) * H.ry * 1.0); c.scaleBy(x: hatScale, y: hatScale)
+        c.drawLayer { lCtx in var l = lCtx; drawWizardHatFront(ctx: &l, H: H, bodyPath: bodyPath) }
+
     default:
         break
     }
@@ -444,7 +483,8 @@ func drawOutfitBehindStatic(
 
     // Roll-following accessories (glasses, bow, scarf, pumpkin — not bunnyEars): behind when z < 0
     switch outfit {
-    case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin:
+    case .sunglasses, .roundGlasses, .bow, .scarf, .pumpkin,
+         .necktie, .monocle, .headband:
         guard mProjRoll(H, (0, 0, 1)).z < 0 else { return }
         ctx.opacity = layerOpacity
         ctx.drawLayer { lCtx in
@@ -455,6 +495,9 @@ func drawOutfitBehindStatic(
             case .scarf:        drawScarfFront(ctx: &l, H: H)
             case .pumpkin:      drawPumpkinFront(ctx: &l, H: H, bodyPath: bodyPath, simplified: simplified)
             case .bow:          drawBowFront(ctx: &l, H: H, bodyPath: bodyPath)
+            case .necktie:      drawNecktieFront(ctx: &l, H: H)
+            case .monocle:      drawMonocleFront(ctx: &l, H: H, bodyPath: bodyPath)
+            case .headband:     drawHeadbandFront(ctx: &l, H: H)
             default: break
             }
         }
@@ -501,6 +544,17 @@ func drawOutfitBehindStatic(
             c.translateBy(x: 0, y: -(1 - posP) * H.ry * 1.0); c.scaleBy(x: hatScale, y: hatScale)
         }
         c.drawLayer { lCtx in var l = lCtx; drawWitchHatBack(ctx: &l, H: H) }
+
+    case .wizardHat:
+        var c = ctx; c.opacity = layerOpacity
+        if abs(H.roll) > 0.01 {
+            let u = min(1, abs(H.roll) / (2 * .pi * max(1, rollTurns)))
+            c.translateBy(x: H.physDx * H.rx * 0.2 * sin(u * .pi), y: -H.ry * 0.45 * sin(u * .pi))
+            c.rotate(by: .radians(sin(2 * .pi * u) * 0.35))
+        } else {
+            c.translateBy(x: 0, y: -(1 - posP) * H.ry * 1.0); c.scaleBy(x: hatScale, y: hatScale)
+        }
+        c.drawLayer { lCtx in var l = lCtx; drawWizardHatBack(ctx: &l, H: H) }
 
     default:
         break
@@ -1461,4 +1515,386 @@ private func drawBowFront(ctx: inout GraphicsContext, H: MochiH, bodyPath: Path)
         center: CGPoint(x: -s * 0.06, y: -s * 0.1),
         startRadius: 0, endRadius: s * 0.35
     ))
+}
+
+// MARK: - Necktie
+
+private func drawNecktieFront(ctx: inout GraphicsContext, H: MochiH) {
+    // Short collar band under the chin, same silhouette technique as the scarf.
+    let s: CGFloat = 1.02, y0: CGFloat = -0.52, y1: CGFloat = -0.66
+    let top = mFrontArcRoll(H, y: y0, s: s)
+    guard !top.isEmpty else { return }
+
+    var band = Path()
+    band.move(to: CGPoint(x: top[0].x, y: top[0].y))
+    for q in top.dropFirst() { band.addLine(to: CGPoint(x: q.x, y: q.y)) }
+    ctx.stroke(band, with: .color(Color(hex: "#1F2937")),
+               style: StrokeStyle(lineWidth: H.ry * 0.22, lineCap: .round))
+
+    // Knot + hanging tie, centred just below the collar line
+    let k = mProjRoll(H, mSurf((y0 + y1) / 2, 0.02, s * 1.02))
+    guard k.z > -0.3 else { return }
+    let sw = H.physDx * H.rx * 0.1
+
+    var knot = Path()
+    knot.addRoundedRect(
+        in: CGRect(x: k.x - H.R * 0.09, y: k.y - H.R * 0.06, width: H.R * 0.18, height: H.R * 0.16),
+        cornerSize: CGSize(width: H.R * 0.03, height: H.R * 0.03)
+    )
+    ctx.fill(knot, with: .linearGradient(
+        Gradient(colors: [Color(hex: "#2563EB"), Color(hex: "#1E3A8A")]),
+        startPoint: CGPoint(x: k.x - H.R * 0.09, y: k.y),
+        endPoint:   CGPoint(x: k.x + H.R * 0.09, y: k.y)
+    ))
+
+    var tie = Path()
+    let tx = k.x + sw * 1.4
+    let ty = k.y + H.R * 0.1
+    tie.move(to: CGPoint(x: tx - H.R * 0.1, y: ty))
+    tie.addLine(to: CGPoint(x: tx + H.R * 0.1, y: ty))
+    tie.addLine(to: CGPoint(x: tx + H.R * 0.04, y: ty + H.ry * 0.62))
+    tie.addLine(to: CGPoint(x: tx, y: ty + H.ry * 0.74))
+    tie.addLine(to: CGPoint(x: tx - H.R * 0.04, y: ty + H.ry * 0.62))
+    tie.closeSubpath()
+    ctx.fill(tie, with: .linearGradient(
+        Gradient(colors: [Color(hex: "#3B82F6"), Color(hex: "#1D4ED8")]),
+        startPoint: CGPoint(x: tx, y: ty),
+        endPoint:   CGPoint(x: tx, y: ty + H.ry * 0.74)
+    ))
+    var crease = Path()
+    crease.move(to: CGPoint(x: tx, y: ty + H.R * 0.06))
+    crease.addLine(to: CGPoint(x: tx, y: ty + H.ry * 0.5))
+    ctx.stroke(crease, with: .color(Color.white.opacity(0.18)),
+               style: StrokeStyle(lineWidth: H.R * 0.02, lineCap: .round))
+}
+
+// MARK: - Monocle
+
+private func drawMonocleFront(ctx: inout GraphicsContext, H: MochiH, bodyPath: Path) {
+    let rollH = MochiH(R: H.R, yaw: H.yaw, pitch: H.pitch + H.roll, physDx: H.physDx, physDy: H.physDy)
+    let eyes = mEyeFrames(rollH)
+    guard let re = eyes.first(where: { $0.sd > 0 }), re.visible else { return }
+    let d = H.R * 0.52
+
+    var g = ctx
+    g.clip(to: bodyPath)
+
+    // chain down to the side
+    var chain = Path()
+    chain.move(to: CGPoint(x: re.x + d / 2 * re.fx * 0.75, y: re.y + d * 0.3))
+    chain.addQuadCurve(
+        to:      CGPoint(x: H.rx * 1.02, y: H.ry * 0.5),
+        control: CGPoint(x: re.x + d * 0.5, y: re.y + d * 0.9)
+    )
+    g.stroke(chain, with: .color(Color(hex: "#B8860B")),
+             style: StrokeStyle(lineWidth: H.R * 0.025, lineCap: .round, dash: [H.R * 0.04, H.R * 0.05]))
+
+    var lg = g
+    lg.translateBy(x: re.x, y: re.y)
+    lg.scaleBy(x: re.fx, y: re.fy)
+
+    var lens = Path()
+    lens.addEllipse(in: CGRect(x: -d / 2, y: -d / 2, width: d, height: d))
+    lg.fill(lens, with: .color(Color(red: 190/255, green: 225/255, blue: 1, opacity: 0.14)))
+    lg.stroke(lens, with: .color(Color(hex: "#D4AF37")),
+              style: StrokeStyle(lineWidth: H.R * 0.07, lineCap: .round))
+
+    var glint = Path()
+    glint.addArc(center: .zero, radius: d / 2 - H.R * 0.03,
+                 startAngle: .radians(.pi * 1.1), endAngle: .radians(.pi * 1.4), clockwise: false)
+    lg.stroke(glint, with: .color(Color.white.opacity(0.6)),
+              style: StrokeStyle(lineWidth: H.R * 0.035, lineCap: .round))
+}
+
+// MARK: - Headband
+
+private func drawHeadbandFront(ctx: inout GraphicsContext, H: MochiH) {
+    let s: CGFloat = 1.04, y0: CGFloat = 0.30
+    let arc = mFrontArcRoll(H, y: y0, s: s)
+    guard !arc.isEmpty else { return }
+
+    var band = Path()
+    band.move(to: CGPoint(x: arc[0].x, y: arc[0].y))
+    for q in arc.dropFirst() { band.addLine(to: CGPoint(x: q.x, y: q.y)) }
+    ctx.stroke(band, with: .color(Color(hex: "#F472B6")),
+               style: StrokeStyle(lineWidth: H.ry * 0.16, lineCap: .round))
+    ctx.stroke(band, with: .color(Color.white.opacity(0.3)),
+               style: StrokeStyle(lineWidth: H.ry * 0.05, lineCap: .round))
+
+    // Small bow on the side where the band meets the silhouette
+    let side = arc.last!
+    let s2 = H.R * 0.16
+    var g = ctx
+    g.translateBy(x: side.x, y: side.y)
+    g.rotate(by: .radians(0.3))
+    for sdD: Double in [-1.0, 1.0] {
+        let sd = CGFloat(sdD)
+        var wing = Path()
+        wing.move(to: .zero)
+        wing.addCurve(
+            to:       CGPoint(x: sd * s2 * 1.1, y: 0),
+            control1: CGPoint(x: sd * s2 * 0.55, y: -s2 * 0.8),
+            control2: CGPoint(x: sd * s2 * 1.3,  y: -s2 * 0.5)
+        )
+        wing.addCurve(
+            to:       .zero,
+            control1: CGPoint(x: sd * s2 * 1.3,  y: s2 * 0.5),
+            control2: CGPoint(x: sd * s2 * 0.55, y: s2 * 0.8)
+        )
+        g.fill(wing, with: .color(Color(hex: "#EC4899")))
+    }
+    var centreKnot = Path()
+    centreKnot.addEllipse(in: CGRect(x: -s2 * 0.2, y: -s2 * 0.26, width: s2 * 0.4, height: s2 * 0.52))
+    g.fill(centreKnot, with: .color(Color(hex: "#F9A8D4")))
+}
+
+// MARK: - Earmuffs
+
+private func drawEarmuffsFront(ctx: inout GraphicsContext, H: MochiH) {
+    // Thin band over the top of the head
+    let s: CGFloat = 1.05, yb: CGFloat = 0.72
+    let arc = mFrontArc(H, y: yb, s: s)
+    if !arc.isEmpty {
+        var band = Path()
+        band.move(to: CGPoint(x: arc[0].x, y: arc[0].y))
+        for q in arc.dropFirst() { band.addLine(to: CGPoint(x: q.x, y: q.y)) }
+        ctx.stroke(band, with: .color(Color(hex: "#374151")),
+                   style: StrokeStyle(lineWidth: H.R * 0.07, lineCap: .round))
+    }
+
+    // Padded cup over each ear, with a cushioned pompom-style fill
+    for sd: CGFloat in [-1.0, 1.0] {
+        let root = mProj(H, (sd * 0.98, 0.1, 0.15))
+        let cx = root.x + H.physDx * H.rx * 0.1
+        let cy = root.y + H.physDy * H.ry * 0.1
+        let r = H.R * 0.3
+
+        var cup = Path()
+        cup.addEllipse(in: CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2))
+        ctx.fill(cup, with: .color(Color(hex: "#4B5563")))
+
+        var pad = Path()
+        pad.addEllipse(in: CGRect(x: cx - r * 0.68, y: cy - r * 0.68, width: r * 1.36, height: r * 1.36))
+        ctx.fill(pad, with: .radialGradient(
+            Gradient(stops: [
+                .init(color: Color(hex: "#F3F4F6"), location: 0),
+                .init(color: Color(hex: "#9CA3AF"), location: 1)
+            ]),
+            center: CGPoint(x: cx - r * 0.2, y: cy - r * 0.25),
+            startRadius: 0, endRadius: r * 0.9
+        ))
+    }
+}
+
+// MARK: - Bandana
+
+private func drawBandanaFront(ctx: inout GraphicsContext, H: MochiH, bodyPath: Path, simplified: Bool = false) {
+    let s: CGFloat = 1.03, yEdge: CGFloat = 0.40
+
+    // shadow on head under the edge
+    var shadow = ctx
+    shadow.clip(to: bodyPath)
+    shadow.clip(to: mCapClip(H, y: yEdge - 0.1, s: 1))
+    var shRect = Path()
+    shRect.addRect(CGRect(x: -H.rx * 4, y: -H.ry * 4, width: H.rx * 8, height: H.ry * 8))
+    shadow.fill(shRect, with: .color(Color(red: 70/255, green: 20/255, blue: 10/255, opacity: 0.10)))
+
+    // cloth cap
+    var clothCtx = ctx
+    clothCtx.clip(to: mCapClip(H, y: yEdge, s: s))
+    let head = mochiOutfitPath(H.rx * s, H.ry * s)
+    clothCtx.fill(head, with: .linearGradient(
+        Gradient(stops: [
+            .init(color: Color(hex: "#F87171"), location: 0),
+            .init(color: Color(hex: "#B91C1C"), location: 1)
+        ]),
+        startPoint: CGPoint(x: H.rx * 0.5,  y: -H.ry * 1.1),
+        endPoint:   CGPoint(x: -H.rx * 0.6, y:  H.ry * 0.2)
+    ))
+
+    // white paisley-ish dots (skip when simplified)
+    if !simplified {
+        let dots: [(CGFloat, CGFloat)] = [(-0.3, 0.75), (0.25, 0.8), (0, 0.95), (-0.5, 0.95), (0.5, 0.92)]
+        var dotCtx = clothCtx
+        dotCtx.clip(to: head)
+        for (lon, y) in dots {
+            let q = mProj(H, mSurf(y, lon, s))
+            guard q.z > 0.05 else { continue }
+            let r = H.R * 0.05 * q.z
+            var dot = Path()
+            dot.addEllipse(in: CGRect(x: q.x - r, y: q.y - r, width: r * 2, height: r * 2))
+            dotCtx.fill(dot, with: .color(Color.white.opacity(0.75)))
+        }
+    }
+
+    // knotted edge band
+    var edgeCtx = ctx
+    edgeCtx.clip(to: mCapClip(H, y: yEdge - 0.02, s: s))
+    edgeCtx.clip(to: mInvert(mCapClip(H, y: yEdge + 0.1, s: s), H: H), style: FillStyle(eoFill: true))
+    edgeCtx.fill(head, with: .color(Color(hex: "#991B1B")))
+
+    // tail knot peeking out on one side
+    let knotPt = mProj(H, mSurf(yEdge + 0.02, 1.15, s * 1.04))
+    if knotPt.z > 0 {
+        var knot = Path()
+        knot.addEllipse(in: CGRect(
+            x: knotPt.x - H.R * 0.1, y: knotPt.y - H.R * 0.08,
+            width: H.R * 0.2, height: H.R * 0.16
+        ))
+        ctx.fill(knot, with: .color(Color(hex: "#DC2626")))
+        var tail = Path()
+        tail.move(to: CGPoint(x: knotPt.x + H.R * 0.06, y: knotPt.y))
+        tail.addQuadCurve(
+            to:      CGPoint(x: knotPt.x + H.R * 0.22, y: knotPt.y + H.R * 0.26),
+            control: CGPoint(x: knotPt.x + H.R * 0.22, y: knotPt.y + H.R * 0.06)
+        )
+        ctx.stroke(tail, with: .color(Color(hex: "#DC2626")),
+                   style: StrokeStyle(lineWidth: H.R * 0.07, lineCap: .round))
+    }
+
+    // top highlight
+    var hiCtx = ctx
+    hiCtx.clip(to: mCapClip(H, y: yEdge, s: s))
+    hiCtx.clip(to: head)
+    hiCtx.fill(head, with: .radialGradient(
+        Gradient(stops: [
+            .init(color: Color.white.opacity(0.3), location: 0),
+            .init(color: .clear, location: 1)
+        ]),
+        center: CGPoint(x: H.rx * 0.3, y: -H.ry * 0.85),
+        startRadius: 0, endRadius: H.R * 0.45
+    ))
+}
+
+// MARK: - Wizard hat
+
+private func wizardBrimPts(_ H: MochiH) -> [P3] {
+    let y: CGFloat = 0.68, rr: CGFloat = 1.30
+    return (0...120).map { i -> P3 in
+        let a = -.pi + CGFloat(i) / 120 * 2 * .pi
+        let wob = 1 + 0.03 * sin(a * 3 + 0.4)
+        return mProj(H, (rr * wob * sin(a), y, rr * wob * cos(a)))
+    }
+}
+
+private func drawWizardHatBack(ctx: inout GraphicsContext, H: MochiH) {
+    let pts = wizardBrimPts(H)
+    guard !pts.isEmpty else { return }
+    var ell = Path()
+    ell.move(to: CGPoint(x: pts[0].x, y: pts[0].y))
+    for q in pts.dropFirst() { ell.addLine(to: CGPoint(x: q.x, y: q.y)) }
+    ell.closeSubpath()
+    ctx.fill(ell, with: .linearGradient(
+        Gradient(stops: [
+            .init(color: Color(hex: "#1E3A8A"), location: 0),
+            .init(color: Color(hex: "#172554"), location: 1)
+        ]),
+        startPoint: CGPoint(x: 0, y: -H.ry * 1.0),
+        endPoint:   CGPoint(x: 0, y: -H.ry * 0.4)
+    ))
+}
+
+private func drawWizardHatFront(ctx: inout GraphicsContext, H: MochiH, bodyPath: Path) {
+    let all = wizardBrimPts(H)
+    var brim = Path()
+    brim.move(to: CGPoint(x: all[0].x, y: all[0].y))
+    for q in all.dropFirst() { brim.addLine(to: CGPoint(x: q.x, y: q.y)) }
+    brim.closeSubpath()
+    let fr = all.filter { $0.z >= 0 }.sorted { $0.x < $1.x }
+
+    // shadow on head
+    var sCtx = ctx
+    sCtx.clip(to: bodyPath)
+    sCtx.clip(to: mCapClip(H, y: 0.48, s: 1))
+    var sRect = Path()
+    sRect.addRect(CGRect(x: -H.rx * 4, y: -H.ry * 4, width: H.rx * 8, height: H.ry * 8))
+    sCtx.fill(sRect, with: .color(Color(red: 10/255, green: 10/255, blue: 50/255, opacity: 0.10)))
+
+    // brim front
+    ctx.fill(brim, with: .linearGradient(
+        Gradient(stops: [
+            .init(color: Color(hex: "#2563EB"), location: 0),
+            .init(color: Color(hex: "#1E3A8A"), location: 1)
+        ]),
+        startPoint: CGPoint(x: 0, y: -H.ry * 0.9),
+        endPoint:   CGPoint(x: 0, y: -H.ry * 0.3)
+    ))
+    if !fr.isEmpty {
+        var frLine = Path()
+        frLine.move(to: CGPoint(x: fr[0].x, y: fr[0].y))
+        for i in 1..<fr.count { frLine.addLine(to: CGPoint(x: fr[i].x, y: fr[i].y)) }
+        ctx.stroke(frLine, with: .color(Color(red: 170/255, green: 200/255, blue: 1, opacity: 0.35)),
+                   style: StrokeStyle(lineWidth: H.R * 0.035, lineCap: .round))
+    }
+
+    // tall straight cone (less droopy than the witch hat)
+    let baseR: CGFloat = 0.56, by: CGFloat = 0.72
+    let bl = mProj(H, (-baseR, by, 0))
+    let br = mProj(H, (baseR,  by, 0))
+    let c  = mProj(H, (0, by, 0))
+    let lean: CGFloat = 0.06 + H.physDx * 0.12
+    let top = CGPoint(
+        x: c.x + sin(lean) * H.ry * 0.25,
+        y: c.y - H.ry * 1.55
+    )
+    let capFront = mFrontArc(H, y: by, s: baseR / mRingR(by)).filter {
+        $0.x >= bl.x - 1 && $0.x <= br.x + 1
+    }
+
+    var cone = Path()
+    cone.move(to: CGPoint(x: bl.x, y: bl.y))
+    cone.addQuadCurve(
+        to:      CGPoint(x: top.x, y: top.y),
+        control: CGPoint(x: bl.x + H.rx * 0.1, y: bl.y - H.ry * 0.75)
+    )
+    cone.addQuadCurve(
+        to:      CGPoint(x: br.x, y: br.y),
+        control: CGPoint(x: br.x - H.rx * 0.1, y: br.y - H.ry * 0.75)
+    )
+    for i in stride(from: capFront.count - 1, through: 0, by: -1) {
+        cone.addLine(to: CGPoint(x: capFront[i].x, y: capFront[i].y))
+    }
+    cone.closeSubpath()
+
+    ctx.fill(cone, with: .linearGradient(
+        Gradient(stops: [
+            .init(color: Color(hex: "#3B82F6"), location: 0),
+            .init(color: Color(hex: "#1D4ED8"), location: 0.55),
+            .init(color: Color(hex: "#172554"), location: 1)
+        ]),
+        startPoint: CGPoint(x: bl.x, y: top.y),
+        endPoint:   CGPoint(x: br.x, y: bl.y)
+    ))
+
+    // little star + moon sparkles on the cone (simple cross/circle shapes, no shared private helpers)
+    var decoCtx = ctx
+    decoCtx.clip(to: cone)
+    let sparkles: [(CGFloat, CGFloat, CGFloat)] = [(0.3, 0.55, 1), (0.6, 0.3, 0.7), (0.42, 0.78, 0.8)]
+    for (tx, ty, scale) in sparkles {
+        let px = bl.x + (br.x - bl.x) * tx + (top.x - (bl.x + br.x) / 2) * (1 - ty) * 0.5
+        let py = bl.y + (top.y - bl.y) * ty
+        let r = H.R * 0.045 * scale
+        var cross = Path()
+        cross.move(to: CGPoint(x: px - r, y: py)); cross.addLine(to: CGPoint(x: px + r, y: py))
+        cross.move(to: CGPoint(x: px, y: py - r)); cross.addLine(to: CGPoint(x: px, y: py + r))
+        decoCtx.stroke(cross, with: .color(Color(hex: "#FDE68A").opacity(0.85)),
+                       style: StrokeStyle(lineWidth: r * 0.4, lineCap: .round))
+    }
+    decoCtx.fill(cone, with: .radialGradient(
+        Gradient(stops: [
+            .init(color: Color.white.opacity(0.2), location: 0),
+            .init(color: .clear, location: 1)
+        ]),
+        center: CGPoint(x: bl.x + H.rx * 0.2, y: top.y + H.ry * 0.3),
+        startRadius: 0, endRadius: H.R * 0.5
+    ))
+
+    // trim at the base
+    if !fr.isEmpty {
+        var trim = Path()
+        trim.move(to: CGPoint(x: fr[0].x, y: fr[0].y))
+        for i in 1..<fr.count { trim.addLine(to: CGPoint(x: fr[i].x, y: fr[i].y)) }
+        ctx.stroke(trim, with: .color(Color(hex: "#FDE68A")),
+                   style: StrokeStyle(lineWidth: H.R * 0.05, lineCap: .round))
+    }
 }
