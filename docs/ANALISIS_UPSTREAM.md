@@ -25,18 +25,28 @@ qué merece la pena traer.
 >   unos 30 en `windows/`, 15 en `android/` y los 3 bloques de Swift de §4, que siguen igual.
 >   `windows/src/mochi/outfits.ts`, `wardrobe.ts`, `src-tauri/src/agents.rs` e `island/agents.ts` los escribieron
 >   los dos lados por separado.
-> - Los commits de Mochi de §3 (`5440f3a`, `1475442`, `aca9129`) ya están en `unify/monorepo` (merge `2879e04`).
->   Siguen existiendo **solo en Swift**: ni el Mochi de PC ni el de Android tienen esas 15 emociones y 6 atuendos.
+> - Los commits de Mochi de §3 (`5440f3a`, `1475442`, `aca9129`) ya están en `unify/monorepo` (merge `2879e04`),
+>   y `7623b20` los porta: los 6 atuendos a PC (`windows/src/mochi/wardrobe.ts`) y a Android
+>   (`MochiWardrobe.kt`), y las 15 emociones a PC (`engine.ts`). Android no tiene capa de emociones.
 > - Resuelto un punto de §9: el Portfolio del original guarda las claves de los exchanges en el Keychain.
+>
+> **El Mochi de PC: se queda el nuestro.** Los dos lados portaron el armario del Mac por separado y con los nombres
+> de archivo al revés: nuestro `wardrobe.ts` dibuja y `outfits.ts` elige; en el original es al contrario. Git lo
+> marca como un conflicto de archivo entero, así que hay que elegir uno. Nos quedamos con el nuestro porque lleva
+> los 6 atuendos y las 15 emociones, los extras de PC (auriculares, gorro de dormir, gafas) y el panel VGA lo
+> empaqueta. Del original solo usan su API `windows/src/views/wardrobe.ts` (su selector) y su `engine.ts`; el
+> original apenas ha tocado `windows/src/mochi/` desde el 9 de octubre. (`BotEmoteName`, `EMOTE_EYE` y
+> `triggerEmote` existen en los dos lados desde antes de separarse: no son algo que solo tenga el original.)
 >
 > **Plan vigente** (no se usa Mac, así que la parte Swift no es prioritaria):
 >
 > 1. Merge completo de `upstream/main` en una rama desde `unify/monorepo`, con `android/` siempre de nuestro lado.
 >    En `windows/`, resolver por capas y comprobar cada una: `hook/` (`cargo test`) → `src-tauri/`
->    (`cargo check`) → `src/core` (`tsc`) → `island/`, `views/`, `settings/` → `mochi/` (base del original,
->    más nuestros extras de PC; tests del panel VGA). Los 3 bloques de Swift se resuelven con los dos lados, sin compilar.
-> 2. Después, portar a TypeScript las 15 emociones y los 6 atuendos de §3 sobre el `engine.ts`/`outfits.ts`
->    del original (que ya trae `BotEmoteName`, `EMOTE_EYE` y `triggerEmote`), con los mismos ids.
+>    (`cargo check`) → `src/core` (`tsc`) → `island/`, `views/`, `settings/` → `mochi/`.
+>    En `mochi/`: `wardrobe.ts` y `outfits.ts` de nuestro lado; `engine.ts` resuelto bloque a bloque (sus cambios:
+>    baile con Spotify, Mochi en el escritorio, saludo v2); su selector y su Mochi de escritorio adaptados a
+>    nuestra API o descartados. Después, tests del panel VGA. Los 3 bloques de Swift, con los dos lados y sin compilar.
+> 2. Hacer que las emociones nuevas se vean en PC: hoy nada llama a `triggerEmote` con ellas.
 
 ---
 
