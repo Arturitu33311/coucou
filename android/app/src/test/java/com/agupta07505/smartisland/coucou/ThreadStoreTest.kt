@@ -33,6 +33,23 @@ class ThreadStoreTest {
         assertEquals(listOf("c2:s21"), s.pending().map { it.id })
     }
 
+    @Test fun linesFromThePcOrTelegramAreNeverAnsweredHere() {
+        val s = store()
+        s.append(line("p1:pc", 1.0, src = "pc", cid = "p1"))
+        s.append(line("t1:tg", 2.0, src = "tg", cid = "t1"))
+        s.append(line("c3:s21", 3.0, cid = "c3"))
+        assertEquals(listOf("c3:s21"), s.pending().map { it.id })
+    }
+
+    @Test fun eachSourceHasItsLabelAndItsTelegramPrefix() {
+        assertEquals("PC", line("a", 1.0, src = "pc").sourceLabel)
+        assertEquals("Telegram", line("a", 1.0, src = "tg").sourceLabel)
+        assertNull(line("a", 1.0, src = "s22").sourceLabel)
+        assertEquals("💻 ", line("a", 1.0, src = "pc").mirrorPrefix)
+        assertEquals("📱 ", line("a", 1.0, src = "s21").mirrorPrefix)
+        assertEquals("🟠 ", line("a", 1.0, src = "jinx").mirrorPrefix)
+    }
+
     @Test fun mergeAddsOnlyUnknownAndOrdersByTs() {
         val s = store()
         s.append(line("b", 20.0))

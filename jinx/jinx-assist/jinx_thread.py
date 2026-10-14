@@ -2,7 +2,7 @@
 
 Una línea JSON por mensaje en <base>/thread.jsonl:
   {"id","ts","src","text","cid","mirrored"}
-src: tg | s21 | s22 | jinx.  id = "<cid>:<src>" si hay cid, si no un uuid.
+src: tg | s21 | s22 | pc | jinx.  id = "<cid>:<src>" si hay cid, si no un uuid.
 Todas las operaciones toman un flock exclusivo y reescriben de forma atómica.
 """
 import contextlib

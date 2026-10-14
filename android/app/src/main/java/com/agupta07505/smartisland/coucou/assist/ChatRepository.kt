@@ -83,8 +83,7 @@ class ChatRepository(
         val m = mirror ?: return
         val done = mutableSetOf<String>()
         for (l in store.unmirrored()) {
-            val prefix = if (l.fromJinx) "🟠 " else "📱 "
-            if (!m.deliver((prefix + l.text).take(TG_MAX))) break
+            if (!m.deliver((l.mirrorPrefix + l.text).take(TG_MAX))) break
             done += l.id
         }
         if (done.isNotEmpty()) store.markMirrored(done)
@@ -95,7 +94,7 @@ class ChatRepository(
         val api = laptop ?: return 0
         return try {
             val ours = store.all()
-            val res = api.merge(ours.filter { !it.mirrored || it.src != "tg" }, ours.map { it.id })
+            val res = api.merge(ours.filter { !it.mirrored || !it.fromElsewhere }, ours.map { it.id })
             store.markMirrored(res.mirroredIds.toSet())
             store.merge(res.items)
         } catch (_: ChatException) {

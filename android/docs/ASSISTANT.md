@@ -13,3 +13,5 @@ Notes:
 - Right after `install -r` the service rebinds; the first assist gesture within a few seconds can land on Google.
 - The laptop side lives in `scripts/jinx-assist/` (`install.sh` copies it to `~/bin`). The phone keys in
   `~/.ssh/authorized_keys` must run `~/bin/coucou-dispatch` (it still serves `coucou-hook --remote`).
+- Coucou on the PC writes into the same thread through the same gateway (source `pc`, run locally on the
+  laptop): its lines show under "PC" in the panel, go to Telegram as `💻 …`, and are never answered by a phone.

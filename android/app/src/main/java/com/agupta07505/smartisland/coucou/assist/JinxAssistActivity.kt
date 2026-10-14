@@ -354,7 +354,7 @@ private fun Bubble(l: ChatLine) {
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Text(l.text, color = Color.White, fontSize = 15.sp)
-            if (l.src == "tg") Text("Telegram", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
+            l.sourceLabel?.let { Text(it, color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp) }
         }
     }
 }

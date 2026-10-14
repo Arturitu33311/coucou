@@ -103,6 +103,12 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(self.events({"op": "send", "text": "x"})[-1]["ev"], "error")
         self.assertEqual(self.thread.read(), [])
 
+    def test_the_pc_writes_to_the_same_thread_and_is_mirrored_as_the_pc(self):
+        ev = self.events({"op": "send", "text": "desde el escritorio", "cid": "p1", "src": "pc"})
+        self.assertEqual(ev[-1]["ev"], "done")
+        self.assertEqual([d["src"] for d in self.thread.read()], ["pc", "jinx"])
+        self.assertEqual(self.mirror.sent, ["💻 desde el escritorio", "🟠 respuesta"])
+
     def test_unknown_src_is_rejected(self):
         ev = self.events({"op": "send", "text": "x", "cid": "c", "src": "evil"})
         self.assertEqual(ev[-1]["ev"], "error")

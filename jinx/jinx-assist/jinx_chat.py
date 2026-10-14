@@ -24,7 +24,10 @@ from jinx_thread import Thread  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
-SRCS = ("s21", "s22")
+# Quien puede escribir por el gateway: los dos teléfonos y Coucou del PC (local, sin ssh).
+SRCS = ("s21", "s22", "pc")
+# Cómo se ve cada origen al espejarlo en Telegram.
+MIRROR_PREFIX = {"jinx": "🟠 ", "pc": "💻 "}
 TG_MAX = 4000
 
 
@@ -71,7 +74,7 @@ def _mirror_pending(deps):
     """Intenta espejar, en orden, lo que quedó sin espejar. Para al primer fallo."""
     done = []
     for d in deps.thread.unmirrored():
-        prefix = "🟠 " if d["src"] == "jinx" else "📱 "
+        prefix = MIRROR_PREFIX.get(d["src"], "📱 ")
         if not deps.mirror.send((prefix + d["text"])[:TG_MAX]):
             break
         done.append(d["id"])

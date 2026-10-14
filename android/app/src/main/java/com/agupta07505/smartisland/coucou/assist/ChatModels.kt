@@ -7,7 +7,7 @@ package com.agupta07505.smartisland.coucou.assist
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** One message of the shared conversation. `src` is tg | s21 | s22 | jinx. */
+/** One message of the shared conversation. `src` is tg | s21 | s22 | pc | jinx (pc: Coucou on the laptop). */
 data class ChatLine(
     val id: String,
     val ts: Double,
@@ -17,6 +17,23 @@ data class ChatLine(
     val mirrored: Boolean,
 ) {
     val fromJinx: Boolean get() = src == "jinx"
+
+    /** Written on Telegram or on the PC: never a phone's to answer, and labelled in the panel. */
+    val fromElsewhere: Boolean get() = src == "tg" || src == "pc"
+
+    /** What the panel says under a line written elsewhere; null for this conversation's own lines. */
+    val sourceLabel: String? get() = when (src) {
+        "tg" -> "Telegram"
+        "pc" -> "PC"
+        else -> null
+    }
+
+    /** How the line goes to Telegram (same as the laptop gateway's MIRROR_PREFIX). */
+    val mirrorPrefix: String get() = when (src) {
+        "jinx" -> "🟠 "
+        "pc" -> "💻 "
+        else -> "📱 "
+    }
 }
 
 sealed interface ChatEvent {
