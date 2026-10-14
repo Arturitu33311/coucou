@@ -41,7 +41,8 @@ internals.invoke = async (cmd, args) => {
 };
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-const island = { reveal() {}, alert() {}, dropPin() {}, setView() {} };
+const emotes = [];
+const island = { reveal() {}, alert() {}, dropPin() {}, setView() {}, emote(name) { emotes.push(name); } };
 registerJinxHandlers(island);
 
 let view;
@@ -76,9 +77,11 @@ test("the chat on Jinx shows the thread shared with the phones and Telegram, lab
 test("an answer through the gateway says which brain gave it and brings the thread up to date", async () => {
   answers = { jinx_history: [{ id: "x:pc", ts: 1, src: "pc", text: "hola" }, { id: "x:jinx", ts: 2, src: "jinx", text: "¡Hola!" }] };
   State.jinxBusy = true;
+  emotes.length = 0;
   emit("jinx", { kind: "done", text: "¡Hola!", mode: "or" });
   await flush();
   assert.equal(State.jinxBusy, false);
+  assert.deepEqual(emotes, ["happy"], "Mochi wears the mood of her reply");
   assert.equal(State.jinxMode, "or");
   assert.ok(calls.some(([cmd]) => cmd === "jinx_history"), "the thread is read again after the answer");
   assert.deepEqual(State.jinxHistory.map((m) => [m.role, m.via]), [["user", "PC"], ["assistant", undefined]]);
@@ -87,7 +90,9 @@ test("an answer through the gateway says which brain gave it and brings the thre
 test("with the Hermes API (no gateway) the local history stays as it is", async () => {
   answers = { jinx_history: null };
   State.jinxHistory = [{ id: 1, role: "user", content: "local" }];
+  emotes.length = 0;
   emit("jinx", { kind: "done", text: "respuesta", mode: "hermes" });
   await flush();
+  assert.deepEqual(emotes, [], "a neutral reply leaves Mochi as he is");
   assert.deepEqual(State.jinxHistory.map((m) => m.content), ["local", "respuesta"]);
 });

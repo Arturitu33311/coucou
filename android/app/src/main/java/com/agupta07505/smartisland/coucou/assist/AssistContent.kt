@@ -101,7 +101,7 @@ internal fun AssistContent(
                 Box(
                     Modifier.size(46.dp).clip(CircleShape).background(CoucouColors.AccentSoft),
                     contentAlignment = Alignment.Center,
-                ) { MochiGlyph(size = 30.dp, tint = MochiEmerald, mood = if (ui.busy) MochiMood.Thinking else MochiMood.Listening) }
+                ) { MochiGlyph(size = 30.dp, tint = MochiEmerald, mood = JinxMood.headerMood(ui.lines, ui.busy, System.currentTimeMillis() / 1000.0)) }
             },
             actions = {
                 Box {

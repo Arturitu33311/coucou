@@ -15,7 +15,9 @@ class MochiPresenceTest {
     fun moods_the_server_sends_are_valid() {
         assertEquals("Happy", validMood("Happy"))
         assertEquals("Alert", validMood("Alert"))
+        assertEquals("Grumpy", validMood("Grumpy"))
         assertNull(validMood("Furious"))
+        assertNull(validMood("Working"))
         assertNull(validMood(null))
     }
 

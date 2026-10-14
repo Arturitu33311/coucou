@@ -681,8 +681,8 @@ export class Island {
 
   // ── Keyboard shortcuts (island/shortcuts.ts) ────────────────────────────────
 
-  emote(name: BotEmoteName) {
-    this.engine.triggerEmote(name);
+  emote(name: BotEmoteName, seconds?: number) {
+    this.engine.triggerEmote(name, seconds);
     this.ensureRunning();
   }
 

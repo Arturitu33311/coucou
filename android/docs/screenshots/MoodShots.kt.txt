@@ -1,0 +1,43 @@
+package com.agupta07505.smartisland.coucou
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import app.cash.paparazzi.DeviceConfig
+import app.cash.paparazzi.Paparazzi
+import com.agupta07505.smartisland.coucou.ui.MochiGlyph
+import com.agupta07505.smartisland.coucou.ui.MochiMood
+import org.junit.Rule
+import org.junit.Test
+
+class MoodShots {
+    @get:Rule val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6)
+
+    @Test fun moods() = paparazzi.snapshot(name = "moods") {
+        val moods = MochiMood.entries.filter { it.emote != null } + listOf(MochiMood.Happy, MochiMood.Surprised, MochiMood.Sleepy)
+        Column(Modifier.background(Color(0xFF0B0B10)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            for (row in moods.chunked(4)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (m in row) {
+                        Column(Modifier.width(88.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                MochiGlyph(size = 56.dp, mood = m)
+                                MochiGlyph(size = 24.dp, mood = m)
+                            }
+                            Text(m.name, color = Color.White, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

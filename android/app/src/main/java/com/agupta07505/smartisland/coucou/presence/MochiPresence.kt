@@ -52,7 +52,8 @@ fun validMood(name: String?): String? {
     if (name == null) return null
     return name.takeIf {
         it in setOf("Idle", "Happy", "Sleepy", "Alert", "Listening",
-            "Celebrating", "Dancing", "Tired", "Surprised", "Glance")
+            "Celebrating", "Dancing", "Tired", "Surprised", "Glance") ||
+            com.agupta07505.smartisland.coucou.ui.MochiMood.entries.any { m -> m.emote != null && m.name == it }
     }
 }
 
@@ -124,7 +125,8 @@ object IslandJinx {
             return emptySet()
         }
         val last = msgs.last()
-        val mood = validMood(last.mood)
+        // The sender's mood when it gave one, else what her text reads as (the PC's rules, JinxMood).
+        val mood = validMood(last.mood) ?: com.agupta07505.smartisland.coucou.assist.JinxMood.moodOfText(last.text)?.name
         repo.postNotification(
             IslandNotification(
                 key = KEY,

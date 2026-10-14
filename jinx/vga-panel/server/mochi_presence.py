@@ -39,7 +39,11 @@ PANEL_ORIGINS = ("http://127.0.0.1:8896", "http://localhost:8896")
 INBOX_CAP = 50
 TEXT_CAP = 500
 MOODS = {"Idle", "Happy", "Sleepy", "Alert", "Listening", "Celebrating",
-         "Dancing", "Tired"}
+         "Dancing", "Tired",
+         # Las caras de Jinx (los emotes de Mochi en PC y teléfono: MochiMood.kt con `emote`).
+         "Love", "Proud", "Excited", "Confused", "Shy", "Sad", "Curious", "Bored",
+         "Scared", "Grumpy", "Smug", "Laughing", "Crying", "Relieved", "Determined",
+         "Flustered"}
 KINDS = {"info", "warn", "alert"}
 
 state = {

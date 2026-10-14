@@ -6,6 +6,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { JINX_ID, State, type ChatMessage } from "../core/state";
 import { threadMessages } from "../core/jinx-thread";
+import { jinxEmote } from "../core/jinx-mood";
 import type { Island } from "./island";
 
 type Approval = { kind: "approval"; runId: string; requestId: string; command: string; description: string };
@@ -16,6 +17,9 @@ type JinxEvent =
   | { kind: "resolved"; requestId: string }
   | { kind: "done"; text: string; mode?: string }
   | { kind: "error"; message: string };
+
+/** How long Mochi shows the mood of Jinx's reply: long enough to be seen when the island opens on it. */
+const JINX_EMOTE_S = 3.2;
 
 let nextId = 1_000_000;
 /** The assistant bubble being filled by the current run, once it has started one. */
@@ -167,8 +171,13 @@ function handle(island: Island, ev: JinxEvent) {
         }
       }
       if (ev.mode) State.jinxMode = ev.mode;
-      Sound.play("finish");
-      finish(island, "finished");
+      {
+        const emote = jinxEmote(ev.text || streaming?.content);
+        Sound.play("finish");
+        finish(island, "finished");
+        // Mochi wears the mood of what she said (after `finish`, so the emote is not drawn over).
+        if (emote) island.emote(emote, JINX_EMOTE_S);
+      }
       // Through the gateway the answer is in the shared thread now, with what the phones and
       // Telegram said meanwhile.
       if (ev.mode) void loadJinxThread(true);
