@@ -1494,3 +1494,12 @@ input[type="range"]::-webkit-slider-thumb {
    Only the painting goes; whatever is waiting keeps its timer and its answer. */
 #root { transition: opacity 0.25s ease; }
 body.presence-away #root { opacity: 0; pointer-events: none; }
+
+/* People who asked their system for less motion get none of the decorative kind. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

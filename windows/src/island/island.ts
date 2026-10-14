@@ -484,12 +484,15 @@ export class Island {
     this.fsm.pinned = State.isPinned;
     this.fsm.forceHome();
     this.expand(view);
-    // A message that arrives while the pointer is elsewhere has no "pointer left" to start its
-    // timer: start it now, so it is read and then folds away.
-    if (view === "note" && !this.wasInIsland && !State.isPinned) {
-      this.fsm.homeToPetitDelay = NOTE_LINGER_S;
+    // An alert that arrives while the pointer is elsewhere has no "pointer left" to start its
+    // timer: start it now, so it is read and then folds away. forceHome has just armed that
+    // timer with the glance delay (0.3 s, from openOnHover / the Music pill), which is meant
+    // for a quick look at a track: a finished task or an error opened and shut in a blink.
+    if (!this.wasInIsland && !State.isPinned) {
+      const linger = view === "note" ? NOTE_LINGER_S : State.settings.autoCloseInterval;
+      this.fsm.homeToPetitDelay = linger;
       this.fsm.mouseLeft();
-      this.homeCollapseAt = performance.now() + NOTE_LINGER_S * 1000;
+      this.homeCollapseAt = performance.now() + linger * 1000;
     }
   }
 

@@ -358,9 +358,20 @@ function build(): HubHost {
     }
   });
 
+  // Rows are rebuilt on every redraw, so an entrance must be played only by a task never drawn
+  // before, and the check's pop only by the one that was just ticked.
+  const seen = new Set<string>();
+  let primed = false;
+  let popId: string | null = null;
+
   function row(t: Task): HTMLElement {
-    const box = h("button", { class: `tk-box${t.done ? " on" : ""}`, title: t.done ? "Reopen" : "Done", text: t.done ? "✓" : "" });
-    box.addEventListener("click", () => void run(Bridge.tasksDone(t.id, !t.done)));
+    const pop = popId === t.id ? " pop" : "";
+    const box = h("button", { class: `tk-box${t.done ? " on" : ""}${pop}`, title: t.done ? "Reopen" : "Done", text: t.done ? "✓" : "" });
+    box.addEventListener("click", () => {
+      popId = t.id;
+      window.setTimeout(() => { if (popId === t.id) popId = null; }, 700);
+      void run(Bridge.tasksDone(t.id, !t.done));
+    });
     const title = h("div", { class: `sh-name${t.done ? " tk-done" : ""}`, text: t.title, title: t.title });
     const kids: (Node | null)[] = [box, title];
     if (t.remindAt != null && !t.done) {
@@ -380,7 +391,7 @@ function build(): HubHost {
     const del = h("button", { class: "hub-btn sm", text: "×", title: "Delete" });
     del.addEventListener("click", () => void run(Bridge.tasksDelete(t.id)));
     kids.push(del);
-    return h("div", { class: "sh-row" }, ...kids);
+    return h("div", { class: `sh-row${seen.has(t.id) ? "" : " tk-new"}` }, ...kids);
   }
 
   function render() {
@@ -388,7 +399,13 @@ function build(): HubHost {
     // Open ones first (reminders by time, then the rest), the finished ones at the bottom.
     const open = list.filter((t) => !t.done).sort((a, b) => (a.remindAt ?? Infinity) - (b.remindAt ?? Infinity) || a.created - b.created);
     const done = list.filter((t) => t.done).sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+    // What was already there when the panel was first drawn does not announce itself.
+    if (!primed && loaded) {
+      list.forEach((t) => seen.add(t.id));
+      primed = true;
+    }
     for (const t of [...open, ...done]) rows.append(row(t));
+    list.forEach((t) => seen.add(t.id));
     if (list.length === 0) {
       rows.append(h("div", { class: "hub-hint", text: "Nothing to do. Add a task above; put a time in it and Mochi will remind you." }));
     }
