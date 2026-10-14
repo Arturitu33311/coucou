@@ -7,12 +7,15 @@ No hace getUpdates ni toca webhooks: sólo sendMessage.
 import contextlib
 import fcntl
 import hashlib
+import http.client
 import importlib.machinery
 import importlib.util
 import json
 import os
 import re
 import shlex
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -294,15 +297,74 @@ def run_line(raw, deps):
 
 # ---------- implementaciones reales ----------
 
+TG_HOST = "api.telegram.org"
+# Desde la red del servidor el DNS de Telegram a veces no llega ("No route to host"): se prueban estas IPs
+# primero (las mismas que usa hermes_telegram_retry.py) y el DNS al final.
+TG_DEFAULT_IPS = ("149.154.167.99", "149.154.167.220", "149.154.166.110")
+HERMES_ENV = os.path.join(HOME, ".hermes", ".env")
+
+
+def telegram_ips(env=None, env_file=HERMES_ENV):
+    """IPs fijas de Telegram del servidor: TELEGRAM_FALLBACK_IPS (entorno o ~/.hermes/.env), o las de siempre."""
+    raw = (env if env is not None else os.environ).get("TELEGRAM_FALLBACK_IPS", "")
+    if not raw:
+        try:
+            for line in _read(env_file).splitlines():
+                if line.startswith("TELEGRAM_FALLBACK_IPS="):
+                    raw = line.split("=", 1)[1].strip().strip("\"'")
+                    break
+        except OSError:
+            pass
+    ips = [p.strip() for p in raw.split(",") if p.strip()] or list(TG_DEFAULT_IPS)
+    return list(dict.fromkeys(ips))
+
+
+class _PinnedConn(http.client.HTTPSConnection):
+    """HTTPS a una IP fija conservando SNI y validación del certificado de api.telegram.org."""
+
+    def __init__(self, ip, timeout=8):
+        super().__init__(TG_HOST, timeout=timeout)
+        self._ip = ip
+
+    def connect(self):
+        sock = socket.create_connection((self._ip or TG_HOST, 443), timeout=self.timeout)
+        self.sock = ssl.create_default_context().wrap_socket(sock, server_hostname=TG_HOST)
+
+
 class TelegramMirror:
-    def __init__(self, token, chat, opener=urllib.request.urlopen):
+    def __init__(self, token, chat, opener=urllib.request.urlopen, ips=None, conn_factory=_PinnedConn):
         self.token, self.chat, self.opener = token, chat, opener
+        self.ips, self.conn_factory = ips, conn_factory
         self.last_error = ""
+
+    def _send_pinned(self, data):
+        """Prueba cada IP fija y al final el DNS; la primera que contesta con una respuesta de la API gana."""
+        last = "sin ruta"
+        for ip in list(self.ips) + [None]:
+            try:
+                conn = self.conn_factory(ip)
+                conn.request("POST", "/bot%s/sendMessage" % self.token, data, {"Content-Type": "application/json"})
+                resp = conn.getresponse()
+                body = json.loads(resp.read() or b"{}")
+                conn.close()
+            except (OSError, ssl.SSLError, ValueError, http.client.HTTPException) as e:
+                last = type(e).__name__
+                continue
+            if body.get("ok"):
+                self.last_error = ""
+                return True
+            last = "%s:%s" % (body.get("error_code"), str(body.get("description"))[:80])
+            if body.get("error_code") in (400, 403):  # chat o bot mal: otra IP no ayuda
+                break
+        self.last_error = redact(last)
+        return False
 
     def send(self, text):
         if not self.token or not self.chat or self.opener is None:
             self.last_error = "sin token o chat"
             return False
+        if self.ips:
+            return self._send_pinned(json.dumps({"chat_id": str(self.chat), "text": text[:TG_MAX]}).encode())
         data = json.dumps({"chat_id": str(self.chat), "text": text[:TG_MAX]}).encode()
         req = urllib.request.Request(
             "https://api.telegram.org/bot%s/sendMessage" % self.token, data=data,
@@ -320,8 +382,8 @@ class TelegramMirror:
 class LazyTelegramMirror(TelegramMirror):
     """Igual que TelegramMirror, pero token y chat se piden a la bóveda sólo al primer envío real."""
 
-    def __init__(self, token_fn, chat_fn, opener=urllib.request.urlopen):
-        super().__init__("", "", opener)
+    def __init__(self, token_fn, chat_fn, opener=urllib.request.urlopen, ips=None, conn_factory=_PinnedConn):
+        super().__init__("", "", opener, ips=ips, conn_factory=conn_factory)
         self._token_fn, self._chat_fn, self._resolved = token_fn, chat_fn, False
 
     def send(self, text):
@@ -332,7 +394,11 @@ class LazyTelegramMirror(TelegramMirror):
 
 
 def _load_jinx():
+    """El módulo `jinx` del portátil (bóveda, memoria, modelos locales), o None si no está: en el servidor no
+    existe y el gateway corre en modo servidor (ver `build_server_deps`)."""
     path = os.path.join(HOME, "bin", "jinx")
+    if not os.path.exists(path):
+        return None
     loader = importlib.machinery.SourceFileLoader("jinxmod", path)
     spec = importlib.util.spec_from_loader("jinxmod", loader)
     mod = importlib.util.module_from_spec(spec)
@@ -486,8 +552,115 @@ def _spawn_flush_mirror():
         pass  # las líneas siguen mirrored:false y se reintentan en la próxima op
 
 
+# ---------- el gateway en el propio servidor ----------
+#
+# Allí no hay `~/bin/jinx` ni la bóveda del portátil: los secretos salen de la bóveda del servidor
+# (`hermes-secrets get`, la misma que usan jinx_send.py y jinx_hermes_chat.py; nunca se copian ni se escriben) y
+# Hermes es local. Si Hermes falla pero el servidor vive, contesta OpenRouter con el alma de Jinx: un `send`
+# que ya llegó al servidor no se reenvía al portátil, así que aquí no puede quedarse sin respuesta.
+
+SECRETS_CMD = os.environ.get("JINX_SECRETS_CMD", "/home/alan/.hermes/hermes-agent/venv/bin/hermes-secrets")
+# Nombre que pide el gateway -> nombres en la bóveda del servidor, por orden.
+SERVER_SECRET_NAMES = {
+    "TELEGRAM_BOT_TOKEN": ("TELEGRAM_BOT_TOKEN",),
+    "TELEGRAM_ALLOWED_CHAT": ("TELEGRAM_ALLOWED_CHAT", "TELEGRAM_HOME_CHANNEL"),
+    "OPENROUTER_API_KEY": ("OPENROUTER_API_KEY",),
+}
+OR_URL = os.environ.get("JINX_OR_BASE", "https://openrouter.ai/api/v1") + "/chat/completions"
+OR_MODEL = os.environ.get("JINX_OR_MODEL", "deepseek/deepseek-v4-flash")
+SOUL_FALLBACK = os.path.join(HOME, ".hermes", "SOUL.md")
+SOUL_MAX = 6000
+
+
+def server_secret(name, run=subprocess.run, cmd=None):
+    """Un secreto de la bóveda del servidor, o "" (sin imprimirlo ni registrarlo en ningún sitio)."""
+    cmd = cmd or SECRETS_CMD
+    for n in SERVER_SECRET_NAMES.get(name, (name,)):
+        try:
+            p = run([cmd, "get", n], capture_output=True, text=True, timeout=10)
+        except Exception:  # noqa: BLE001 - sin bóveda: el espejo se reintenta luego
+            continue
+        if getattr(p, "returncode", 1) == 0 and (p.stdout or "").strip():
+            return p.stdout.strip().splitlines()[-1].strip()
+    return ""
+
+
+class ServerFallbackBrain:
+    """Respaldo del servidor cuando Hermes falla: OpenRouter con el alma de Jinx. Lanza si no hay llave o falla."""
+
+    def __init__(self, key_fn, core_fn, opener=urllib.request.urlopen):
+        self.key_fn, self.core_fn, self.opener = key_fn, core_fn, opener
+
+    def reply(self, messages):
+        key = self.key_fn()
+        if not key:
+            raise RuntimeError("sin llave de OpenRouter en el servidor")
+        system = ("Eres Jinx. Tu memoria completa (Hermes) no está disponible ahora mismo: contesta breve y "
+                  "natural, sin inventar lo que no sepas.\n\n---\n\n" + self.core_fn())
+        body = json.dumps({"model": OR_MODEL,
+                           "messages": [{"role": "system", "content": system}] + list(messages)}).encode()
+        req = urllib.request.Request(OR_URL, data=body, headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + key})
+        try:
+            with self.opener(req, timeout=60) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            text = data["choices"][0]["message"]["content"]
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(redact(str(e)).replace(key, "<llave>")) from None
+        if not (text or "").strip():
+            raise RuntimeError("OpenRouter contestó vacío")
+        return "or", text
+
+
+def _read_first(*paths, limit=None):
+    for p in paths:
+        try:
+            t = _read(p)
+        except OSError:
+            continue
+        if t.strip():
+            return t[:limit] if limit else t
+    return ""
+
+
+def build_server_deps(base=BASE, defer=False, secret=server_secret):
+    cache = {}
+
+    def lazy(name):
+        if name not in cache:
+            cache[name] = os.environ.get({"TELEGRAM_BOT_TOKEN": "JINX_TG_TOKEN",
+                                          "TELEGRAM_ALLOWED_CHAT": "JINX_TG_CHAT",
+                                          "OPENROUTER_API_KEY": "JINX_OR_KEY"}.get(name, ""), "") or secret(name)
+        return cache[name]
+
+    emerg = os.path.join(HOME, "jinx-emergencia")
+    core = _read_first(os.path.join(emerg, "JINX-CORE.md"))
+    memory = _read_first(os.path.join(emerg, "MEMORY.md"), os.path.join(HOME, ".hermes", "memories", "MEMORY.md"))
+    soul = core or _read_first(SOUL_FALLBACK, limit=SOUL_MAX)
+    no_hermes = bool(os.environ.get("JINX_NO_HERMES"))
+    fallback = ServerFallbackBrain(lambda: lazy("OPENROUTER_API_KEY"), lambda: soul)
+    hermes = None if no_hermes else HermesBrain()
+    brain = ChainBrain([hermes, fallback]) if hermes else fallback
+    thread = Thread(base)
+
+    def defer_if_needed():
+        if thread.unmirrored():
+            _spawn_flush_mirror()
+
+    return Deps(thread, brain,
+                LazyTelegramMirror(lambda: lazy("TELEGRAM_BOT_TOKEN"), lambda: lazy("TELEGRAM_ALLOWED_CHAT"),
+                                   ips=telegram_ips()),
+                core, memory,
+                lambda: {"openrouter_key": lazy("OPENROUTER_API_KEY"), "telegram_token": lazy("TELEGRAM_BOT_TOKEN"),
+                         "chat": lazy("TELEGRAM_ALLOWED_CHAT")},
+                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
+                state=None if no_hermes else ssh_state_reader)
+
+
 def build_real_deps(base=BASE, defer=False):
     jx = _load_jinx()
+    if jx is None:
+        return build_server_deps(base, defer)
     cache = {}
 
     def secret(env_names, vault_key):
