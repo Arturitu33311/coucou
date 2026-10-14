@@ -11,6 +11,23 @@ Coucou is a native macOS app (`NotchBuddy/`); `windows/` is the Tauri version fo
 - `docs/*.html` — the GitHub Pages site (privacy, terms, support, legal notice).
 - `relay/` — the Coucou relay, a stateless Cloudflare Worker that forwards the iPhone Live Activity pushes (it holds the APNs key, which must never ship in an app). See `relay/README.md`.
 
+## This fork: one repository, several apps
+This is Alan's fork. Work from the branch **`unify/monorepo`** (not `main`: `main` mirrors Louis's upstream and the App Store
+build). Branch from it and merge back into it; never start from `main` or from an old branch, that is how work got stranded.
+
+- `windows/` desktop (Tauri) · `NotchBuddy/` macOS · `relay/` · `android/` the phone app (SmartIsland-derived, **GPL-3.0**,
+  its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`).
+- Layout, shared contracts and how to pull Louis's upstream: `docs/MONOREPO.md`. Read it before touching `android/` or `windows/`.
+- The PC and the phone share two JSON vectors (`merge-vectors.json`, `presence-vectors.json`). Change both sides, then run
+  `bash scripts/check-contracts.sh`.
+- Verify before saying "done": desktop `cd windows && npx tsc --noEmit`; hook `cd windows/hook && cargo test`;
+  Android `cd android && ./gradlew :app:compileDebugKotlin` (needs `local.properties`); Jinx panel
+  `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`.
+- Swift (`NotchBuddy/`) can only be compiled on a Mac: say so explicitly when you changed it and could not build it.
+- Do not push to `upstream`. Do not deploy to the home server from a cloud session (no access); the `deploy.sh` scripts are
+  for Alan's laptop.
+- Secrets never go in the repo. Server-side code under `jinx/server-side/` is a snapshot of what is deployed.
+
 ## Build
 ```
 cd NotchBuddy && xcodegen && xcodebuild -scheme NotchBuddy -configuration Debug build
