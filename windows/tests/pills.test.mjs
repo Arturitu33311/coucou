@@ -137,9 +137,12 @@ test("no chat provider that works here says Coming soon", () => {
 });
 
 test("the main pill is a workspace tool that works here", () => {
+  // This fork adds Jinx, the assistant (the main pill by default, see settings.rs).
   assert.deepEqual(mainPillChoices("linux").map((p) => p.id), [
-    "integration_claude", "agent_cursor", "agent_antigravity", "agent_codex",
+    "integration_claude", "agent_cursor", "agent_antigravity", "agent_codex", "integration_jinx",
   ]);
+  assert.deepEqual(sanitizeDeclared({ mainPill: "integration_jinx", activeIntegrations: ["integration_jinx", "integration_n8n"] }, "linux"),
+    { mainPill: "integration_jinx", activeIntegrations: ["integration_n8n"] });
   assert.equal(DEFAULT_MAIN_PILL, "integration_claude");
 });
 

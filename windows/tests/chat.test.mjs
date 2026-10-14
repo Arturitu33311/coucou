@@ -31,6 +31,11 @@ beforeEach(() => {
   State.stateOverride = null;
   State.view = "prompt";
   State.droppedFile = null;
+  // These are Mochi's own chat (providers, streaming). This fork's chat opens on Jinx; the agents list
+  // comes from Rust, empty here.
+  State.chatTarget = "mochi";
+  State.chatPicked = true;
+  State.agents = [];
   view = buildPrompt(() => {});
   view.sync();
 });

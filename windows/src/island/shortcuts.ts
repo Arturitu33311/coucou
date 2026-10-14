@@ -11,7 +11,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import type { BotEmoteName, IslandViewName } from "../core/layout";
 import { cyclePill, islandKeyAction, navigate, pillByNumber, type IslandKeyAction } from "../core/shortcuts";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { JINX_ID, State } from "../core/state";
 
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";
 
@@ -62,6 +62,8 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
 
     case "openChat":
       resume();
+      // Jinx is the assistant (as the phone's side key): the chat opens on her when her pill is here.
+      if (State.tasks.some((t) => t.id === JINX_ID)) State.chatTarget = "jinx";
       host.alert("prompt");
       break;
 

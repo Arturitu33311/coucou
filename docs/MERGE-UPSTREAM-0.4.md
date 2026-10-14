@@ -76,7 +76,14 @@ Compilar e instalar: `cd windows && npm ci && npx tauri build --no-bundle`, lueg
 - [ ] Claude Code: tarjeta de permiso (Allow/Deny), pregunta con opciones (una y varias), "Reply in terminal".
 - [ ] El móvil por ssh (`coucou-hook --remote`, S21 y S22) sigue viendo sesiones y contestando.
 - [ ] Píldora Music con letras y barras; la isla compacta no se esconde mientras suena.
-- [ ] Jinx: chat, respuestas en streaming, tarjeta de permiso.
+- [ ] **Jinx como principal (después del merge):** primero `jinx/jinx-assist/install.sh` (el gateway de `~/bin`
+      tiene que aceptar el origen `pc`; el anterior contesta "src desconocido"). Luego: la píldora de Jinx es la
+      primera y está en foco; `Ctrl+Alt+Space` abre el chat con ella; el chat muestra el hilo de los móviles y
+      Telegram con su origen; lo que escribes aparece en Telegram como `💻 …`; la línea de estado dice quién
+      contestó (Hermes o respaldo). Ajustes → Hub → *Jinx through* = *Hermes API* recupera el camino anterior.
+- [ ] Jinx con *Hermes API*: chat, respuestas en streaming, tarjeta de permiso.
+- [ ] Android: `cd android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` (aquí pasó con un
+      espejo de Maven Central: 354 tests) e `install -r` en S21 y S22.
 - [ ] Hub (Today, Tasks, Pomodoro, Notes, Clipboard…) y presence entre portátil y móvil.
 - [ ] Chat → Mochi: el selector de modelo; Ollama si está.
 - [ ] Clic derecho en Mochi: armario con los 21 atuendos; Mochi baila con Spotify si se activa esa píldora.

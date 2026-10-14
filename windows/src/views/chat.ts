@@ -16,7 +16,8 @@ import {
 } from "../core/providers";
 import { Sound } from "../core/sound";
 import { JINX_ID, BACKEND_MOCHI, State, type ChatMessage } from "../core/state";
-import { jinxSendFailed, jinxStarted } from "../island/jinx";
+import { jinxSendFailed, jinxStarted, loadJinxThread } from "../island/jinx";
+import { modeLabel } from "../core/jinx-thread";
 import {
   adoptAgent, agentNote, agentsLoaded, agentThread, selectedAgent, startAgentSync, syncAgentsNow,
 } from "../island/claude-sessions";
@@ -41,7 +42,9 @@ function bubble(message: ChatMessage): HTMLElement {
   if (message.role === "user") {
     return h(
       "div",
-      { class: "chat-row user" },
+      { class: message.via ? "chat-row user via" : "chat-row user" },
+      // Jinx's shared thread says where each line was written (Telegram, a phone, this PC).
+      message.via ? h("div", { class: "chat-via", text: message.via }) : null,
       h("div", { class: "bubble", text: message.content }),
     );
   }
@@ -581,6 +584,11 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       }
       else if (agent) status = STATE_TEXT[agent.state] ?? agent.state;
       else if (target === "new") status = "starts a background agent in:";
+      else if (target === "jinx") {
+        // Through the gateway: the thread shared with the phones and Telegram, and who answered last.
+        void loadJinxThread();
+        status = modeLabel(State.jinxMode);
+      }
       statusTxt.textContent = status;
       cwdSel.style.display = target === "new" && !State.agentsError ? "" : "none";
       backendSel.style.display = target === "new" && !State.agentsError ? "" : "none";

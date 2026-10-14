@@ -23,6 +23,7 @@ mod identity;
 mod integrations;
 mod island;
 mod jinx;
+mod jinx_gateway;
 mod local_chat;
 mod log;
 mod music;
@@ -989,8 +990,29 @@ async fn jinx_send(
     text: String,
     context: Option<ChatContext>,
 ) -> Result<(), String> {
-    let hub_shared = share_target(&shared).is_some();
+    let (hub_shared, backend) = {
+        let s = shared.settings.lock().unwrap();
+        (s.jinx_share && !s.server_host.trim().is_empty(), s.jinx_backend.clone())
+    };
+    // As on the phones: through the laptop's gateway, into the thread shared with them and Telegram.
+    if jinx_gateway::use_gateway(&backend) {
+        let input = jinx::with_context(&text, context.as_ref())?;
+        jinx_gateway::send(app, input);
+        return Ok(());
+    }
     jinx::send(app, &jinx, text, context, hub_shared).await
+}
+
+/// The tail of Jinx's shared thread (Telegram, the phones and this PC), when the gateway is used.
+#[tauri::command]
+async fn jinx_history(shared: State<'_, Shared>, n: u32) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(move || jinx_gateway::history(n).map(Some))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// `choice`: once | session | always | deny.
@@ -1006,7 +1028,11 @@ async fn jinx_stop(jinx: State<'_, jinx::Jinx>) -> Result<(), String> {
 
 /// Reachable, and is the key accepted?
 #[tauri::command]
-async fn jinx_test() -> Result<String, String> {
+async fn jinx_test(shared: State<'_, Shared>) -> Result<String, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if jinx_gateway::use_gateway(&backend) {
+        return tauri::async_runtime::spawn_blocking(jinx_gateway::test).await.map_err(|e| e.to_string())?;
+    }
     jinx::test().await
 }
 
@@ -1371,6 +1397,7 @@ pub fn run() {
             agent_start,
             agent_stop,
             jinx_send,
+            jinx_history,
             jinx_approve,
             jinx_stop,
             jinx_test,

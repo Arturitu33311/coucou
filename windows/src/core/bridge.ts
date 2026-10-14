@@ -421,6 +421,10 @@ export const Bridge = {
     callOrThrow<void>("jinx_approve", { runId, requestId, choice }),
   jinxStop: () => call<void>("jinx_stop"),
   jinxTest: () => callOrThrow<string>("jinx_test"),
+  /** The tail of Jinx's shared thread (Telegram, the phones, this PC); null when Jinx is reached through
+   *  the Hermes API instead of the gateway. */
+  jinxHistory: (n: number) =>
+    callOrThrow<{ id: string; ts: number; src: string; text: string }[] | null>("jinx_history", { n }),
   /**
    * The models a provider offers, for the picker in the chat view. Rust asks
    * the provider only when it has a key (or a server address).

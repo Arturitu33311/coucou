@@ -94,6 +94,8 @@ export interface ChatMessage {
   /** "tool" is a line of what an agent is doing (Edit · src/a.ts), not talk. */
   role: "user" | "assistant" | "tool" | "queued";
   content: string;
+  /** Where a line of Jinx's shared thread was written: "Telegram", "S21", "S22", "PC". */
+  via?: string;
 }
 
 export interface LimitWindow {
@@ -230,6 +232,8 @@ export interface Settings {
   serverServices: string;
   /** Keep Jinx in step with the Hub (notes, calendar, timer pushed to the server). */
   jinxShare: boolean;
+  /** How Jinx is reached: "auto" (the laptop's gateway when installed, as the phones do), "gateway", "hermes". */
+  jinxBackend: "auto" | "gateway" | "hermes";
   /** Where uploads go: the rclone remote and folder for Google Drive, the school OneDrive folder. */
   driveRemote: string;
   driveFolder: string;
@@ -327,6 +331,7 @@ export const DEFAULT_SETTINGS: Settings = {
   serverHost: "",
   serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
   jinxShare: true,
+  jinxBackend: "auto",
   driveRemote: "gdrive",
   driveFolder: "Coucou",
   driveAccount: "",
@@ -447,7 +452,10 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   /** Who the chat talks to: Mochi (Claude's API) or Jinx (Hermes). Each keeps its own thread. */
-  chatTarget: "mochi" | "jinx" | "agent" | "new" = "mochi";
+  // Jinx is the assistant (the main pill): the chat opens on her.
+  chatTarget: "mochi" | "jinx" | "agent" | "new" = "jinx";
+  /** Which brain gave Jinx's last answer through the gateway: hermes | or | local | cached. */
+  jinxMode: string | null = null;
   /** Which backend a new agent starts on — and which Mochi answers while it is picked. */
   chatBackend: "claude" | "opencode" = "claude";
   /** The running agent sessions (Claude Code and OpenCode), the selected one, and what has been read of each. */

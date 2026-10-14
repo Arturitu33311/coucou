@@ -142,7 +142,11 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
     subtitle: N_("Integration"), source: "n8n", support: "linux", connect: none },
 ];
 
-/** The always-on pill unless the user picks another workspace tool. */
+/** Jinx's pill. In this fork she is the main one by default — Coucou's assistant, as on the phones —
+ *  which Rust's settings default says (settings.rs `main_pill`); this page's own default stays the Mac's. */
+export const JINX_PILL = "integration_jinx";
+
+/** The always-on pill unless the user picks another (a workspace tool, or Jinx). */
 export const DEFAULT_MAIN_PILL = "integration_claude";
 
 /** How many declared pills may sit next to the main one. */
@@ -176,7 +180,8 @@ export function isHookPill(id: string): boolean {
 
 /** Workspace tools that can be the main pill. */
 export function mainPillChoices(os: HostOs = HOST_OS): PillDefinition[] {
-  return availablePills(os).filter((p) => p.category === "workspace" && p.support !== "soon");
+  // The workspace tools, as on the Mac, and (this fork) Jinx, the assistant.
+  return availablePills(os).filter((p) => (p.category === "workspace" || p.id === JINX_PILL) && p.support !== "soon");
 }
 
 /** PillDefinition.sessionSubtitle — next to the name in a live session's card. */

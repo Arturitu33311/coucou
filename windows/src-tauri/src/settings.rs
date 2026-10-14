@@ -75,6 +75,10 @@ pub struct Settings {
     /// ~/.hermes/state/coucou/ so she can read them (needs `server_host`).
     #[serde(default = "default_true")]
     pub jinx_share: bool,
+    /// How the island reaches Jinx: "auto" (the laptop's gateway ~/bin/jinx-chat when it is installed, as
+    /// the phones do — same thread as them and Telegram; else the Hermes API), "gateway" or "hermes".
+    #[serde(default = "default_jinx_backend")]
+    pub jinx_backend: String,
     /// The rclone remote used for the personal Google Drive, and the folder files go to there.
     #[serde(default = "default_drive_remote")]
     pub drive_remote: String,
@@ -212,6 +216,10 @@ fn default_server_services() -> String {
     "hermes-gateway,ollama,docker,tailscaled,smbd".into()
 }
 
+fn default_jinx_backend() -> String {
+    "auto".into()
+}
+
 fn default_finish_sound() -> String {
     "finish".into()
 }
@@ -256,7 +264,8 @@ impl Default for Settings {
                 "integration_vercel".into(),
                 "integration_github".into(),
             ],
-            main_pill: "integration_claude".into(),
+            // This fork: Jinx is the main pill (src/core/pills.ts DEFAULT_MAIN_PILL).
+            main_pill: "integration_jinx".into(),
             screen: "primary".into(),
             autostart: false,
             hooks_installed: false,
@@ -274,6 +283,7 @@ impl Default for Settings {
             server_host: String::new(),
             server_services: default_server_services(),
             jinx_share: true,
+            jinx_backend: default_jinx_backend(),
             drive_remote: default_drive_remote(),
             drive_folder: default_drive_folder(),
             drive_account: String::new(),
@@ -586,6 +596,7 @@ mod tests {
   "serverHost": "jinx",
   "serverServices": "ollama",
   "jinxShare": false,
+  "jinxBackend": "hermes",
   "driveRemote": "gd2",
   "driveFolder": "Inbox",
   "driveAccount": "me@example.com",
@@ -1118,6 +1129,7 @@ mod tests {
                 "serverHost",
                 "serverServices",
                 "jinxShare",
+                "jinxBackend",
                 "driveRemote",
                 "driveFolder",
                 "driveAccount",

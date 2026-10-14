@@ -1037,6 +1037,20 @@ function hoverDelayControls(): HTMLElement[] {
 }
 
 /** The "finished" sound: a built-in, none, or a file of your own, with a preview. */
+/** How the island reaches Jinx (`jinxBackend`). */
+function jinxBackendSelect(): HTMLSelectElement {
+  const sel = h("select", {}) as HTMLSelectElement;
+  for (const [value, label] of [["auto", "Auto"], ["gateway", "Gateway (shared with the phones)"], ["hermes", "Hermes API"]]) {
+    sel.append(h("option", { value, text: label }));
+  }
+  sel.value = settings.jinxBackend ?? "auto";
+  sel.addEventListener("change", () => {
+    settings.jinxBackend = sel.value as typeof settings.jinxBackend;
+    void save();
+  });
+  return sel;
+}
+
 function finishSoundRow(): HTMLElement {
   const names = [
     "finish", "approve", "proud", "pop", "wink", "greet", "tick", "love", "attach", "send", "blip",
@@ -1142,6 +1156,11 @@ function hubSection(): HTMLElement {
       "notes, your calendar, the weather, a file shelf and quick switches. It reads nothing while it is closed." }),
     h("div", { class: "row" }, h("label", { text: "Server" }), host,
       h("span", { class: "hint", text: "read over ssh with your key; nothing is installed there" })),
+    h("div", { class: "row" }, h("label", { text: "Jinx through" }), jinxBackendSelect(),
+      h("span", { class: "hint", text:
+        "Gateway: the laptop's jinx-chat (jinx/jinx-assist/install.sh) — the same conversation as the phones and " +
+        "Telegram, answered by Hermes when it is up and by the fallback Jinx otherwise. Hermes API: straight to " +
+        "Hermes, with its tool approvals in the island. Auto uses the gateway when it is installed." })),
     h("div", { class: "row" }, h("label", { text: "Share with Jinx" }),
       toggle(settings.jinxShare !== false, (v) => { settings.jinxShare = v; void save(); }),
       h("span", { class: "hint", text:

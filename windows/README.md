@@ -311,6 +311,24 @@ The Hub (fourth tab of the island) has three tools for the day. All of it stays 
   **not yet run against the real server** (it was offline), so the deluge/arr parsing rests on
   their documented formats.
 
+## Jinx is the assistant (as on the phones)
+
+In this fork Jinx's pill is the **main pill** (Settings → Active pills can change it): she is first, in
+focus when the island opens, and the chat opens on her. **Ctrl+Alt+Space** (*Open the chat*) goes straight
+to her — the PC's side key.
+
+She is reached the way the phones reach her: through the laptop's gateway `~/bin/jinx-chat`
+(`jinx/jinx-assist/install.sh`), run locally, no ssh. So the PC writes into the **same conversation** as
+the S21, the S22 and Telegram (`~/jinx-emergencia/telegram/thread.jsonl`, source `pc`): the chat shows
+that thread with where each of Alan's lines was written (Telegram, S21, S22, PC), what is said here is
+mirrored to Telegram as `💻 …`, and the gateway picks the brain — Hermes when it answers, else the
+fallback Jinx (OpenRouter, then local Ollama). The line under the chat says which one answered.
+
+Settings → Hub → *Jinx through*: **Auto** (the gateway when it is installed, else the Hermes API),
+**Gateway**, or **Hermes API** (straight to Hermes' `/v1/runs`, with streamed replies and its tool
+approvals in the island; that conversation is not the shared thread). Through the gateway there is no
+streaming and no Stop yet: the answer arrives whole (up to ~2½ minutes when Hermes is slow).
+
 ## Talking to Jinx: what the chat adds and what never reaches her
 
 Ideas taken (and credited) from [Plip](https://github.com/hussainn7/plip-oss) (MIT):

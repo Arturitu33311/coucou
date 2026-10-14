@@ -5,6 +5,7 @@
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { JINX_ID, State, type ChatMessage } from "../core/state";
+import { threadMessages } from "../core/jinx-thread";
 import type { Island } from "./island";
 
 type Approval = { kind: "approval"; runId: string; requestId: string; command: string; description: string };
@@ -13,7 +14,7 @@ type JinxEvent =
   | { kind: "tool"; name: string; preview: string }
   | Approval
   | { kind: "resolved"; requestId: string }
-  | { kind: "done"; text: string }
+  | { kind: "done"; text: string; mode?: string }
   | { kind: "error"; message: string };
 
 let nextId = 1_000_000;
@@ -24,6 +25,36 @@ const waiting: Approval[] = [];
 
 export function registerJinxHandlers(island: Island) {
   void onEvent<JinxEvent>("jinx", (ev) => handle(island, ev));
+}
+
+/** Lines of the shared thread to show. */
+const THREAD_LINES = 60;
+/** Don't ask the gateway again for the thread sooner than this, unless an answer just came. */
+const THREAD_REFRESH_MS = 20_000;
+let threadAt = 0;
+let threadLoading = false;
+
+/**
+ * Shows Jinx's shared thread (Telegram, the phones, this PC) when she is reached through the gateway.
+ * Never while a message is on its way: the local bubbles stay until the answer has landed in the thread.
+ * `force` skips the throttle (right after an answer).
+ */
+export async function loadJinxThread(force = false) {
+  if (threadLoading || State.jinxBusy) return;
+  if (!force && Date.now() - threadAt < THREAD_REFRESH_MS) return;
+  threadLoading = true;
+  threadAt = Date.now();
+  try {
+    const lines = await Bridge.jinxHistory(THREAD_LINES);
+    if (lines === null || State.jinxBusy) return; // Hermes API: the local history is the thread
+    State.jinxHistory = threadMessages(lines, nextId);
+    nextId += lines.length;
+    State.notify();
+  } catch {
+    // The gateway did not answer: what is on screen stays.
+  } finally {
+    threadLoading = false;
+  }
 }
 
 /** Called when the user sends a message to Jinx from the chat. */
@@ -135,8 +166,12 @@ function handle(island: Island, ev: JinxEvent) {
           streaming.content = ev.text;
         }
       }
+      if (ev.mode) State.jinxMode = ev.mode;
       Sound.play("finish");
       finish(island, "finished");
+      // Through the gateway the answer is in the shared thread now, with what the phones and
+      // Telegram said meanwhile.
+      if (ev.mode) void loadJinxThread(true);
       break;
 
     case "error":
