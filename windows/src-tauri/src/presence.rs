@@ -4,7 +4,9 @@
 //
 //  1. The presence server decides only when every device we can see reaches it and agrees on the
 //     answer, and the answer is one of ours. (It only knows who sends it a heartbeat: if one of us
-//     does not, its "active" would hide the other for no reason.)
+//     does not, its "active" would hide the other for no reason.) Its "vga" means nobody is in use:
+//     Mochi goes to the panel, and no device here shows him, unless one of us with its screen on was
+//     touched within the server's own limit (its answer is up to a heartbeat old): then rule 2 among those.
 //  2. Otherwise the devices that can hear each other decide among themselves: the one with a screen
 //     on that was touched most recently, with a margin so a stray touch does not flip the island.
 //  3. A device that hears nobody and is not told by the server shows everything.
@@ -29,6 +31,18 @@ pub fn is_phone(id: &str) -> bool {
 
 /// A peer silent for longer than this is not there.
 pub const FRESH_MS: u64 = 15_000;
+/// The server's failsafe display: when it names this one, Mochi is on the VGA panel and on no device here.
+pub const VGA: &str = "vga";
+/// The server's own limit (mochi_presence.py IDLE_LIMIT): touched longer ago than this, a device is not in use.
+pub const IDLE_LIMIT_S: u64 = 300;
+/// What the laptop is called on the presence server (it says "pc"; here it is LAPTOP).
+pub const SERVER_LAPTOP: &str = "pc";
+
+/// The presence server's name for a device, in our ids ("pc" is the laptop). Pure.
+pub fn from_server(name: &str) -> String {
+    if name == SERVER_LAPTOP { LAPTOP.to_string() } else { name.to_string() }
+}
+
 /// How much more recently another device must have been touched to take the island from the one that has it.
 pub const HYSTERESIS_S: u64 = 2;
 /// A week: past that an idle value means nothing, and an absurd one must not outlast a real one.
@@ -60,12 +74,22 @@ pub fn decide(me: &Beat, peers: &[Seen], previous: Option<&str>) -> String {
     let fresh: Vec<&Seen> = peers.iter().filter(|p| p.age_ms <= FRESH_MS).collect();
 
     // 1. The server, only when all of us can see it and agree.
+    let mut in_use_only = false;
     if me.server_ok {
         if let Some(named) = me.server_active.as_deref() {
-            if KNOWN.contains(&named)
-                && fresh.iter().all(|p| p.beat.server_ok && p.beat.server_active.as_deref() == Some(named))
-            {
+            let agreed = fresh.iter().all(|p| p.beat.server_ok && p.beat.server_active.as_deref() == Some(named));
+            if agreed && KNOWN.contains(&named) {
                 return named.to_string();
+            }
+            if agreed && named == VGA {
+                // Nobody in use, says the server: the panel has him, unless one of us is in use right now.
+                let touched = |idle: u64, screen: bool| screen && idle < IDLE_LIMIT_S;
+                let anyone = touched(me.idle_s, me.screen_on)
+                    || fresh.iter().any(|p| touched(p.beat.idle_s + p.age_ms / 1000, p.beat.screen_on));
+                if !anyone {
+                    return VGA.to_string();
+                }
+                in_use_only = true;
             }
         }
     }
@@ -78,6 +102,9 @@ pub fn decide(me: &Beat, peers: &[Seen], previous: Option<&str>) -> String {
     }
     let mut group = vec![Cand { id: &me.device, idle: me.idle_s, screen: me.screen_on }];
     group.extend(fresh.iter().map(|p| Cand { id: &p.beat.device, idle: p.beat.idle_s + p.age_ms / 1000, screen: p.beat.screen_on }));
+    if in_use_only {
+        group.retain(|c| c.screen && c.idle < IDLE_LIMIT_S);
+    }
     let any_awake = group.iter().any(|c| c.screen);
     let awake: Vec<&Cand> = group.iter().filter(|c| c.screen || !any_awake).collect();
     let best = awake.iter().min_by(|a, b| a.idle.cmp(&b.idle).then(a.id.cmp(b.id))).expect("the group has at least this device");
@@ -109,8 +136,10 @@ struct Live {
     /// The presence server's address and key are in the keyring (so it is worth asking).
     server_configured: bool,
     previous: Option<String>,
+    /// Jinx's background mood, as the presence server last said it (one of Mochi's emotes; None: calm or unknown).
+    jinx_mood: Option<String>,
     /// What the page was last told.
-    sent: Option<(bool, bool, bool)>,
+    sent: Option<(bool, bool, bool, Option<String>)>,
     /// This device is playing something (the page says so).
     music: bool,
     /// Claude Code is rate-limited here (the page says so): the phone's Mochi is tired too.
@@ -169,8 +198,8 @@ impl Live {
     /// Settles, and returns the payload for the page if it differs from what the page was last told.
     fn recompute(&mut self) -> Option<Value> {
         self.settle();
-        let now_state = (self.active, self.peer_music, self.peer_news);
-        if self.sent == Some(now_state) {
+        let now_state = (self.active, self.peer_music, self.peer_news, self.jinx_mood.clone());
+        if self.sent.as_ref() == Some(&now_state) {
             return None;
         }
         self.sent = Some(now_state);
@@ -178,7 +207,7 @@ impl Live {
     }
 
     fn payload(&self) -> Value {
-        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news })
+        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news, "jinxMood": self.jinx_mood })
     }
 }
 
@@ -323,8 +352,9 @@ pub fn parse_peer(v: &Value) -> Option<(Beat, bool, bool)> {
     let server_active = v
         .get("server_active")
         .and_then(Value::as_str)
-        .filter(|s| KNOWN.contains(s))
-        .map(str::to_string);
+        .map(from_server)
+        // One of ours, or the panel ("nobody in use"): what else a server says is no answer.
+        .filter(|s| KNOWN.contains(&s.as_str()) || s == VGA);
     let flag = |k: &str, d: bool| v.get(k).and_then(Value::as_bool).unwrap_or(d);
     Some((
         Beat {
@@ -401,16 +431,25 @@ fn read_locked() -> bool {
         .unwrap_or(false)
 }
 
-/// The presence server's heartbeat, only if its address and key are in the keyring. `Some(active)`
-/// is its answer (empty: it answered without naming anyone); None: not reachable or not set up.
-async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<String> {
+/// What the presence server answers a heartbeat with: who is in use (our ids; empty: nobody named) and
+/// Jinx's background mood (`jinx_mood`, one of Mochi's emotes, or None when calm or not sent). Pure.
+pub fn read_answer(body: &Value) -> (String, Option<String>) {
+    let active = from_server(body.get("active_device").and_then(Value::as_str).unwrap_or(""));
+    let mood = body.get("jinx_mood").and_then(|m| crate::jinx_gateway::valid_emote(m));
+    (active, mood)
+}
+
+/// The presence server's heartbeat, only if its address and key are in the keyring. `Some(answer)`
+/// is its answer (see `read_answer`); None: not reachable or not set up.
+async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<(String, Option<String>)> {
     let url = crate::secrets::get("presence-url")?;
     let key = crate::secrets::get("presence-key")?;
     let client = reqwest::Client::builder().timeout(Duration::from_secs(5)).build().ok()?;
     let resp = client
         .post(format!("{}/api/presence/heartbeat", url.trim_end_matches('/')))
         .header("X-Mochi-Key", key)
-        .json(&json!({ "device": LAPTOP, "idle_seconds": idle_s, "screen_on": screen_on }))
+        // The server knows the laptop as "pc" (it refuses any other name for it).
+        .json(&json!({ "device": SERVER_LAPTOP, "idle_seconds": idle_s, "screen_on": screen_on }))
         .send()
         .await
         .ok()?;
@@ -418,7 +457,7 @@ async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<String> {
         return None;
     }
     let body: Value = resp.json().await.ok()?;
-    Some(body.get("active_device").and_then(Value::as_str).unwrap_or("").to_string())
+    Some(read_answer(&body))
 }
 
 /// Starts the clock: own idle and lock every 2 s (which also expires peers that went quiet), and the
@@ -479,7 +518,11 @@ pub fn start(app: &AppHandle) {
             let answer = if configured { server_heartbeat(idle, screen_on).await } else { None };
             with(|l| {
                 l.server_configured = configured;
-                l.server = answer.map(|a| (a, Instant::now()));
+                // Her mood stays as it was while the server is out of reach: it changes slowly.
+                if let Some((_, mood)) = &answer {
+                    l.jinx_mood = mood.clone();
+                }
+                l.server = answer.map(|(a, _)| (a, Instant::now()));
             });
             if configured {
                 WAKE.notify_one();
@@ -535,9 +578,22 @@ mod tests {
         assert_eq!(parse_peer(&json!({"device":"s22","idle":3})).unwrap().0.device, "s22");
         assert!(parse_peer(&json!({"device":"s23","idle":3})).is_none());
         // An id we do not know is no server answer; an absurd idle is clamped.
-        let odd = parse_peer(&json!({"device":"s21","idle":u64::MAX,"server_active":"vga"})).unwrap();
+        let odd = parse_peer(&json!({"device":"s21","idle":u64::MAX,"server_active":"tv"})).unwrap();
         assert_eq!(odd.0.server_active, None);
         assert_eq!(odd.0.idle_s, MAX_IDLE_S);
+        // The panel is an answer ("nobody in use"), and the server's "pc" is the laptop.
+        let vga = parse_peer(&json!({"device":"s21","idle":1,"server_active":"vga"})).unwrap();
+        assert_eq!(vga.0.server_active.as_deref(), Some(VGA));
+        let pc = parse_peer(&json!({"device":"s21","idle":1,"server_active":"pc"})).unwrap();
+        assert_eq!(pc.0.server_active.as_deref(), Some(LAPTOP));
+    }
+
+    #[test]
+    fn the_server_answer_reads_its_names_and_her_mood() {
+        assert_eq!(read_answer(&json!({"active_device":"pc","jinx_mood":"happy"})), ("laptop".into(), Some("happy".into())));
+        assert_eq!(read_answer(&json!({"active_device":"vga","jinx_mood":null})), ("vga".into(), None));
+        assert_eq!(read_answer(&json!({"active_device":"s22","jinx_mood":"Happy"})), ("s22".into(), None));
+        assert_eq!(read_answer(&json!({})), (String::new(), None));
     }
 
     const PHONE: &str = "s21";

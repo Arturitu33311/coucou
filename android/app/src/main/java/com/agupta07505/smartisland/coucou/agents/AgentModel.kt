@@ -94,7 +94,7 @@ object RemoteProtocol {
                         idleS = o.optLong("idle", 0L).coerceIn(0L, MAX_IDLE_S),
                         screenOn = o.optBoolean("screen_on", true),
                         serverOk = o.optBoolean("server_ok", false),
-                        serverActive = o.optString("server_active").takeIf { it in Arbiter.KNOWN },
+                        serverActive = Arbiter.serverAnswer(o.optString("server_active")),
                     ),
                     music = o.optBoolean("music", false),
                     news = o.optBoolean("news", false),

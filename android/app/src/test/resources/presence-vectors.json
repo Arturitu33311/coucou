@@ -1,5 +1,5 @@
 {
-  "_doc": "Which device shows Mochi and Coucou. Same file, byte for byte, as windows/scripts/phone/presence-vectors.json in the PC repo: both sides must agree, or both (or neither) would show him. `idle` is seconds since the last input on that device, `age_ms` how long ago the peer's beat arrived. A peer older than 15 s is ignored.",
+  "_doc": "Which device shows Mochi and Coucou. Same file, byte for byte, as windows/scripts/phone/presence-vectors.json in the PC repo: both sides must agree, or both (or neither) would show him. `idle` is seconds since the last input on that device, `age_ms` how long ago the peer's beat arrived. A peer older than 15 s is ignored. The server's \"vga\" means nobody is in use: the panel has Mochi and no device does, unless one of them, screen on, was touched less than 300 s ago (the server's IDLE_LIMIT); then idle decides among those. The server calls the laptop \"pc\": clients read it as \"laptop\" before deciding.",
   "cases": [
     {
       "name": "alone, no server: everything shows",
@@ -72,7 +72,7 @@
       "expect": "laptop"
     },
     {
-      "name": "the server names something that is not ours: idle decides",
+      "name": "the server says vga (nobody in use) but both were touched within its limit: idle decides among them",
       "me": {"device": "laptop", "idle": 5, "screen_on": true, "server_ok": true, "server_active": "vga"},
       "peers": [{"device": "s21", "idle": 60, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 500}],
       "previous": null,
@@ -137,57 +137,99 @@
     {
       "name": "two phones and the laptop: the one touched last wins (laptop's view)",
       "me": {"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null},
-      "peers": [{"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
-        {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}, {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": null,
       "expect": "s22"
     },
     {
       "name": "the same moment from the first phone's view",
       "me": {"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null},
-      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
-        {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}, {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": null,
       "expect": "s22"
     },
     {
       "name": "the same moment from the second phone's own view",
       "me": {"device": "s22", "idle": 3, "screen_on": true, "server_ok": false, "server_active": null},
-      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
-        {"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}, {"device": "s21", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": null,
       "expect": "s22"
     },
     {
       "name": "a phone gone quiet (stale beat) is not there: the other phone is compared with the laptop",
       "me": {"device": "laptop", "idle": 40, "screen_on": true, "server_ok": false, "server_active": null},
-      "peers": [{"device": "s21", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 20000},
-        {"device": "s22", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "s21", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 20000}, {"device": "s22", "idle": 30, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": null,
       "expect": "s22"
     },
     {
       "name": "the server names a phone but the second phone cannot reach it: they decide among themselves",
       "me": {"device": "s21", "idle": 10, "screen_on": true, "server_ok": true, "server_active": "s21"},
-      "peers": [{"device": "laptop", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 1000},
-        {"device": "s22", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "laptop", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s21", "age_ms": 1000}, {"device": "s22", "idle": 2, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": null,
       "expect": "laptop"
     },
     {
       "name": "the server names the second phone and every device sees it and agrees",
       "me": {"device": "s21", "idle": 1, "screen_on": true, "server_ok": true, "server_active": "s22"},
-      "peers": [{"device": "laptop", "idle": 50, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000},
-        {"device": "s22", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000}],
+      "peers": [{"device": "laptop", "idle": 50, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000}, {"device": "s22", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "s22", "age_ms": 1000}],
       "previous": null,
       "expect": "s22"
     },
     {
       "name": "hysteresis among three: a stray touch on another phone does not take the island",
       "me": {"device": "laptop", "idle": 60, "screen_on": true, "server_ok": false, "server_active": null},
-      "peers": [{"device": "s21", "idle": 10, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000},
-        {"device": "s22", "idle": 9, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "peers": [{"device": "s21", "idle": 10, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}, {"device": "s22", "idle": 9, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
       "previous": "s21",
+      "expect": "s21"
+    },
+    {
+      "name": "the server says vga and nobody here was touched within its limit: Mochi is on the panel, on no device",
+      "me": {"device": "s21", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "laptop", "idle": 900, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 1000}],
+      "previous": "s21",
+      "expect": "vga"
+    },
+    {
+      "name": "the same moment from the laptop's view",
+      "me": {"device": "laptop", "idle": 900, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "s21", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 1000}],
+      "previous": "laptop",
+      "expect": "vga"
+    },
+    {
+      "name": "a phone alone, reaching the server, not in use: the panel has him, the phone does not show him",
+      "me": {"device": "s22", "idle": 1200, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [],
+      "previous": null,
+      "expect": "vga"
+    },
+    {
+      "name": "a phone alone with its screen off and the server saying vga: the panel",
+      "me": {"device": "s21", "idle": 5, "screen_on": false, "server_ok": true, "server_active": "vga"},
+      "peers": [],
+      "previous": "s21",
+      "expect": "vga"
+    },
+    {
+      "name": "the server says vga but the phone was just picked up (its answer is a beat old): the phone",
+      "me": {"device": "s21", "idle": 3, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "laptop", "idle": 900, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 1000}],
+      "previous": null,
+      "expect": "s21"
+    },
+    {
+      "name": "the server says vga; only the one touched within the limit counts, even against hysteresis",
+      "me": {"device": "laptop", "idle": 310, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "s21", "idle": 20, "screen_on": true, "server_ok": true, "server_active": "vga", "age_ms": 1000}],
+      "previous": "laptop",
+      "expect": "s21"
+    },
+    {
+      "name": "vga is only the server's word when everyone agrees: a peer that cannot reach it makes us decide among ourselves",
+      "me": {"device": "s21", "idle": 400, "screen_on": true, "server_ok": true, "server_active": "vga"},
+      "peers": [{"device": "laptop", "idle": 900, "screen_on": true, "server_ok": false, "server_active": null, "age_ms": 1000}],
+      "previous": null,
       "expect": "s21"
     }
   ]
