@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Coucou: el escritorio de Mochi, los recordatorios y Claude Code en la isla -->
+    <string name="coucou_desk_nice">¡Bien!</string>
+    <string name="coucou_desk_dancing">♪ bailando</string>
+    <string name="coucou_desk_sleeping">Mochi está durmiendo 💤</string>
+    <string name="coucou_desk_all_clear">Todo despejado</string>
+    <string name="coucou_desk_todo">%1$d por hacer</string>
+    <plurals name="coucou_desk_overdue">
+        <item quantity="one">%1$d vencida</item>
+        <item quantity="other">%1$d vencidas</item>
+    </plurals>
+    <string name="coucou_desk_add">Añadir una tarea</string>
+    <string name="coucou_desk_hint">llamar a mamá a las 17:30…</string>
+    <string name="coucou_desk_cancel">Cancelar</string>
+    <string name="coucou_desk_done_task">Hecha: %1$s</string>
+    <string name="coucou_desk_snoozed_task">Pospuesta 10 min: %1$s</string>
+    <string name="coucou_desk_undo">Deshacer</string>
+    <string name="coucou_desk_snooze_hint">+10 min</string>
+    <string name="coucou_when_today">Hoy %1$s</string>
+    <string name="coucou_when_tomorrow">Mañana %1$s</string>
+    <string name="coucou_when_other">%1$s</string>
+    <string name="coucou_reminder_label">Recordatorio</string>
+    <string name="coucou_reminder_done">Hecho</string>
+    <string name="coucou_reminder_10min">+10 min</string>
+    <string name="coucou_reminder_1h">+1 h</string>
+    <string name="coucou_reminder_tomorrow">Mañana</string>
+    <string name="coucou_reminder_dismiss">Descartar</string>
+    <string name="coucou_agent_nothing">Nada en marcha</string>
+    <string name="coucou_agent_session">sesión</string>
+    <string name="coucou_agent_working">%1$d trabajando</string>
+    <string name="coucou_agent_asking">%1$d pidiendo</string>
+    <string name="coucou_agent_more">+%1$d más</string>
+    <plurals name="coucou_agent_steps">
+        <item quantity="one">%1$d paso</item>
+        <item quantity="other">%1$d pasos</item>
+    </plurals>
+    <string name="coucou_act_thinking">Pensando</string>
+    <string name="coucou_act_reading">Leyendo</string>
+    <string name="coucou_act_editing">Editando</string>
+    <string name="coucou_act_writing">Escribiendo</string>
+    <string name="coucou_act_searching">Buscando</string>
+    <string name="coucou_act_listing">Listando</string>
+    <string name="coucou_act_web_search">Buscando en la web</string>
+    <string name="coucou_act_fetching">Descargando</string>
+    <string name="coucou_act_running">Ejecutando</string>
+    <string name="coucou_act_delegating">Delegando</string>
+    <string name="coucou_act_planning">Planeando</string>
+    <string name="coucou_act_using">Usando</string>
+    <string name="coucou_act_needs_you">Te necesita</string>
+    <string name="coucou_act_done">Terminó</string>
+    <string name="coucou_act_idle">En reposo</string>
+    <string name="coucou_phrase_clear_1">Todo despejado ✨</string>
+    <string name="coucou_phrase_clear_2">Nada pendiente, qué paz</string>
+    <string name="coucou_phrase_clear_3">Hoy vas bien</string>
+    <string name="coucou_phrase_clear_4">Mochi está estirándose</string>
+    <string name="coucou_phrase_clear_5">Pídeme algo, estoy libre</string>
+    <string name="coucou_phrase_busy_1">Sin horas, a tu ritmo</string>
+    <string name="coucou_phrase_busy_2">Una a la vez</string>
+    <string name="coucou_phrase_busy_3">Tú puedes con %1$d</string>
+    <string name="coucou_phrase_busy_4">Empieza por la más corta</string>
+    <string name="coucou_phrase_busy_5">Aquí te espero</string>
+    <string name="coucou_phrase_late_1">Ojo, algo se pasó de hora</string>
+    <string name="coucou_phrase_late_2">Un ratito y lo sacamos</string>
+    <string name="coucou_phrase_late_3">Yo te acompaño</string>
+    <string name="coucou_phrase_morning">Buenos días ☀️</string>
+    <string name="coucou_phrase_afternoon">¿Un cafecito? ☕</string>
+    <string name="coucou_phrase_evening">Ya casi a descansar 🌙</string>
+</resources>

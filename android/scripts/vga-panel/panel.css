@@ -1,0 +1,173 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   JINX VGA PANEL — kiosco fijo 1280×1024 (Acer V173, 4:3), Firefox --kiosk.
+   Estilo "Emerald Glass" del dashboard (homelab-dashboard/web/tailwind.config.js, DESIGN.md):
+   obsidiana #070a09, esmeralda #4edea3 / #10b981, tarjetas de vidrio (borde especular arriba,
+   sombra profunda, desenfoque) sobre luces ambientales. Familjen Grotesk para texto y
+   JetBrains Mono para cifras (las dos van incrustadas: el panel no depende de internet).
+   Este panel es el RESPALDO de la casa: cuando ningún otro dispositivo mira a Jinx, Mochi vive aquí.
+   El desenfoque va en una capa propia debajo de cada tarjeta: el canvas de Mochi se repinta ~12 veces
+   por segundo y no debe obligar a recalcularlo.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  --surface: #070a09;
+  --on: #e3e2e6; --on-var: #bbcabf; --outline: #86948a; --outline-var: #3c4a42;
+  --primary: #4edea3; --primary-c: #10b981; --secondary: #95d3ba; --tertiary: #62dcad;
+  --amber: #fbbf24; --err: #ff8f85; --err-c: #93000a;
+  --hair: rgba(255,255,255,.07);
+  --font-ui: "Familjen Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1280px; height: 1024px; overflow: hidden; }
+body {
+  background-color: var(--surface);
+  background-image:
+    radial-gradient(ellipse 58% 42% at 0% 0%, rgba(16,185,129,.20), transparent 62%),
+    radial-gradient(ellipse 52% 38% at 100% 0%, rgba(6,78,59,.26), transparent 58%),
+    radial-gradient(ellipse 48% 40% at 22% 100%, rgba(16,185,129,.10), transparent 62%),
+    radial-gradient(ellipse 40% 34% at 100% 100%, rgba(6,78,59,.20), transparent 60%);
+  color: var(--on);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  padding: 22px 28px;
+  display: flex; flex-direction: column;
+}
+
+/* luces ambientales fijas: lo que el vidrio de las tarjetas desenfoca (no se animan) */
+.orbs { position: fixed; inset: 0; z-index: -2; pointer-events: none; }
+.orbs i { position: absolute; border-radius: 50%; }
+.orbs i:nth-child(1) { width: 520px; height: 520px; left: -110px; top: 330px;
+                       background: radial-gradient(circle, rgba(16,185,129,.34), transparent 68%); }
+.orbs i:nth-child(2) { width: 420px; height: 420px; right: 60px; top: 90px;
+                       background: radial-gradient(circle, rgba(78,222,163,.20), transparent 68%); }
+.orbs i:nth-child(3) { width: 460px; height: 460px; right: -80px; bottom: -40px;
+                       background: radial-gradient(circle, rgba(6,120,84,.34), transparent 68%); }
+
+/* ── cabecera ───────────────────────────────────────────────────────────── */
+header { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+h1 { font-size: 34px; letter-spacing: 3px; font-weight: 700; color: var(--primary); line-height: 1; }
+h1 small { color: var(--outline); letter-spacing: 3px; font-weight: 500; font-size: 20px; }
+.where { display: flex; align-items: center; gap: 9px; font-size: 14px; letter-spacing: 1.5px; font-weight: 600;
+         padding: 7px 16px; border-radius: 999px; color: var(--outline); text-transform: uppercase;
+         background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
+         border: 1px solid rgba(255,255,255,.12); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+.where i { width: 9px; height: 9px; border-radius: 50%; background: var(--outline-var); }
+.where.here { color: var(--primary); border-color: rgba(78,222,163,.40); }
+.where.here i { background: var(--primary); box-shadow: 0 0 10px var(--primary); }
+.where.lost { color: var(--amber); border-color: rgba(251,191,36,.40); }
+.where.lost i { background: var(--amber); }
+.clockwrap { text-align: right; }
+#clock { font-family: var(--font-num); font-size: 54px; font-weight: 700; letter-spacing: -1px; line-height: 1; color: var(--on); }
+#date { font-size: 15px; color: var(--outline); letter-spacing: 2px; margin-top: 6px; text-transform: uppercase; font-weight: 500; }
+
+/* ── rejilla ────────────────────────────────────────────────────────────── */
+.main { flex: 1; display: grid; grid-template-columns: 500px 1fr; gap: 16px; min-height: 0; }
+.right { display: grid; grid-template-rows: 262px 1fr 196px; gap: 16px; min-height: 0; }
+.duo { display: grid; grid-template-columns: 1fr 1.25fr; gap: 16px; min-height: 0; }
+
+/* ── tarjeta de vidrio ──────────────────────────────────────────────────── */
+section {
+  position: relative; isolation: isolate; display: flex; flex-direction: column; min-height: 0;
+  border-radius: 20px; overflow: hidden;
+  background-image: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.012) 45%);
+  background-color: rgba(10,14,12,.58);
+  border: 1px solid var(--hair);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 24px 48px -28px rgba(0,0,0,.9);
+}
+/* capa de desenfoque: separada, para que lo que se anima dentro no la invalide */
+section::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+  -webkit-backdrop-filter: blur(20px) saturate(150%); backdrop-filter: blur(20px) saturate(150%);
+}
+.thead { display: flex; align-items: center; justify-content: space-between;
+         padding: 12px 18px 10px; flex-shrink: 0; }
+.tlabel { font-size: 13px; letter-spacing: 2.4px; color: var(--secondary); text-transform: uppercase; font-weight: 600; }
+.tglyph { font-size: 12px; color: var(--outline); letter-spacing: 1px; font-family: var(--font-num); }
+.body { flex: 1; padding: 6px 22px 18px; display: flex; flex-direction: column; min-height: 0; }
+.center { justify-content: center; align-items: center; text-align: center; }
+
+/* ── escenario de Mochi ─────────────────────────────────────────────────── */
+.stage { background-image:
+           radial-gradient(ellipse 80% 52% at 50% 36%, rgba(16,185,129,.24), transparent 70%),
+           linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.012) 45%); }
+.stage .scene { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+                padding: 0 18px 16px; min-height: 0; }
+#mochi { width: 468px; height: 468px; }
+.who { margin-top: -6px; font-size: 26px; letter-spacing: 8px; color: var(--primary); font-weight: 700; padding-left: 8px; }
+.mood { margin-top: 4px; font-size: 14px; letter-spacing: 3px; color: var(--outline); text-transform: uppercase; font-weight: 500; }
+.bubble {
+  margin-top: 14px; width: 100%; flex: 1; min-height: 120px;
+  border-radius: 16px; padding: 14px 20px; display: flex; flex-direction: column; justify-content: center;
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.025));
+  border: 1px solid rgba(255,255,255,.10); border-left: 4px solid var(--primary-c);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07);
+}
+.bubble.warn { border-left-color: var(--amber); }
+.bubble.alert { border-left-color: var(--err); }
+.bubble.msg { cursor: pointer; }
+.bubble .bt { font-size: 25px; line-height: 1.28; color: var(--on); font-weight: 500;
+              display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.bubble .bm { font-size: 12px; color: var(--outline); letter-spacing: 1.5px; margin-top: 10px; text-transform: uppercase;
+              font-family: var(--font-num); }
+.bubble.calm .bt { color: var(--on-var); font-size: 22px; font-weight: 400; }
+
+/* ── clima ──────────────────────────────────────────────────────────────── */
+.body.clima { justify-content: center; align-items: center; text-align: center; position: relative; }
+.temp { font-family: var(--font-num); font-size: 68px; font-weight: 700; color: var(--on); line-height: .95; letter-spacing: -2px; }
+.temp-desc { font-size: 16px; color: var(--secondary); margin-top: 10px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 500; }
+.metrow { display: flex; justify-content: space-around; align-items: center;
+          border-top: 1px solid var(--hair); padding-top: 12px; position: absolute; left: 20px; right: 20px; bottom: 14px; }
+.metrow > div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.metrow .k { font-size: 11px; color: var(--outline); letter-spacing: 2px; font-weight: 600; }
+.metrow .v { font-family: var(--font-num); font-size: 20px; color: var(--on); font-weight: 500; }
+.metrow .sep { width: 1px; height: 28px; background: var(--hair); }
+.rain { color: var(--amber); }
+
+/* ── biometría ──────────────────────────────────────────────────────────── */
+.body.bio { justify-content: center; gap: 22px; }
+.bar-row { display: flex; flex-direction: column; gap: 8px; }
+.bar-head { display: flex; align-items: baseline; justify-content: space-between; }
+.bar-name { font-size: 14px; letter-spacing: 2px; color: var(--on-var); text-transform: uppercase; font-weight: 600; }
+.bar-trend { font-size: 12px; letter-spacing: .5px; margin-left: 12px; font-weight: 500; }
+.bar-trend.up { color: var(--primary); } .bar-trend.flat { color: var(--outline); } .bar-trend.down { color: var(--amber); }
+.bar-val { font-family: var(--font-num); font-size: 24px; font-weight: 700; color: var(--on); }
+.track { width: 100%; height: 10px; border-radius: 6px; background: rgba(255,255,255,.07); overflow: hidden; }
+.fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--primary-c), var(--primary));
+        box-shadow: 0 0 14px rgba(78,222,163,.45); }
+
+/* ── tareas ─────────────────────────────────────────────────────────────── */
+.task { display: flex; flex-direction: column; gap: 3px; padding: 9px 0; border-bottom: 1px solid var(--hair); flex-shrink: 0; }
+.task:last-child { border-bottom: 0; }
+#tareas { overflow: hidden; }
+.task-txt { font-size: 18px; color: var(--on); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+            overflow: hidden; font-weight: 500; line-height: 1.25; }
+.task-txt::before { content: "▸ "; color: var(--primary-c); }
+.task-meta { font-size: 12px; color: var(--outline); letter-spacing: .5px; padding-left: 16px; font-family: var(--font-num); }
+.chip { border: 1px solid currentColor; border-radius: 999px; padding: 1px 8px; margin-right: 8px; letter-spacing: 1px; font-size: 11px; }
+.chip.crit { color: var(--err); } .chip.elev { color: var(--amber); }
+.queue-empty { font-size: 24px; color: var(--primary); letter-spacing: 3px; font-weight: 600; }
+.more { font-size: 13px; color: var(--outline); padding-top: 8px; }
+
+/* ── fondos ─────────────────────────────────────────────────────────────── */
+.funds-k { font-size: 13px; color: var(--on-var); letter-spacing: 2px; text-transform: uppercase; font-weight: 600; }
+.fund-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%;
+            padding: 9px 0; border-bottom: 1px solid var(--hair); }
+.fund-row:last-of-type { border-bottom: 0; }
+.funds-v { font-family: var(--font-num); font-size: 30px; font-weight: 700; color: var(--on); }
+.funds-v.low { color: var(--err); }
+.funds-v .c { font-size: 22px; color: var(--outline); }
+.quota-lbl { font-size: 12px; color: var(--amber); letter-spacing: 1px; min-width: 150px; text-align: right; font-weight: 500; }
+
+/* ── pie ────────────────────────────────────────────────────────────────── */
+footer { display: flex; align-items: center; justify-content: space-between; margin-top: 16px;
+         padding: 10px 18px; border-radius: 14px; font-size: 12px; color: var(--outline); letter-spacing: 1.5px;
+         text-transform: uppercase; font-weight: 500;
+         background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.015));
+         border: 1px solid var(--hair); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+footer .cursor { color: var(--primary); font-weight: 700; }
+footer .sys { display: flex; gap: 20px; font-family: var(--font-num); }
+footer .sys b { color: var(--on); font-weight: 500; }
+footer .sys .warn b, footer .sys .warn { color: var(--err); }
+footer .desig { color: var(--secondary); }
+#err { color: var(--err); letter-spacing: .5px; text-transform: none; }
+.warn-txt { color: var(--err); }

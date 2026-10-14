@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JINX · VGA PANEL</title>
+<style>
+/*@@FONTS@@*/
+/*@@CSS@@*/
+</style>
+</head>
+<body>
+<div class="orbs"><i></i><i></i><i></i></div>
+
+<header>
+  <h1>JINX <small>// VGA-SERVER</small></h1>
+  <span class="where here" id="where"><i></i><span id="where-txt">jinx · aquí</span></span>
+  <div class="clockwrap">
+    <div id="clock">--:--</div>
+    <div id="date"></div>
+  </div>
+</header>
+
+<div class="main">
+
+  <section class="stage">
+    <div class="thead"><span class="tlabel">JINX.MOCHI</span><span class="tglyph" id="mochi-outfit"></span></div>
+    <div class="scene">
+      <canvas id="mochi" width="468" height="468"></canvas>
+      <div class="who">JINX</div>
+      <div class="mood" id="mochi-lbl">&hellip;</div>
+      <div class="bubble calm" id="bubble"><div class="bt" id="bubble-txt">…</div><div class="bm" id="bubble-meta"></div></div>
+    </div>
+  </section>
+
+  <div class="right">
+    <div class="duo">
+      <section>
+        <div class="thead"><span class="tlabel">SYS.METEO</span><span class="tglyph">┌─┐</span></div>
+        <div class="body clima" id="clima">…</div>
+      </section>
+      <section>
+        <div class="thead"><span class="tlabel">JINX.BIOMETRICS</span><span class="tglyph" id="bio-glyph"></span></div>
+        <div class="body bio" id="bio">…</div>
+      </section>
+    </div>
+
+    <section>
+      <div class="thead">
+        <span class="tlabel">SYS.QUEUE // PRIORITY</span>
+        <span class="tglyph" id="queue-badge"></span>
+      </div>
+      <div class="body" id="tareas">…</div>
+    </section>
+
+    <section>
+      <div class="thead">
+        <span class="tlabel">NET.FUNDS // OPENROUTER</span>
+        <span class="tglyph">$</span>
+      </div>
+      <div class="body center" id="saldo">…</div>
+    </section>
+  </div>
+
+</div>
+
+<footer>
+  <span class="cursor">_CURSOR</span>
+  <span id="err"></span>
+  <span class="sys" id="sys">…</span>
+  <span class="desig">JINX // VGA-SERVER · v3-mochi</span>
+</footer>
+
+<script>/*@@WARDROBE@@*/</script>
+<script>/*@@LOGIC@@*/</script>
+<script>/*@@ENGINE@@*/</script>
+<script>
+const $ = id => document.getElementById(id);
+const num = v => MochiLogic.num(v), trendKey = t => MochiLogic.trendKey(t);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+const TREND = { up: "↑ subiendo", flat: "→ estable", down: "↓ bajando" };
+
+function renderClima(c){
+  c = c || {};
+  if(c.ok === false){
+    $("clima").innerHTML = `<span class="warn-txt">${esc(c.error || "sin datos de clima")}</span>`;
+    return;
+  }
+  let h = `<div class="temp">${num(c.temp_actual_c)}°</div>`;
+  h += `<div class="temp-desc">${esc(c.descripcion_actual || "")}</div>`;
+  const rain = c.pico_prob_lluvia != null && c.pico_prob_lluvia >= 40;
+  h += `<div class="metrow">
+    <div><span class="k">ALTA</span><span class="v">${num(c.max_c)}°</span></div>
+    <div class="sep"></div>
+    <div><span class="k">BAJA</span><span class="v">${num(c.min_c)}°</span></div>
+    <div class="sep"></div>
+    <div><span class="k">LLUVIA</span><span class="v${rain ? " rain" : ""}">${
+      c.pico_prob_lluvia != null ? num(c.pico_prob_lluvia) + "%" : "–"
+    }${rain && c.pico_hora_lluvia != null ? ` <small>~${num(c.pico_hora_lluvia)}h</small>` : ""}</span></div>
+  </div>`;
+  $("clima").innerHTML = h;
+}
+
+function renderBio(e){
+  e = e || {};
+  if(e.error){
+    $("bio").innerHTML = `<span class="warn-txt">${esc(e.error)}</span>`;
+    return;
+  }
+  const tend = e.tendencia || {};
+  const rows = [["affection","AFECTO"],["patience","PACIENCIA"],["trust","CONFIANZA"]];
+  $("bio").innerHTML = rows.map(([k,label]) => {
+    const raw = e[k];
+    const pct = raw == null ? null : clamp(Math.round(raw), 0, 100);
+    const tr = trendKey(tend[k]);
+    return `<div class="bar-row">
+      <div class="bar-head">
+        <span><span class="bar-name">${label}</span><span class="bar-trend ${tr}">${TREND[tr]}</span></span>
+        <span class="bar-val">${pct == null ? "–" : pct + "%"}</span>
+      </div>
+      <div class="track"><div class="fill" style="width:${pct == null ? 0 : pct}%"></div></div>
+    </div>`;
+  }).join("");
+}
+
+let TASK_COUNT = null;
+function renderTareas(t){
+  t = t || {};
+  if(t.ok === false){
+    TASK_COUNT = null;
+    $("queue-badge").textContent = "";
+    $("tareas").innerHTML = `<span class="warn-txt">${esc(t.error || "sin datos de tareas")}</span>`;
+    return;
+  }
+  const items = t.tareas || [];
+  TASK_COUNT = items.length;
+  $("queue-badge").textContent = items.length ? `${items.length} PENDIENTE${items.length === 1 ? "" : "S"}` : "";
+  if(!items.length){
+    $("tareas").classList.add("center");
+    $("tareas").innerHTML = `<span class="queue-empty">SIN PENDIENTES ✓</span>`;
+    return;
+  }
+  $("tareas").classList.remove("center");
+  const el = $("tareas");
+  const row = x => {
+    const a = x.antiguedad_dias;
+    let chip = "";
+    if(a != null && a > 7) chip = `<span class="chip crit">CRITICAL</span>`;
+    else if(a != null && a > 3) chip = `<span class="chip elev">ELEVADA</span>`;
+    const age = a != null ? `hace ${num(a)} d` : "";
+    return `<div class="task">
+      <span class="task-txt">${esc(x.texto)}</span>
+      <span class="task-meta">${chip}${esc(age)}${x.canal ? " · " + esc(x.canal) : ""}</span>
+    </div>`;
+  };
+  let n = Math.min(items.length, 12);
+  const draw = () => {
+    el.innerHTML = items.slice(0, n).map(row).join("") +
+      (n < items.length ? `<div class="more">+${items.length - n} más</div>` : "");
+  };
+  draw();
+  while(n > 1 && el.scrollHeight > el.clientHeight){ n--; draw(); }
+}
+
+function renderSaldo(s){
+  s = s || {};
+  const per = {weekly:"semanal",monthly:"mensual",daily:"diario"};
+  const rows = [
+    ["CRÉDITOS EN CUENTA", s.cuenta, "saldo real", 2],
+    ["LÍMITE DE JINX", s.jinx && s.jinx.restante,
+      s.jinx && s.jinx.limite != null ? "de $" + num(s.jinx.limite) + " " + (per[s.jinx.reset] || "") : "", 0.5],
+  ];
+  let h = rows.map(([k, v, sub, err]) =>
+    `<div class="fund-row"><span class="funds-k">${k}</span>` +
+    `<span class="funds-v${v != null && v < err ? " low" : ""}"><span class="c">$</span>${v != null ? (+v).toFixed(2) : "?"}</span>` +
+    `<span class="quota-lbl">${esc(sub)}</span></div>`).join("");
+  if(s.error) h += `<div class="quota-lbl warn-txt">${esc(s.error)}</div>`;
+  $("saldo").innerHTML = h;
+}
+
+function renderSys(d){
+  const sa = d.saldo || {}, di = d.disco || {}, gw = d.gateway || {}, up = d.uptime || {};
+  const w = bad => bad ? ' class="warn"' : "";
+  const m = v => v != null ? "$" + (+v).toFixed(2) : "?";
+  const jr = sa.jinx && sa.jinx.restante;
+  let h = `<span>SYS.UPTIME <b>${esc(up.texto || "?")}</b></span>`;
+  h += `<span${w(sa.cuenta != null && sa.cuenta < 2)}>CUENTA <b>${m(sa.cuenta)}</b></span>`;
+  h += `<span${w(jr != null && jr < 0.5)}>JINX <b>${m(jr)}</b></span>`;
+  h += `<span${w(di.libre_gb != null && di.libre_gb < 10)}>DISCO <b>${di.libre_gb != null ? num(di.libre_gb) + "G" : "?"}</b></span>`;
+  h += `<span${w(gw.activo === false)}>GW <b>${gw.activo === true ? "OK" : esc(gw.estado || "?")}</b></span>`;
+  $("sys").innerHTML = h;
+}
+
+/* ── Mochi: el actual de Coucou, en grande ─────────────────────────────────
+   Estado: ánimo (emoción del panel, noche, mensajes sin leer), traje (temporada /
+   dormir / música), gesto ocioso (como en el teléfono). Dibuja ~12 fps; si el
+   equipo no da la talla baja solo a 6 fps. */
+const MOOD_LBL = { Idle: "tranquilo", Happy: "contento", Alert: "¡atento!", Listening: "escuchando",
+  Sleepy: "descansando", Surprised: "sorprendido", Glance: "mirando", Dancing: "bailando",
+  Tired: "cansado", Celebrating: "celebrando", Working: "trabajando", Error: "algo falló",
+  Searching: "buscando", Thinking: "pensando" };
+const M = {
+  emotion: null, active: undefined, unread: [], forced: null, linkFails: 0,
+  gesture: "None", gestureAt: 0, gestureMs: 0, nextAt: 0, prevGesture: "None", thought: "💭",
+  popAt: 0, lastMood: "", fps: 12, slow: 0,
+};
+const cv = $("mochi");
+const engine = window.MochiLogic && window.MochiEngine ? MochiEngine.create(cv, window.MochiWardrobe) : null;
+
+function mochiFrame(){
+  if(!engine) return;
+  const t0 = performance.now();
+  const now = Date.now(), nowD = new Date(), hour = nowD.getHours();
+  const mine = MochiLogic.isMine(M.active);
+  const mood = MochiLogic.decideMood({ emotion: M.emotion, hour, mine, unread: M.unread, forced: M.forced, now });
+  if(mood !== M.lastMood){ M.lastMood = mood; M.popAt = now; }
+  // gestos ociosos: solo en calma y con la pantalla suya
+  if(mood === "Idle"){
+    if(M.gesture !== "None" && now - M.gestureAt > M.gestureMs){
+      M.prevGesture = M.gesture; M.gesture = "None"; M.nextAt = now + MochiLogic.gapMs(Math.random);
+    } else if(M.gesture === "None" && M.nextAt === 0){
+      M.nextAt = now + MochiLogic.gapMs(Math.random);
+    } else if(M.gesture === "None" && now >= M.nextAt){
+      M.gesture = MochiLogic.nextGesture(M.prevGesture, hour, Math.random);
+      M.gestureAt = now; M.gestureMs = MochiLogic.gestureMs(M.gesture);
+      if(M.gesture === "Think") M.thought = MochiLogic.thoughtFor(hour, Math.random);
+    }
+  } else { M.gesture = "None"; M.nextAt = 0; }
+  const outfit = MochiLogic.pickOutfit("auto", mood, nowD);
+  engine.draw({
+    mood, outfit, fit: MochiLogic.stageFit(outfit), t: now / 1000,
+    gesture: M.gesture, gp: M.gesture === "None" ? 0 : (now - M.gestureAt) / Math.max(1, M.gestureMs),
+    thought: M.thought, lookX: 1, popT: (now - M.popAt) / 1000,
+  });
+  $("mochi-lbl").textContent = MOOD_LBL[mood] || mood;
+  $("mochi-outfit").textContent = outfit ? ({ witchHat: "🎃 modo octubre", santaHat: "navidad", partyHat: "fiesta",
+    bunnyEars: "pascua", sunglasses: "verano", nightcap: "a dormir", headphones: "música" }[outfit] || outfit) : "";
+  // si dibujar cuesta demasiado en este equipo, se baja la cadencia
+  const cost = performance.now() - t0;
+  M.slow = M.slow * 0.9 + cost * 0.1;
+  const want = M.slow > 40 ? 6 : 12;
+  if(want !== M.fps){ M.fps = want; restartLoop(); }
+}
+let loopId = null;
+function restartLoop(){ if(loopId) clearInterval(loopId); loopId = setInterval(mochiFrame, 1000 / M.fps); }
+restartLoop();
+mochiFrame();
+
+/* ── presencia: quién es dueño de la pantalla y los mensajes de Jinx ────────
+   El panel es el RESPALDO: los mensajes son suyos solo si active_device=="vga" (nadie más está
+   mirando). Si Alan usa la PC o un teléfono, esos dispositivos los muestran y aquí Mochi se queda
+   tranquilo. Sin respuesta del servidor de presencia, nadie más es conocido: el panel los muestra. */
+const PRES = "http://127.0.0.1:8897";
+async function pollPresence(){
+  try{
+    const r = await fetch(PRES + "/api/mochi/inbox?since_id=0", { cache: "no-store" });
+    const d = await r.json();
+    M.linkFails = 0;
+    M.active = d.active_device;
+    const mine = MochiLogic.isMine(M.active);
+    const msgs = (d.messages || []).filter(m => !m.acked_by);
+    M.unread = mine ? msgs : [];
+    const where = $("where");
+    where.className = "where " + (mine ? "here" : "");
+    $("where-txt").textContent = mine ? "jinx · aquí" : "jinx · en " + MochiLogic.deviceLabel(M.active);
+    renderBubble(mine, msgs);
+  }catch(e){
+    M.linkFails++;
+    if(M.linkFails === 1) renderBubble(true, []);     // sin presencia no hay a quién cederle: el panel responde
+    if(M.linkFails >= 2){
+      M.active = undefined;
+      $("where").className = "where lost";
+      $("where-txt").textContent = "jinx · sin enlace";
+    }
+  }
+}
+
+function calmLine(){
+  const h = new Date().getHours();
+  if(MochiLogic.isNight(h)) return "Shh… estoy descansando.";
+  if(TASK_COUNT === 0) return "Todo en orden por aquí.";
+  if(TASK_COUNT > 0) return `${TASK_COUNT} pendiente${TASK_COUNT === 1 ? "" : "s"} en la cola.`;
+  return "Aquí estoy.";
+}
+
+let _lastBubbleKey = "";
+function renderBubble(mine, msgs){
+  const box = $("bubble");
+  const unread = mine ? msgs : [];
+  const key = unread.map(m => m.id).join(",") + "|" + (mine ? "m" : "o");
+  if(!unread.length){
+    box.className = "bubble calm";
+    $("bubble-txt").textContent = mine ? calmLine() : "Jinx está en " + MochiLogic.deviceLabel(M.active) + ".";
+    $("bubble-meta").textContent = "";
+    box.onclick = null;
+    _lastBubbleKey = key;
+    return;
+  }
+  if(key === _lastBubbleKey) return;
+  _lastBubbleKey = key;
+  const last = unread[unread.length - 1];
+  const ago = last.ts ? new Date(last.ts * 1000).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+  $("bubble-txt").textContent = last.text;
+  $("bubble-meta").textContent =
+    (unread.length > 1 ? `+${unread.length - 1} más · ` : "") +
+    `jinx${last.source ? " · " + last.source : ""}${ago ? " · " + ago : ""} · toca para descartar`;
+  box.className = "bubble msg" + (last.kind === "alert" ? " alert" : last.kind === "warn" ? " warn" : "");
+  box.onclick = () => {
+    for(const m of unread)
+      fetch(PRES + "/api/mochi/ack", { method: "POST", headers: {"Content-Type": "application/json"},
+                                        body: JSON.stringify({ id: m.id, by: "vga" }) }).catch(() => {});
+    M.forced = { mood: "Happy", until: Date.now() + 6000 };
+    M.unread = [];
+    renderBubble(true, []);
+  };
+}
+setInterval(pollPresence, 5000);
+pollPresence();
+
+/* ── datos del panel ───────────────────────────────────────────────────── */
+let BUILD = null;
+function render(d){
+  if(BUILD === null) BUILD = d.build;
+  else if(d.build && d.build !== BUILD){ location.reload(); return; }
+  M.emotion = d.emocion || null;
+  renderClima(d.clima);
+  renderBio(d.emocion);
+  renderTareas(d.tareas);
+  renderSaldo(d.saldo);
+  renderSys(d);
+}
+
+async function refresh(){
+  try{
+    const r = await fetch("/api/status", { cache: "no-store" });
+    render(await r.json());
+    $("err").textContent = "";
+  }catch(e){
+    $("err").textContent = "sin conexión con el panel — " + e.message;
+  }
+}
+
+function tickClock(){
+  const now = new Date();
+  $("clock").textContent = now.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", hour12: false });
+  $("date").textContent = now.toLocaleDateString("es-MX", { weekday: "long", day: "numeric", month: "long" });
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

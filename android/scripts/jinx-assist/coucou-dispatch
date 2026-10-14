@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Comando forzado de las llaves de los teléfonos en la laptop.
+
+Antes: command="…/coucou-hook --remote". Ahora este despachador lo reemplaza y
+sólo conoce DOS programas fijos. Lo que el cliente pide (SSH_ORIGINAL_COMMAND)
+elige entre ellos; nunca se interpreta como línea de comandos.
+"""
+import os
+import sys
+
+
+def route(original, home, uid, exists=os.path.exists):
+    if (original or "").strip() == "jinx-chat":
+        return [home + "/bin/jinx-chat"], {}
+    for p, env in (
+        (home + "/.local/share/coucou-app/coucou-hook", {"XDG_RUNTIME_DIR": "/run/user/%d" % uid}),
+        (home + "/.local/share/coucou/bin/coucou-hook", {}),
+    ):
+        if exists(p):
+            return [p, "--remote"], env
+    return None
+
+
+def main():
+    home = os.path.expanduser("~")
+    r = route(os.environ.get("SSH_ORIGINAL_COMMAND", ""), home, os.getuid())
+    if r is None:
+        sys.stderr.write("coucou-dispatch: nada que ejecutar\n")
+        return 2
+    argv, env = r
+    os.execve(argv[0], argv, {**os.environ, **env})
+
+
+if __name__ == "__main__":
+    sys.exit(main())

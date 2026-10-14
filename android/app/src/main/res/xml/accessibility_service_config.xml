@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Smart Island (2026)
+  © Animesh Gupta — github.com/agupta07505
+  Licensed under the GNU GPL v3 License
+  Do not remove or alter this notice. - Per GPL-3.0 Section 4 & Section 5
+-->
+<!--
+  Nothing here reads another app's screen or what is typed: the service only uses the package name of
+  window events and draws its overlay. Asking for window content, interactive windows and text events
+  anyway made banking apps (which refuse to run next to a service that could read their fields) turn
+  the user away, so none of the three is requested.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeTouchInteractionStart|typeViewClicked|typeViewLongClicked|typeViewScrolled"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/accessibility_service_description"
+    android:showOnLockScreen="true"
+    android:settingsActivity="com.agupta07505.smartisland.MainActivity" />

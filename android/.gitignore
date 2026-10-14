@@ -1,0 +1,44 @@
+# Smart Island (2026)
+# © Animesh Gupta — github.com/agupta07505
+# Licensed under the GNU GPL v3 License
+# Do not remove or alter this notice. - Per GPL-3.0 Section 4 & Section 5
+
+.gradle/
+.gradle-home/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+.vscode
+debug-helper/
+.kotlin/
+.agents
+
+# Android build outputs
+*.apk
+*.aab
+*.ap_
+captures/
+
+# Signing and local secrets
+*.jks
+*.keystore
+*_base64.txt
+keystore.properties
+secrets.properties
+.env
+.env.*
+
+# Generated reports and caches
+lint-results*.html
+lint-results*.xml
+test-results/
+lint-reports/
+
+# Socials
+socials.txt
+
+# Critical README.md
+install.ps1
+ISLAND_HORIZONTAL_ALIGNMENT_FIX.md

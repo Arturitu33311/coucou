@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Mochi · vista previa</title>
+<style>
+  html,body{margin:0;background:#000;width:1280px;height:1024px;overflow:hidden;color:#8dffab;font-family:"JetBrains Mono",monospace}
+  .grid{display:grid;grid-template-columns:repeat(4,320px);grid-auto-rows:341px}
+  .c{position:relative;border:1px solid #00ff4120;background:#04120a}
+  canvas{width:320px;height:320px;display:block}
+  .l{position:absolute;left:8px;bottom:4px;font-size:13px;letter-spacing:2px;color:#17c04a}
+</style></head><body>
+<div class="grid" id="g"></div>
+<script src="dist/mochi_wardrobe.js"></script>
+<script src="mochi_logic.js"></script>
+<script src="mochi_engine.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const cells = (q.get("set") || "moods") === "outfits"
+    ? ["witchHat","santaHat","partyHat","crown","sunglasses","roundGlasses","bow","scarf","pumpkin","bunnyEars","headphones","nightcap"]
+        .map(o => ({label: o, mood: "Idle", outfit: o}))
+    : [["Idle",null],["Happy",null],["Alert",null],["Listening",null],["Sleepy","nightcap"],["Surprised",null],
+       ["Glance",null],["Dancing","headphones"],["Tired",null],["Celebrating",null],["Working",null],["Error",null]]
+        .map(([m,o]) => ({label: m, mood: m, outfit: o}));
+  const t0 = parseFloat(q.get("t") || "1.0");
+  for (const c of cells) {
+    const d = document.createElement("div"); d.className = "c";
+    const cv = document.createElement("canvas"); cv.width = 320; cv.height = 320;
+    const l = document.createElement("div"); l.className = "l"; l.textContent = c.label + (c.outfit && c.mood !== "Idle" ? " · " + c.outfit : "");
+    d.append(cv, l); document.getElementById("g").append(d);
+    const m = MochiEngine.create(cv, window.MochiWardrobe);
+    m.draw({ mood: c.mood, outfit: c.outfit, fit: MochiLogic.stageFit(c.outfit), t: t0, lookX: 1, gesture: "None", popT: 0.4 });
+  }
+</script></body></html>
