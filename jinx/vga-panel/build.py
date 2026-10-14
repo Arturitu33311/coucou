@@ -28,8 +28,9 @@ def font_faces():
     return "\n".join(out)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# esbuild vive con el resto del monorepo (windows/node_modules); la variable ESBUILD lo reemplaza.
 ESBUILD = os.environ.get(
-    "ESBUILD", "/home/alan/dev/coucou-pc-improve/windows/node_modules/.bin/esbuild")
+    "ESBUILD", os.path.normpath(os.path.join(HERE, "..", "..", "windows", "node_modules", ".bin", "esbuild")))
 
 
 def read(name):

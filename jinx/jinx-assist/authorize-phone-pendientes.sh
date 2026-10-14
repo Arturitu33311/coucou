@@ -9,14 +9,17 @@ name="${1:?nombre del teléfono (s22, s21)}"
 key="${2:?línea pública: ssh-rsa AAAA…}"
 case "$key" in ssh-rsa\ *|ssh-ed25519\ *) ;; *) echo "eso no parece una llave pública" >&2; exit 1;; esac
 case "$name" in *[!A-Za-z0-9_-]*|"") echo "nombre no válido" >&2; exit 1;; esac
-body="$(printf '%s' "$key" | awk '{print $1" "$2}')"
+ktype="$(printf '%s' "$key" | awk '{print $1}')"
+kb64="$(printf '%s' "$key" | awk '{print $2}')"
 host="${JINX_SERVER:-server}"
-ssh -o BatchMode=yes "$host" bash -s -- "$name" "$body" <<'REMOTE'
+# ssh une los argumentos en UNA línea para el shell remoto: nada de espacios dentro de un argumento.
+ssh -o BatchMode=yes "$host" bash -s -- "$name" "$ktype" "$kb64" <<'REMOTE'
 set -euo pipefail
-name="$1"; body="$2"
+name="$1"; ktype="$2"; kb64="$3"; body="$ktype $kb64"
 f="$HOME/.ssh/authorized_keys"
 cmd="/home/alan/.hermes/hermes-agent/venv/bin/python /home/alan/.hermes/scripts/coucou_pendientes.py"
-if grep -qF "${body#* }" "$f"; then echo "ya estaba autorizada"; exit 0; fi
+if [ -z "$kb64" ]; then echo "llave vacía" >&2; exit 1; fi
+if grep -qF "$kb64" "$f"; then echo "ya estaba autorizada"; exit 0; fi
 cp -p "$f" "$f.bak-$(date +%Y%m%d-%H%M%S)-coucou-pendientes"
 printf 'restrict,command="%s" %s coucou-%s-pendientes\n' "$cmd" "$body" "$name" >> "$f"
 echo "autorizada ($name) solo para coucou_pendientes.py"

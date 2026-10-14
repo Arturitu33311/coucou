@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/vga-panel/deploy.sh — despliega el panel VGA (Mochi grande, estilo Emerald Glass, sin Zynara) en el server.
+# jinx/vga-panel/deploy.sh — despliega el panel VGA (Mochi grande, estilo Emerald Glass, sin Zynara) en el server.
 # Copia de seguridad de cada archivo reemplazado (<archivo>.bak-<fecha>-mochi3) y reinicio de las dos unidades.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
