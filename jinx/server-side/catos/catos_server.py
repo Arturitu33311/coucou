@@ -32,6 +32,23 @@ except ImportError:
 BIND_IP = os.environ.get("CATOS_BIND", "100.92.254.125")  # tailscale0 — nunca 0.0.0.0
 PORT = int(os.environ.get("CATOS_PORT", "8899"))
 
+
+def host_allowed(host_header, port):
+    """Solo los nombres con los que se llega a este equipo: cualquier otro `Host` es DNS rebinding."""
+    if not host_header:
+        return False
+    host, _, p = host_header.strip().lower().rpartition(":")
+    if not host or p != str(port):
+        return False
+    return host in (BIND_IP, "127.0.0.1", "localhost", "server") or host.endswith(".ts.net")
+
+
+def origin_allowed(origin, host_header):
+    """Sin Origin = cliente que no es navegador (curl, scripts). Con Origin, debe ser esta misma página."""
+    if origin is None:
+        return True
+    return bool(host_header) and origin.strip().lower() == "http://" + host_header.strip().lower()
+
 VTUBER_ROOT = "http://127.0.0.1:8910"     # Open-LLM-VTuber (avatar, emoción)
 # OJO: el gateway NO escucha en localhost. Desde el endurecimiento del
 # 2026-07-22 (api_server 0.0.0.0/localhost → Tailscale-only) está bindeado
@@ -379,7 +396,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _host_ok(self):
+        if host_allowed(self.headers.get("Host"), PORT):
+            return True
+        self._send(421, {"error": "host no permitido"})
+        return False
+
     def do_GET(self):
+        if not self._host_ok():
+            return
         if self.path in ("/", "/index.html"):
             try:
                 html = HTML_PATH.read_bytes()
@@ -405,6 +430,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if not self._host_ok():
+            return
+        # CSRF: un POST "simple" (text/plain) desde otra página llegaría aquí; el navegador siempre manda Origin.
+        if not origin_allowed(self.headers.get("Origin"), self.headers.get("Host")):
+            return self._send(403, {"error": "origen no permitido"})
         if self.path == "/api/busy":
             try:
                 n = int(self.headers.get("Content-Length", 0))

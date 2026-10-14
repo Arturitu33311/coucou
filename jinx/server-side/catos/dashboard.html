@@ -225,11 +225,11 @@ function render(d){
     const diff = b!=null ? (+v - b) : null;
     const diffColor = diff==null ? "var(--dim)" : diff>=0 ? "var(--cyan)" : "var(--mag)";
     const diffTxt = diff!=null
-      ? `<em style="color:${diffColor}">${diff>=0?"+":""}${diff.toFixed(1)} vs base ${b}</em>` : "";
+      ? `<em style="color:${diffColor}">${diff>=0?"+":""}${diff.toFixed(1)} vs base ${+b}</em>` : "";
     return `<div class="meter">
       <div class="lab"><span>${lab}</span><span>${(+v).toFixed(1)}${diffTxt}</span></div>
       <div class="bar"><i style="width:${Math.min(100,v)}%"></i>
-      ${b!=null?`<u style="left:${Math.min(100,b)}%" title="baseline ${b}"></u>`:""}</div></div>`;
+      ${b!=null?`<u style="left:${Math.min(100,b)}%" title="baseline ${+b}"></u>`:""}</div></div>`;
   }).join("");
   $("emoScore").textContent = e.emotion_score!=null ? (e.emotion_score>0?"+":"")+(+e.emotion_score).toFixed(2) : "–";
   $("emoCurrent").textContent = e.current_emotion!=null ? (e.current_emotion>0?"+":"")+(+e.current_emotion).toFixed(2) : "–";
@@ -329,7 +329,7 @@ function render(d){
   $("mems").innerHTML = (d.memories||[]).map(m=>{
     const t = m.created_at ? String(m.created_at).slice(0,16).replace("T"," ") : "";
     return `<div class="mem ${m.importance>=0.85?"hi":""}">${esc(m.content)}
-      <div class="meta">${esc(m.source)} · imp ${(+m.importance||0).toFixed(2)} · ${t}</div></div>`;
+      <div class="meta">${esc(m.source)} · imp ${(+m.importance||0).toFixed(2)} · ${esc(t)}</div></div>`;
   }).join("");
 }
 
