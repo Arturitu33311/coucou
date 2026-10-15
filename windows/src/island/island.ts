@@ -563,6 +563,11 @@ export class Island {
     void Bridge.focusWindow(false);
     State.updateTask("integration_claude", "working");
     State.setPillBadge("integration_claude", null);
+    const previous = State.focusBeforeApproval;
+    State.focusBeforeApproval = null;
+    if (previous && State.tasks.some((t) => t.id === previous)) {
+      State.setFocus(previous);
+    }
     this.setView(State.defaultView());
   }
 

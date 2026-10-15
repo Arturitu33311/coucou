@@ -50,6 +50,13 @@ export function createMiniBot(task: AgentTask, bodySize: number, dancing?: () =>
     engine.eyeOverrideUntil = Number.POSITIVE_INFINITY;
   }
 
+  if (task.subagentsCount && task.subagentsCount > 0) {
+    const badge = document.createElement("span");
+    badge.className = "mini-sub-badge";
+    badge.textContent = `+${task.subagentsCount}`;
+    slot.append(badge);
+  }
+
   live.set(canvas, { canvas, engine, cssSize: engineSize, taskId: task.id, dancing });
   return slot;
 }
@@ -71,6 +78,21 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
     if (!task) continue;
     mb.engine.setState(task.state);
     mb.engine.bodyColor = hexToRGB(task.color);
+
+    const slot = mb.canvas.parentElement;
+    if (slot) {
+      let badge = slot.querySelector<HTMLElement>(".mini-sub-badge");
+      if (task.subagentsCount && task.subagentsCount > 0) {
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "mini-sub-badge";
+          slot.append(badge);
+        }
+        badge.textContent = `+${task.subagentsCount}`;
+      } else if (badge) {
+        badge.remove();
+      }
+    }
   }
 }
 

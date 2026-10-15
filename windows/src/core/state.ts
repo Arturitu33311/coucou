@@ -39,6 +39,8 @@ export interface AgentTask {
   sessionId?: string | null;
   /** Claude's final message after Stop, one line; cleared when a new turn starts. */
   finalLine?: string | null;
+  /** Active subagents running concurrently under this agent session. */
+  subagentsCount?: number;
 }
 
 export interface ApprovalInfo {
