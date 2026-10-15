@@ -788,11 +788,15 @@ class AppState {
    * GNOME extension's "Always ON"). Paused from the tray means nothing is shown.
    */
   musicStrip(): boolean {
-    return (
-      !this.paused &&
-      this.music !== null &&
-      this.tasks.some((t) => t.id === MUSIC_ID)
-    );
+    return !this.paused && this.music !== null && this.musicHome();
+  }
+
+  /**
+   * Where the music lives: its own Music pill, or (this fork) Jinx's pill — with Jinx there, what plays shows
+   * on the minimised island and in her card without spending a slot on a Music pill.
+   */
+  musicHome(): boolean {
+    return this.tasks.some((t) => t.id === MUSIC_ID || t.id === JINX_ID);
   }
 
   /** What the pill shows now: a recording, a reminder, a bit of news, or the Pomodoro running. */

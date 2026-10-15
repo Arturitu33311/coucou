@@ -1,6 +1,7 @@
 // The Jinx pill's card: who she is right now, her last words, and the way in.
 
 import { h, dot } from "./dom";
+import { Bridge } from "../core/bridge";
 import { JINX_ID, State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 
@@ -18,7 +19,19 @@ export function buildJinxCard(actions: ViewActions): ViewHost {
   const reply = h("div", { class: "jx-reply" });
   const talk = h("button", { class: "btn primary", onclick: () => actions.talkToJinx() }, h("span", { text: "Talk to Jinx" }));
   const stop = h("button", { class: "btn secondary", onclick: () => actions.stopJinx() }, h("span", { text: "Stop" }));
-  const el = h("div", { class: "jx-card" }, head, reply, h("div", { class: "jx-actions" }, talk, stop));
+  // What is playing, in her card (this fork keeps the music with Jinx): the line opens the full player, the
+  // button plays or pauses.
+  const song = h("span", { class: "jx-song" });
+  const playBtn = h("button", {
+    class: "jx-play",
+    title: "Play / pause",
+    onclick: (e: Event) => {
+      e.stopPropagation();
+      void Bridge.musicControl("playpause");
+    },
+  });
+  const music = h("div", { class: "jx-music", title: "Open the player", onclick: () => actions.setView("music") }, playBtn, song);
+  const el = h("div", { class: "jx-card" }, head, reply, music, h("div", { class: "jx-actions" }, talk, stop));
 
   return {
     el,
@@ -31,6 +44,14 @@ export function buildJinxCard(actions: ViewActions): ViewHost {
       reply.textContent = text;
       reply.classList.toggle("hint", !step && !last);
       stop.style.display = State.jinxBusy ? "" : "none";
+      const m = State.music;
+      music.style.display = m ? "" : "none";
+      if (m) {
+        song.textContent = `${m.title}${m.artists.length ? " — " + m.artists.join(", ") : ""}`;
+        playBtn.textContent = m.status === "Playing" ? "❚❚" : "▶";
+      }
+      // Two lines of her reply leave no room for the song: one, while it plays.
+      reply.classList.toggle("short", !!m);
     },
   };
 }

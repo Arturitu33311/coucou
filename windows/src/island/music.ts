@@ -63,7 +63,7 @@ export function musicSettingsChanged(island: Island) {
   // Switching the pill off and on again creates a fresh task with the default
   // colour: give it the cover's colour back.
   if (State.music) setPillColor(State.music.accent);
-  if (State.view === "music" && !State.tasks.some((t) => t.id === MUSIC_ID)) {
+  if (State.view === "music" && !State.musicHome()) {
     island.setView(State.defaultView());
   }
   // The pill may have been switched on or off: the minimised island follows.

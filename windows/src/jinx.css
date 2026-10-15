@@ -44,3 +44,10 @@
 .chat-row.user.via { flex-direction: column; align-items: flex-end; gap: 0; }
 .chat-via { font-size: 9.5px; opacity: 0.55; padding-right: 4px; margin-bottom: 2px; }
 .chat-tool { font-size: 10.5px; opacity: 0.5; padding: 1px 2px; font-family: ui-monospace, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jx-reply.short { -webkit-line-clamp: 1; }
+.jx-music { display: flex; align-items: center; gap: 7px; font-size: 11px; opacity: 0.8; cursor: pointer; min-width: 0; }
+.jx-music:hover { opacity: 1; }
+.jx-song { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.jx-play { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0; font-size: 8px; line-height: 20px;
+  color: inherit; background: rgba(255, 255, 255, 0.12); cursor: pointer; }
+.jx-play:hover { background: rgba(255, 255, 255, 0.22); }

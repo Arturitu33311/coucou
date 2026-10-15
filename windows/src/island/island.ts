@@ -1467,7 +1467,7 @@ export class Island {
     // cover's: it also tints him in its full view, and on the minimised island
     // while a track plays and he has nothing else to say (an alert keeps its own).
     let body = focus?.isIntegration ? hexToRGB(focus.color) : null;
-    if (State.music && State.tasks.some((t) => t.id === "integration_music")) {
+    if (State.music && State.musicHome()) {
       const quiet = State.effectiveState === "idle" || State.effectiveState === "sleeping";
       if (State.mode === "expanded" && State.view === "music") body = hexToRGB(State.music.accent);
       else if (State.mode === "compact" && State.musicStrip() && quiet) body = hexToRGB(State.music.accent);
