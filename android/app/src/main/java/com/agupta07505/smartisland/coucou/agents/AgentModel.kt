@@ -25,6 +25,8 @@ data class Pending(
     val questions: List<QuestionItem>,
     val timeoutS: Int,
     val receivedAt: Long,
+    /** Which agent asks ("" = Claude Code; else "antigravity", "opencode", "codex"…: see [AgentKinds]). */
+    val agent: String = "",
 )
 
 enum class SessionState { Working, Idle, NeedsYou }
@@ -44,12 +46,18 @@ data class SessionInfo(
     val finished: Boolean = false,
     /** How long that run lasted, for "Done · 2 min 14 s". */
     val ranMs: Long = 0,
+    /** Which agent this session is ("" = Claude Code; see [AgentKinds]). */
+    val agent: String = "",
 )
 
 /** What the laptop's Coucou says (see remote.rs). */
 sealed class RemoteMsg {
     data class Hello(val pending: List<Pending>) : RemoteMsg()
-    data class Event(val event: String, val session: String, val project: String, val tool: String, val detail: String, val message: String) : RemoteMsg()
+    data class Event(
+        val event: String, val session: String, val project: String, val tool: String, val detail: String, val message: String,
+        /** Which agent sent it (remote.rs `agent`; "" = Claude Code). */
+        val agent: String = "",
+    ) : RemoteMsg()
     data class Request(val pending: Pending) : RemoteMsg()
     data class Resolved(val id: String, val decision: String) : RemoteMsg()
     data class Ack(val ok: Boolean, val id: String?, val why: String?) : RemoteMsg()
@@ -77,7 +85,7 @@ object RemoteProtocol {
                 val arr = o.optJSONArray("pending")
                 RemoteMsg.Hello((0 until (arr?.length() ?: 0)).mapNotNull { pendingOf(arr!!.getJSONObject(it), now) })
             }
-            "event" -> RemoteMsg.Event(s("event"), s("session"), s("project"), s("tool"), s("detail"), s("message"))
+            "event" -> RemoteMsg.Event(s("event"), s("session"), s("project"), s("tool"), s("detail"), s("message"), AgentKinds.valid(s("agent")))
             "approval", "question" -> pendingOf(o, now)?.let { RemoteMsg.Request(it) }
             "resolved" -> RemoteMsg.Resolved(s("request_id"), s("decision"))
             "ack" -> RemoteMsg.Ack(o.optBoolean("ok"), o.optString("request_id").takeIf { it.isNotEmpty() }, o.optString("why").takeIf { it.isNotEmpty() })
@@ -124,6 +132,7 @@ object RemoteProtocol {
         return Pending(
             id, isQuestion, o.optString("session"), o.optString("project"), o.optString("tool"), o.optString("detail"),
             questions, o.optInt("timeout_s", 108), now,
+            agent = AgentKinds.valid(o.optString("agent")),
         )
     }
 
@@ -254,6 +263,11 @@ class AgentModel {
             }
             else -> sessions[e.session] = (old ?: SessionInfo(e.session, project, SessionState.Idle, "", "", now)).copy(updatedAt = now)
         }
+        // Whoever it is (Claude Code, Antigravity, OpenCode…) travels with the session.
+        sessions[e.session]?.let { s ->
+            val agent = e.agent.ifEmpty { old?.agent ?: "" }
+            if (s.agent != agent) sessions[e.session] = s.copy(agent = agent)
+        }
     }
 
     /** Sessions as they should look now: a "working" one that has been quiet for long is idle; old ones go. */
@@ -268,7 +282,7 @@ class AgentModel {
         val withRequests = LinkedHashMap(sessions)
         for ((sid, p) in byRequest) {
             val s = sessions[sid]
-            withRequests[sid] = (s ?: SessionInfo(sid, p.project, SessionState.NeedsYou, p.tool, p.detail, p.receivedAt))
+            withRequests[sid] = (s ?: SessionInfo(sid, p.project, SessionState.NeedsYou, p.tool, p.detail, p.receivedAt, agent = p.agent))
                 .copy(
                     state = SessionState.NeedsYou, tool = p.tool, detail = p.detail, updatedAt = p.receivedAt,
                     since = if (s?.state == SessionState.NeedsYou) s.since else p.receivedAt,

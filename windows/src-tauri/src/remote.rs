@@ -95,11 +95,24 @@ pub fn detail_of(tool: &str, input: &Value) -> String {
     clip(&input.to_string(), MAX_DETAIL)
 }
 
+/// Which agent sent the event, as the island routes it (hooks.ts validateAgent): the relay's `coucou_agent`
+/// when it is a valid name (`^[a-z0-9-]{1,24}$`, not the reserved "claude"), else None (Claude Code).
+pub fn agent_of(payload: &Value) -> Option<String> {
+    let a = payload.get("coucou_agent").and_then(Value::as_str)?;
+    let ok = !a.is_empty() && a.len() <= 24 && a != "claude" && a.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
+    ok.then(|| a.to_string())
+}
+
 fn base(payload: &Value) -> Value {
-    json!({
+    let mut b = json!({
         "session": payload.get("session_id").and_then(Value::as_str).unwrap_or(""),
         "project": project_of(payload),
-    })
+    });
+    // Antigravity, OpenCode, Codex…: the phone shows each with its name and colour. Absent: Claude Code.
+    if let Some(agent) = agent_of(payload) {
+        b["agent"] = json!(agent);
+    }
+    b
 }
 
 fn merged(mut a: Value, extra: Value) -> Value {
@@ -504,6 +517,19 @@ mod tests {
             k
         };
         assert_eq!(keys(&crate::presence::reply_line()), keys(&doc["laptop_to_phone"]["peer"]), "the laptop's beat has the keys the phone reads");
+    }
+
+    #[test]
+    fn the_phone_hears_which_agent_sent_each_event() {
+        let e = event_line(&json!({"hook_event_name":"PreToolUse","session_id":"s","cwd":"/p","tool_name":"bash","coucou_agent":"opencode"}));
+        assert_eq!(e["agent"], "opencode");
+        assert!(event_line(&json!({"hook_event_name":"Stop","session_id":"s"})).get("agent").is_none());
+        for bad in ["claude", "Bad Name", "", "a/b", "abcdefghijklmnopqrstuvwxyz"] {
+            assert_eq!(agent_of(&json!({"coucou_agent": bad})), None, "{bad}");
+        }
+        // Exactly the island's rule: no case folding ("Antigravity" goes to Claude Code's pill there too).
+        assert_eq!(agent_of(&json!({"coucou_agent": "Antigravity"})), None);
+        assert_eq!(agent_of(&json!({"coucou_agent": "antigravity"})), Some("antigravity".into()));
     }
 
     #[test]

@@ -191,7 +191,7 @@ object IslandAgents {
                     IslandNotification(
                         key = key,
                         packageName = context.packageName,
-                        appName = "Claude Code",
+                        appName = com.agupta07505.smartisland.coucou.agents.AgentKinds.of(p.agent).name,
                         title = if (p.isQuestion) (p.questions.firstOrNull()?.question ?: "Claude asks") else p.tool,
                         text = if (p.isQuestion) p.project else p.detail,
                         timeMillis = now,
@@ -222,8 +222,10 @@ object IslandAgents {
                 IslandNotification(
                     key = KEY_AGENT,
                     packageName = context.packageName,
-                    appName = "Claude Code",
-                    title = (s.project.ifEmpty { "Claude Code" }) + if (busy.size > 1) "  +${busy.size - 1}" else "",
+                    // Claude Code, Antigravity, OpenCode…: the collapsed pill wears that agent's colour.
+                    appName = com.agupta07505.smartisland.coucou.agents.AgentKinds.of(s.agent).name,
+                    title = (s.project.ifEmpty { com.agupta07505.smartisland.coucou.agents.AgentKinds.of(s.agent).name }) +
+                        if (busy.size > 1) "  +${busy.size - 1}" else "",
                     // What it is doing, in words ("Editing Mochi.kt"); its kind rides in the category so the
                     // collapsed pill can wear the matching face and colour.
                     text = com.agupta07505.smartisland.coucou.ui.activityLine(

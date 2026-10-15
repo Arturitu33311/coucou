@@ -143,7 +143,9 @@ fun AgentCollapsedGlyph(notification: IslandNotification?) {
         else -> {
             val kind = kindOf(notification)
             val mood = moodOf(kind)
-            MochiGlyph(24.dp, ClaudeOrange, mood, outfit = rememberMochiOutfit(mood))
+            // In the colour of whoever is working: Claude Code, Antigravity, OpenCode…
+            val tint = com.agupta07505.smartisland.coucou.agents.AgentKinds.byName(notification?.appName).color
+            MochiGlyph(24.dp, tint, mood, outfit = rememberMochiOutfit(mood))
         }
     }
 }
@@ -212,14 +214,18 @@ fun AgentExpanded(bottomPadding: Dp) {
     val shown = ui.sessions.filter { it.state != SessionState.Idle }.ifEmpty { ui.sessions }
     val rows = shown.take(3)
     val head = rows.firstOrNull()?.let { AgentActivity.of(it.tool, it.detail, it.state).kind }
+    // "Claude Code" when they are all Claude Code; "Agentes", with each one's name on its line, when they are mixed.
+    val title = com.agupta07505.smartisland.coucou.agents.AgentKinds.title(shown.map { it.agent })
+    val mixed = shown.map { it.agent }.toSet().size > 1
     Column(
         Modifier.fillMaxSize().padding(horizontal = 18.dp).padding(top = 6.dp, bottom = bottomPadding),
         verticalArrangement = Arrangement.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MochiGlyph(30.dp, ClaudeOrange, moodOf(head), outfit = rememberMochiOutfit(moodOf(head)))
+            val headKind = com.agupta07505.smartisland.coucou.agents.AgentKinds.of(rows.firstOrNull()?.agent ?: "")
+            MochiGlyph(30.dp, headKind.color, moodOf(head), outfit = rememberMochiOutfit(moodOf(head)))
             Spacer(Modifier.width(10.dp))
-            Text("Claude Code", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             val working = shown.count { it.state == SessionState.Working }
             val asking = shown.count { it.state == SessionState.NeedsYou }
             val summary = listOfNotNull(
@@ -242,8 +248,10 @@ fun AgentExpanded(bottomPadding: Dp) {
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val projectName = s.project.ifEmpty { stringResource(R.string.coucou_agent_session) }
                         Text(
-                            s.project.ifEmpty { stringResource(R.string.coucou_agent_session) }, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            if (mixed) com.agupta07505.smartisland.coucou.agents.AgentKinds.of(s.agent).name + " · " + projectName else projectName,
+                            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
                         )
                         if (s.state != SessionState.Idle) {
