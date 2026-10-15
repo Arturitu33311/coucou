@@ -15,12 +15,61 @@ import type { Island } from "./island";
 import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { N_, t } from "../i18n/i18n";
+import { ApprovalQueue } from "./approval-queue";
+import { SessionRegistry } from "./session-registry";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
 
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
+
+/** Requests that came while another card was up: shown in turn (the Mac's ApprovalQueue). */
+const waiting = new ApprovalQueue<HookPayload>();
+/** When the request being handled again first arrived (its card gets only the time its relay has left). */
+let replayingSince: number | null = null;
+let queueWatch = false;
+
+/** The sessions behind each pill: one session's Stop must not finish a pill a sibling is still working in. */
+const sessions = new SessionRegistry();
+/** Events that mean the session is mid-turn. */
+const MID_TURN = new Set(["UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "SubagentStart"]);
+
+/** How many sessions are live behind a pill, and how many are mid-turn (for the pill's "×2"). */
+export function pillSessions(pillId: string): { live: number; working: number } {
+  return sessions.count(pillId, Date.now());
+}
+
+/** Tests start from an empty line and no sessions. */
+export function resetApprovalQueueForTests(): void {
+  while (waiting.size) waiting.next(Number.MAX_SAFE_INTEGER);
+  sessions.clear();
+}
+
+/** Once no card is up, the next waiting request gets its card. */
+function watchQueue(island: Island) {
+  if (queueWatch) return;
+  queueWatch = true;
+  State.subscribe(() => {
+    if (!waiting.size || State.pendingApproval || State.pendingQuestion) return;
+    // After the change that cleared the card has finished.
+    window.setTimeout(() => {
+      if (State.pendingApproval || State.pendingQuestion) return;
+      const { next, expired } = waiting.next(Date.now());
+      for (const w of expired) void Bridge.approvalDecline(w.requestId);
+      if (!next) {
+        if (expired.length) State.notify();
+        return;
+      }
+      replayingSince = next.receivedAt;
+      try {
+        handleHook(island, next.payload);
+      } finally {
+        replayingSince = null;
+      }
+    }, 0);
+  });
+}
 
 /** Takes the approval or question card down and gives the island back. */
 export function dropPendingCard(island: Island): void {
@@ -261,6 +310,7 @@ function recordDiff(agentId: string, payload: HookPayload) {
 
 /** A request was settled somewhere else (the phone, the clock): its card must not stay up. */
 function resolvedElsewhere(island: Island, requestId: string) {
+  if (waiting.remove(requestId)) State.notify();
   const approval = State.pendingApproval;
   if (approval && approval.requestId === requestId) {
     State.pendingApproval = null;
@@ -287,6 +337,7 @@ export function registerHookHandlers(island: Island) {
   // The last plan numbers seen survive a restart, as on the Mac.
   State.planUsage ??= restorePlanUsage(storedClaudePlanUsage());
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  watchQueue(island);
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -368,6 +419,11 @@ function handleHook(island: Island, payload: HookPayload) {
     dropPendingCard(island);
   }
 
+  // Its waiting requests are moot too.
+  if (TURN_OVER.has(name)) {
+    for (const w of waiting.dropSession(agentId, payload.session_id ?? "")) void Bridge.approvalDecline(w.requestId);
+  }
+
   // Read after the card above is dropped: its pill may have handed the front
   // back to the pill you were on.
   const focused = State.focusId === agentId;
@@ -414,6 +470,11 @@ function handleHook(island: Island, payload: HookPayload) {
     }, QUESTION_CARD_MS);
     State.notify();
     return;
+  }
+
+  // Who is live behind this pill (Stop and SessionEnd below ask it before touching the pill).
+  if (sessionId && name !== "Stop" && name !== "SessionEnd" && name !== "StopFailure" && name !== "Interrupt") {
+    sessions.note(agentId, sessionId, MID_TURN.has(name), Date.now());
   }
 
   switch (name) {
@@ -497,6 +558,13 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop": {
+      // A sibling session is still mid-turn behind this pill: only this session finished. Its last words go in
+      // the steps; the pill keeps working.
+      if (sessionId && sessions.endTurn(agentId, sessionId, Date.now()) === "sessionOnly") {
+        const last = toOneLine(payload.last_assistant_message ?? payload.message ?? "");
+        if (last) State.appendStep(agentId, last);
+        break;
+      }
       State.updateTask(agentId, "finished");
       // Claude Code puts the turn's answer in the Stop payload itself, so there is
       // no transcript to read (the relay does not even forward its path). Other
@@ -529,13 +597,16 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Interrupt":
-      // Codex: the user stopped the turn. Back to idle, nothing to celebrate.
+      // Codex: the user stopped the turn. Back to idle, nothing to celebrate (unless a sibling still works).
+      if (sessionId && sessions.endTurn(agentId, sessionId, Date.now()) === "sessionOnly") break;
       supersedeStop();
       State.updateTask(agentId, "idle");
       State.setPillBadge(agentId, null);
       break;
 
     case "StopFailure":
+      // The error shows whatever the siblings do; this session's turn is over.
+      if (sessionId) sessions.endTurn(agentId, sessionId, Date.now());
       supersedeStop();
       State.updateTask(agentId, "error");
       Sound.play("error");
@@ -544,6 +615,8 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SessionEnd":
+      // Another session is still live behind this pill: only this one ended.
+      if (sessionId && sessions.endSession(agentId, sessionId, Date.now()) === "sessionOnly") break;
       // Nothing left for the timer to do, and it must not outlive the session: a
       // pill recreated within 5.2 s would be removed by it.
       cancelStopTimer(agentId);
@@ -585,11 +658,23 @@ function handleHook(island: Island, payload: HookPayload) {
       }
 
       const requestId = payload.request_id ?? "";
-      // One card, one request. A second one must never quietly replace the first
-      // — that would leave a human staring at request B while request A waits for
-      // a decision nobody can give. Hand it straight back to the terminal.
+      // One card, one request: a second one never quietly replaces the first. It waits in line (up to five in
+      // all, as on the Mac) and gets its card when this one is answered; past that, back to its terminal.
       if (State.pendingQuestion || (State.pendingApproval && State.pendingApproval.requestId !== requestId)) {
-        if (requestId) void Bridge.approvalDecline(requestId);
+        const queued =
+          requestId !== "" &&
+          waiting.push({ requestId, pillId: agentId, sessionId, receivedAt: Date.now(), payload });
+        if (!queued) {
+          if (requestId) void Bridge.approvalDecline(requestId);
+          break;
+        }
+        // The relay keeps waiting for it; its pill says it is asking.
+        void Bridge.approvalAck(requestId);
+        ensurePill();
+        supersedeStop();
+        State.updateTask(agentId, "approval");
+        if (State.focusId !== agentId) State.setPillBadge(agentId, "approval");
+        Sound.play("approval");
         break;
       }
       ensurePill();
@@ -623,10 +708,14 @@ function handleHook(island: Island, payload: HookPayload) {
       island.alert(view);
       // Coucou answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
-      pendingTimeout = window.setTimeout(() => {
-        pendingTimeout = null;
-        dropPendingCard(island);
-      }, 110_000);
+      // (A request that waited in line gets only the time its relay has left.)
+      pendingTimeout = window.setTimeout(
+        () => {
+          pendingTimeout = null;
+          dropPendingCard(island);
+        },
+        replayingSince == null ? 110_000 : ApprovalQueue.cardMs(replayingSince, Date.now()),
+      );
       break;
     }
 

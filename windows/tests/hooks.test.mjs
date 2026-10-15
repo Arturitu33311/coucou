@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { calls, emit, sent } from "./tauri.mjs";
-import { registerHookHandlers } from "../src/island/hooks.ts";
+import { registerHookHandlers, resetApprovalQueueForTests } from "../src/island/hooks.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 
 const CLAUDE = "integration_claude";
@@ -35,6 +35,7 @@ beforeEach(() => {
   State.paused = false;
   State.isPinned = false;
   State.pendingApproval = null;
+  resetApprovalQueueForTests();
   State.settings = { ...DEFAULT_SETTINGS };
   State.loadIntegrationTasks();
 });
@@ -515,13 +516,46 @@ test("a request from Claude Code in Cursor's terminal goes on the Cursor pill", 
   assert.equal(task().state, "idle");
 });
 
-test("a second request never replaces the card: it goes back to the terminal", () => {
+test("a second request never replaces the card: it waits in line and gets its card after the answer", () => {
   ask("r1");
   ask("r2", { tool_name: "Bash", tool_input: { command: "ls" } });
   assert.equal(State.pendingApproval.requestId, "r1");
   assert.equal(State.pendingApproval.tool, "Write");
+  assert.deepEqual(sent("approval_decline"), []);
+  // The relay of the second one is told to keep waiting.
+  assert.deepEqual(sent("approval_ack"), [{ requestId: "r1" }, { requestId: "r2" }]);
+  State.endApproval();
+  seconds(0);
+  assert.equal(State.pendingApproval.requestId, "r2");
+  assert.equal(State.pendingApproval.tool, "Bash");
+});
+
+test("the line holds five in all; the sixth goes back to its terminal", () => {
+  for (const id of ["r1", "r2", "r3", "r4", "r5", "r6"]) ask(id);
+  assert.equal(State.pendingApproval.requestId, "r1");
+  assert.deepEqual(sent("approval_decline"), [{ requestId: "r6" }]);
+  for (const id of ["r2", "r3", "r4", "r5"]) {
+    State.endApproval();
+    seconds(0);
+    assert.equal(State.pendingApproval.requestId, id);
+  }
+  State.endApproval();
+  seconds(0);
+  assert.equal(State.pendingApproval, null);
+});
+
+test("a waiting request whose turn ended is dropped, and one answered elsewhere too", () => {
+  ask("r1");
+  ask("r2", { session_id: "s2" });
+  ask("r3");
+  // s2's turn is over (a new prompt): its request is moot.
+  hook({ hook_event_name: "UserPromptSubmit", session_id: "s2", cwd: "/p" });
   assert.deepEqual(sent("approval_decline"), [{ requestId: "r2" }]);
-  assert.deepEqual(sent("approval_ack"), [{ requestId: "r1" }]);
+  // r3 was settled on the phone.
+  emit("hook-resolved", { request_id: "r3" });
+  State.endApproval();
+  seconds(0);
+  assert.equal(State.pendingApproval, null);
 });
 
 test("the same request arriving twice is acknowledged again, not declined", () => {
@@ -703,9 +737,38 @@ test("a declined permission request leaves the stop timer running", () => {
     { coucou_agent: "gemini" },
   );
   assert.equal(task("agent_gemini"), undefined);
-  // So is a second request while a card is already up.
-  ask("r1");
-  afterStop(() => ask("r2"));
-  assert.deepEqual(sent("approval_decline"), [{ requestId: "r1" }, { requestId: "r2" }]);
+  assert.deepEqual(sent("approval_decline"), [{ requestId: "r1" }]);
   assert.equal(task().state, "idle");
 });
+
+// ── Several sessions behind one pill (the Mac's PillSessionRegistry) ───────────
+
+test("one session's Stop does not finish the pill while a sibling is mid-turn", () => {
+  hook({ hook_event_name: "UserPromptSubmit", session_id: "a", cwd: "/p" });
+  hook({ hook_event_name: "PreToolUse", session_id: "b", cwd: "/q", tool_name: "Bash", tool_input: { command: "ls" } });
+  hook({ hook_event_name: "Stop", session_id: "a", cwd: "/p", last_assistant_message: "listo en a" });
+  assert.equal(task().state, "working");
+  assert.ok(task().steps.some((s) => String(s.text ?? s).includes("listo en a")));
+  hook({ hook_event_name: "Stop", session_id: "b", cwd: "/q" });
+  assert.equal(task().state, "finished");
+});
+
+test("a SessionEnd clears the pill only when it was the last live session", () => {
+  hook({ hook_event_name: "SessionStart", session_id: "a", cwd: "/p" });
+  hook({ hook_event_name: "SessionStart", session_id: "b", cwd: "/q" });
+  hook({ hook_event_name: "UserPromptSubmit", session_id: "b", cwd: "/q" });
+  hook({ hook_event_name: "SessionEnd", session_id: "a", cwd: "/p" });
+  assert.equal(task().state, "thinking");
+  hook({ hook_event_name: "SessionEnd", session_id: "b", cwd: "/q" });
+  assert.equal(task().state, "idle");
+});
+
+test("an external agent's pill stays while another of its sessions works", () => {
+  const oc = { coucou_agent: "opencode" };
+  hook({ hook_event_name: "PreToolUse", session_id: "a", cwd: "/p", tool_name: "bash", ...oc });
+  hook({ hook_event_name: "PreToolUse", session_id: "b", cwd: "/q", tool_name: "bash", ...oc });
+  hook({ hook_event_name: "Stop", session_id: "a", cwd: "/p", ...oc });
+  seconds(6);
+  assert.equal(task("agent_opencode").state, "working");
+});
+
