@@ -23,6 +23,9 @@ build). Branch from it and merge back into it; never start from `main` or from a
 - Verify before saying "done": desktop `cd windows && npx tsc --noEmit`; hook `cd windows/hook && cargo test`;
   Android `cd android && ./gradlew :app:compileDebugKotlin` (needs `local.properties`); Jinx panel
   `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`.
+- Install the Android app on a phone **only** with `android/scripts/install-phone.sh [ip:port]`, never a plain
+  `adb install`: without Play Store as the installer, banking apps (Nu) refuse to open beside the island
+  (`android/docs/BANK-APPS.md`). Never `adb uninstall` (it loses the Keystore key and the phone link).
 - Swift (`NotchBuddy/`) can only be compiled on a Mac: say so explicitly when you changed it and could not build it.
 - **Where things run: the server first, the PC only as the fallback.** Everything that must stay up for the
   system to work (Jinx's gateway and shared thread, presence, her mood, the Telegram mirror, the pendientes,

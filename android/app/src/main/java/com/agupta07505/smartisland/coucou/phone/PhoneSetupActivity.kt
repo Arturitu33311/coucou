@@ -134,6 +134,19 @@ internal fun Setup(modifier: Modifier = Modifier) {
     ) {
         ScreenHeader(title = "Ajustes", subtitle = "Mochi, este teléfono y la conexión con tus computadoras")
 
+        // Installed without a store: banking apps (Nu) will refuse to open beside the island (docs/BANK-APPS.md).
+        val installer = remember { InstallSource.installer(context) }
+        if (InstallSource.bankAppsWillBlock(installer)) {
+            SectionCard(
+                title = "Las apps de banco van a bloquear Coucou",
+                subtitle = "Se instaló sin tienda (instalador: ${installer ?: "ninguno"}), y apps como Nu se niegan a abrir " +
+                    "junto a su servicio de accesibilidad. Reinstálalo desde la laptop con android/scripts/install-phone.sh " +
+                    "(no con adb install a secas); conserva tus datos.",
+            ) {
+                StatusLine("Instalación sin tienda", Tone.Bad)
+            }
+        }
+
         GroupLabel("Mochi")
         SectionCard {
             var desk by remember { mutableStateOf(context.showDesk) }

@@ -8,7 +8,7 @@ connect *out* to a relay on the internet that passes encrypted messages between 
 (wire details: `docs/RELAY_LINK.md`, reasoning and threats: `android/RELAY_PLAN.md`, `android/RELAY_THREAT_CHECK.md`).
 
 You need: a free Cloudflare account, Node 22 or newer on the computer, this repository, and a phone with a debug build of
-Coucou for Android (`cd android && ./gradlew assembleDebug`, then `adb install -r app/build/outputs/apk/debug/app-debug.apk`).
+Coucou for Android (`cd android && ./gradlew assembleDebug`, then `android/scripts/install-phone.sh`, never a plain `adb install`: see android/docs/BANK-APPS.md).
 
 ## 1. Deploy the relay
 

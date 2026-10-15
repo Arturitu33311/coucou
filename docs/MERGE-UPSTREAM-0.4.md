@@ -93,7 +93,8 @@ Compilar e instalar: `cd windows && npm ci && npx tauri build --no-bundle`, lueg
       cara mientras su respuesta es la última (15 min); los avisos de Jinx en la isla también. Las 16 caras:
       `android/docs/screenshots/jinx-moods.png`. Una respuesta neutra no cambia nada (es a propósito).
 - [ ] Android: `cd android && ./gradlew :app:compileDebugKotlin :app:testDebugUnitTest` (aquí pasó con un
-      espejo de Maven Central: 354 tests) e `install -r` en S21 y S22.
+      espejo de Maven Central: 354 tests) e instalar en S21 y S22 **solo** con `android/scripts/install-phone.sh <ip:port>` (un `adb install` a secas hace que Nu
+      bloquee la app: android/docs/BANK-APPS.md).
 - [ ] Hub (Today, Tasks, Pomodoro, Notes, Clipboard…) y presence entre portátil y móvil.
 - [ ] Chat → Mochi: el selector de modelo; Ollama si está.
 - [ ] Clic derecho en Mochi: armario con los 21 atuendos; Mochi baila con Spotify si se activa esa píldora.
