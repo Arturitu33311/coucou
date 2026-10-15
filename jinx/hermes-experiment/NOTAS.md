@@ -104,3 +104,53 @@ Aparte, ausencia ≥12 h **sube** worry (`emotion_state_manager.py:311`: +4 +1.5
 Rango desde el 25 sep (mínimo–máximo): affection 70–77, trust 76–85, patience 65–71, energy 72–86,
 worry 18–35, boredom 12–20, resto prácticamente en su base: **todo el rango útil (0–120) está sin usar**
 y el 93.6 % de las filas tienen alguna dimensión ≥10 fuera de su base (por la presión, no por conversación).
+
+## 5. El experimento (instalado 2026-10-14 18:27, revisión 2026-10-21)
+
+Todo detrás de `~/.hermes/persona_experiment.json` (se relee en cada llamada; `"enabled": false` o archivo
+ausente = comportamiento original, sin reiniciar). Módulo: `plugins/persona-engine/persona_experiment.py`.
+
+| cambio | dónde | qué hace | interruptor |
+|---|---|---|---|
+| presión por fecha y una vez al día | `scripts/zynara_worry.py` (cron cada 4 h) | cuenta solo `vence` ≤ 3 días y aplica worry+7/energy+5 una vez por día de presupuesto (hoy: 6 corridas/día → 1) | `presion_due_filter`, `presion_once_per_day` |
+| `deterministic` = charla neutra | `emotion_state_manager.py` (`shape_event`) | sin inercia/momentum y con el tope ±10 sobre la base; el cron deja de bombear worry/energy sin fin | `deterministic_neutral` |
+| decaimiento exponencial | `emotion_calculator.py` (`apply_decay`) | integra en pasos de 15 min con la tasa recalculada; un paso de 10 h = diez de 1 h; ya no vuelve a la base de golpe | `exp_decay` |
+| ganancia en halagos/logros/roces | `shape_event` | ×1.75 praise/gratitude/achievement, ×1.5 encouragement/criticism/ignored; tope 12 por dimensión y banda ±30 de la base; celos e intimidad ×1 | `event_gain`, `gain_max_delta`, `gain_band` |
+| mensajes automáticos no cuentan | `update_emotion_state` | `[Home Assistant`, `[BRIEFING`… con rol user no son habla de Alan | `skip_automated` |
+| línea de matiz | `get_tone_modifiers` | una línea `【matiz del día】` en el bloque (buen humor / energía baja / algo de fondo preocupada / evento reciente) | `nuance_line` |
+
+Seguridad sin vigilancia: `persona_experiment_tripwire.py` (systemd --user, cada 15 min) apaga el JSON si
+alguna dimensión se aleja >40 de su base, `jealousy` ≥ 60 o hay ≥ 4 eventos negativos en 6 h; lo anota en
+`logs/persona_experiment.log` y en el JSON (`disabled_reason`).
+
+- Respaldo con fecha: `~/.hermes/backups_experimento_20261014-182737/` (los 3 archivos tocados + STATE.md + SOUL.md).
+- Volver atrás: `bash ~/.hermes/scripts/persona_experiment_revert.sh [--restore-state] [--reload]`
+  (`--restore-state` devuelve STATE.md/SOUL.md a los del 14 oct; sin eso los medidores se quedan y decaen solos).
+- Apagar al instante sin tocar código: `"enabled": false` en `persona_experiment.json`.
+- Código cargado en el gateway: `kill -USR1` el 2026-10-14 18:52 (el gateway ya usa los cambios).
+- Medir al terminar la semana: `python3 emotion_report.py --since 2026-10-14 --day 2026-10-20 --md-out despues.md`
+  (en el servidor; compara con `antes-20261014.md`).
+
+Limites conocidos (no resueltos): (a) el prompt se cachea por sesión: un evento no se nota hasta la siguiente
+sesión (el reset por tiempo ayuda); (b) el chat de las apps (`api_server`) no pasa por el motor;
+(c) el detector clasificó "oye jinx, busca la práctica 5…" como `greeting`: la detección en español es lo que
+más limita que haya eventos.
+
+## 6. Mochi: ánimo de fondo (paso 4)
+
+`jinx/jinx-assist/jinx_baseline.py` v2, usado por el gateway (`op: mood`) y por `mochi_presence.py`.
+Eventos recientes del turn log con intensidad que cae a la mitad cada 25 min (configurable,
+`JINX_MOOD_HALF_LIFE_MIN`) y se acumula (tope 2.0); cara con ≥ 0.5; calidez ≥ 74.5 con histéresis (sale en 72.5);
+sin umbrales negativos de estado; día tranquilo, noche (22–06) dormida. 52 + 27 tests.
+
+Medido con la misma repetición del log (muestras cada 5 min, `emotion_report.py`):
+
+| ventana | función | día 06–22 con cara | noche 22–06 con cara |
+|---|---|---|---|
+| desde 25 sep (3 semanas) | antes (`baseline_emote`) | **0.0 %** | 100 % (sleepy) |
+| desde 25 sep | después (`mood_now`) | **61.1 %** (happy por calidez 2309, laughing 8) | 100 % (sleepy) |
+| última semana (desde 8 oct) | después | **0.0 %** | 100 % (sleepy) |
+
+Lectura: el 61 % de las 3 semanas es la meseta de calidez de fines de septiembre (trust 83); la última semana,
+sin eventos emocionales y con calidez ~72, Mochi sigue tranquilo de día. Lo que lo haga más vivo depende de que
+lleguen eventos (el experimento de §5): volver a medir el 21 oct con las mismas órdenes.

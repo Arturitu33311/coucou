@@ -182,12 +182,14 @@ def section_mochi(rows, since):
             cur = sub[i]["dimensions"]
             le = sub[i].get("last_event")
             if le:
-                ev_hist.append({"t": sub[i]["t"], "trigger": le["trigger"], "deltas": le.get("deltas") or {}})
+                ev_hist.append({"t": sub[i]["t"].timestamp(), "trigger": le["trigger"],
+                                "deltas": le.get("deltas") or {}})
+                ev_hist = ev_hist[-200:]
             i += 1
         bucket = "day" if 6 <= t.hour < 22 else "night"
         if cur is not None:
             if hasattr(jb, "mood_now"):  # versión con eventos que decaen y histéresis
-                face, latch = jb.mood_now(cur, ev_hist, t, latch)
+                face, latch = jb.mood_now(cur, ev_hist, t.timestamp(), latch, t.hour)
             else:
                 face = jb.baseline_emote(cur, t.hour)
             cnt[bucket]["face" if face else "calm"] += 1

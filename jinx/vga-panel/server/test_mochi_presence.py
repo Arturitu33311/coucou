@@ -179,21 +179,57 @@ if __name__ == "__main__":
 
 
 class JinxMoodTest(unittest.TestCase):
-    STATE = "---\nemotion_state:\n  affection: 70\n  trust: 75\n  patience: 20\n  energy: 70\n---\n"
+    # calidez = (80 + 78 + 70) / 3 = 76 >= 74.5: contenta
+    STATE = "---\nemotion_state:\n  affection: 80\n  trust: 78\n  patience: 70\n  energy: 70\n---\n"
+    CALM = "---\nemotion_state:\n  affection: 70\n  trust: 75\n  patience: 65\n  energy: 70\n---\n"
 
-    def test_it_reads_her_state_md_once_a_minute(self):
+    def fresh(self, text, events=None):
+        import datetime as dt
+        import json
         import tempfile
         m = load()
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-            f.write(self.STATE)
+            f.write(text)
         m.JINX_STATE_MD = type(m.JINX_STATE_MD)(f.name)
-        m._jinx_cache.update(at=0.0, mood=None)
-        self.assertEqual(m.jinx_mood(1000.0), "grumpy")
-        os.unlink(f.name)
-        self.assertEqual(m.jinx_mood(1030.0), "grumpy")  # cached: the file is not read again yet
-        self.assertIsNone(m.jinx_mood(1100.0))            # read again: gone, so calm
+        log = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        for minutes_ago, trig, deltas in (events or []):
+            ts = dt.datetime.fromtimestamp(1000.0 - minutes_ago * 60).isoformat()
+            log.write(json.dumps({"timestamp": ts, "last_event": {"trigger": trig, "deltas": deltas}}) + "\n")
+        log.close()
+        m.JINX_EVENTS_LOG = type(m.JINX_STATE_MD)(log.name)
+        m._jinx_cache.update(at=0.0, mood=None, latch={})
+        self.addCleanup(lambda: [os.path.exists(x) and os.unlink(x) for x in (f.name, log.name)])
+        return m, f.name
+
+    def test_it_reads_her_state_md_once_a_minute(self):
+        m, state_file = self.fresh(self.STATE)
+        self.assertEqual(m.jinx_mood(1000.0), "happy")
+        os.unlink(state_file)
+        self.assertEqual(m.jinx_mood(1030.0), "happy")  # cached: the file is not read again yet
+        self.assertIsNone(m.jinx_mood(1100.0))           # read again: gone, so calm
+
+    def test_a_recent_event_gives_a_face_that_fades(self):
+        praise = (2, "praise", {"affection": 10, "trust": 5, "pride": 7, "energy": 4})
+        m, _ = self.fresh(self.CALM, [praise])
+        self.assertEqual(m.jinx_mood(1000.0), "proud")
+        self.assertIsNone(m.jinx_mood(1000.0 + 3 * 3600))  # hours later: calm again
+
+    def test_neutral_chat_and_cron_pushes_give_no_face(self):
+        m, _ = self.fresh(self.CALM, [(1, "normal_interaction", {"trust": 1}),
+                                      (1, "deterministic", {"worry": 7, "energy": 5})])
+        self.assertIsNone(m.jinx_mood(1000.0))
+
+    def test_warmth_does_not_flicker(self):
+        m, state_file = self.fresh(self.STATE)
+        self.assertEqual(m.jinx_mood(1000.0), "happy")
+        with open(state_file, "w") as f:  # 73.0: inside the 72.5-74.5 band, she stays happy
+            f.write("---\nemotion_state:\n  affection: 76\n  trust: 75\n  patience: 68\n---\n")
+        self.assertEqual(m.jinx_mood(1100.0), "happy")
+        with open(state_file, "w") as f:  # 71.0: out
+            f.write("---\nemotion_state:\n  affection: 72\n  trust: 72\n  patience: 69\n---\n")
+        self.assertIsNone(m.jinx_mood(1200.0))
 
     def test_without_her_file_she_is_calm(self):
         m = load()
-        m._jinx_cache.update(at=0.0, mood=None)
+        m._jinx_cache.update(at=0.0, mood=None, latch={})
         self.assertIsNone(m.jinx_mood(5000.0))
