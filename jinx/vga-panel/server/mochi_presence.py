@@ -32,9 +32,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.append(str(Path(__file__).resolve().parents[2] / "jinx-assist"))
 try:
-    from jinx_baseline import baseline_emote, parse_emotion_state
+    from jinx_baseline import load_recent_events, mood_now, parse_emotion_state
 except ImportError:  # sin el módulo el servidor sigue: simplemente no hay ánimo de fondo
-    baseline_emote = parse_emotion_state = None
+    load_recent_events = mood_now = parse_emotion_state = None
 
 BASE = Path(__file__).parent
 STATE_PATH = BASE / "mochi_presence_state.json"
@@ -50,6 +50,9 @@ DEVICES = ("pc", "s21", "s22")  # el panel (vga) es el failsafe: siempre present
 ALIASES = {"laptop": "pc"}
 # El STATE.md de Hermes (local en este servidor) y cada cuánto se vuelve a leer.
 JINX_STATE_MD = Path(os.environ.get("MOCHI_JINX_STATE", str(Path.home() / ".hermes" / "STATE.md")))
+# El log de turnos de Hermes: de ahí salen los eventos recientes (halagos, roces…) que le dan cara a Mochi.
+JINX_EVENTS_LOG = Path(os.environ.get("MOCHI_JINX_EVENTS",
+                                      str(Path.home() / ".hermes" / "logs" / "emotion_turn_log.jsonl")))
 JINX_MOOD_TTL = 60
 # La página del panel (kiosco) es el único navegador que habla con este servidor desde un origen web.
 PANEL_ORIGINS = ("http://127.0.0.1:8896", "http://localhost:8896")
@@ -89,7 +92,7 @@ def save():
         pass
 
 
-_jinx_cache = {"at": 0.0, "mood": None}
+_jinx_cache = {"at": 0.0, "mood": None, "latch": {}}
 
 
 def jinx_mood(now: float):
@@ -97,14 +100,15 @@ def jinx_mood(now: float):
     Nunca falla: sin archivo, sin módulo o con un archivo raro es None (tranquila)."""
     if now - _jinx_cache["at"] < JINX_MOOD_TTL:
         return _jinx_cache["mood"]
-    mood = None
-    if baseline_emote is not None:
+    mood, latch = None, _jinx_cache["latch"]
+    if mood_now is not None:
         try:
             st = parse_emotion_state(JINX_STATE_MD.read_text(encoding="utf-8"))
-            mood = baseline_emote(st, time.localtime(now).tm_hour)
+            mood, latch = mood_now(st, load_recent_events(JINX_EVENTS_LOG, now), now, latch,
+                                   time.localtime(now).tm_hour)
         except Exception:
             mood = None
-    _jinx_cache.update(at=now, mood=mood)
+    _jinx_cache.update(at=now, mood=mood, latch=latch)
     return mood
 
 

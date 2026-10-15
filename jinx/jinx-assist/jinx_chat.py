@@ -54,6 +54,9 @@ class Deps:
     state: Optional[Callable[[], dict]] = None
     # La hora local (0-23) para el ánimo de noche. None = el reloj de este equipo.
     hour: Optional[Callable[[], int]] = None
+    # Los eventos emocionales recientes de Hermes (turn log) para que la cara siga a lo que acaba de pasar:
+    # () -> [{"t", "trigger", "deltas"}], o lanza. None = sin eventos (la cara sale solo del estado).
+    events: Optional[Callable[[], list]] = None
 
 
 # ---------- ánimo ----------
@@ -78,7 +81,9 @@ def split_mood(text):
 
 # parse_emotion_state, baseline_emote y sus umbrales viven en jinx_baseline.py: el servidor de presencia usa los
 # mismos (ver ese módulo).
-from jinx_baseline import baseline_emote, parse_emotion_state  # noqa: E402,F401
+from jinx_baseline import baseline_emote, mood_now, parse_emotion_state, parse_events_log  # noqa: E402,F401
+
+_MOOD_LATCH = {}  # la histéresis de "contenta" (jinx_baseline.mood_now) entre llamadas de este proceso
 
 
 def _mood_event(deps):
@@ -93,7 +98,13 @@ def _mood_event(deps):
         hour = deps.hour() if deps.hour else time.localtime().tm_hour
     except Exception:  # noqa: BLE001
         hour = None
-    return {"ev": "mood", "emote": baseline_emote(state, hour), "source": "state", "emotion_state": state}
+    try:
+        events = deps.events() if deps.events else []
+    except Exception:  # noqa: BLE001 - sin eventos la cara sigue siendo la del estado
+        events = []
+    global _MOOD_LATCH
+    emote, _MOOD_LATCH = mood_now(state, events, time.time(), _MOOD_LATCH, hour)
+    return {"ev": "mood", "emote": emote, "source": "state", "emotion_state": state}
 
 
 _TOKEN_RE = re.compile(r"(?:bot)?\d{6,}(?::|%3A)[A-Za-z0-9_-]{20,}", re.IGNORECASE)
@@ -471,6 +482,16 @@ def ssh_state_reader(timeout=12, runner=subprocess.run):
     return state
 
 
+EVENTS_CMD = os.environ.get("JINX_EVENTS_CMD", "tail -c 262144 /home/alan/.hermes/logs/emotion_turn_log.jsonl")
+
+
+def ssh_events_reader(timeout=12, runner=subprocess.run):
+    """Los eventos emocionales recientes de Hermes: la cola del turn log del servidor, por ssh (solo lectura, con
+    tope de tiempo y de bytes). Lanza si el comando falla; el llamador lo trata como "sin eventos"."""
+    p = runner(hermes_argv(EVENTS_CMD), capture_output=True, text=True, timeout=timeout)
+    return parse_events_log(p.stdout)
+
+
 class HermesBrain:
     """La Jinx real, con su memoria, sus herramientas y la conversación de Telegram."""
 
@@ -654,7 +675,8 @@ def build_server_deps(base=BASE, defer=False, secret=server_secret):
                 lambda: {"openrouter_key": lazy("OPENROUTER_API_KEY"), "telegram_token": lazy("TELEGRAM_BOT_TOKEN"),
                          "chat": lazy("TELEGRAM_ALLOWED_CHAT")},
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
-                state=None if no_hermes else ssh_state_reader)
+                state=None if no_hermes else ssh_state_reader,
+                events=None if no_hermes else ssh_events_reader)
 
 
 def build_real_deps(base=BASE, defer=False):
@@ -689,7 +711,8 @@ def build_real_deps(base=BASE, defer=False):
                 jinx_brain.core, memory,
                 lambda: {"openrouter_key": jinx_brain.key or "", "telegram_token": token(), "chat": chat()},
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
-                state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader)
+                state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
+            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader)
 
 
 def flush_mirror_main():
@@ -785,7 +808,8 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
         # Las ops ligeras (history, mood) no necesitan cerebro ni bóveda; mood sí necesita poder leer el estado.
         deps = build_real_deps(defer=True) if needs_real else Deps(
             Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE,
-            state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader)
+            state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
+            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader)
     except Exception as e:  # noqa: BLE001
         stdout.write(json.dumps(_err("gateway sin cerebro: %s" % e)) + "\n")
         return 0
