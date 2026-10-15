@@ -23,7 +23,7 @@ B=$H/backups_experimento_$stamp
 python3 "$here/apply_patches.py" --home "$H" --check
 
 if grep -q persona_experiment "$PE/emotion_calculator.py" 2>/dev/null; then
-  echo "parches ya aplicados: solo actualizo persona_experiment.py y el disparador"
+  echo "parches ya aplicados (los que falten se completan): actualizo persona_experiment.py y el disparador"
 else
   mkdir -p "$B/plugins/persona-engine" "$B/scripts"
   cp -a "$PE/emotion_calculator.py" "$PE/emotion_state_manager.py" "$B/plugins/persona-engine/"
@@ -31,8 +31,8 @@ else
   cp -a "$H/STATE.md" "$H/SOUL.md" "$B/"
   echo "$B" > "$H/persona_experiment_backup_dir"
   echo "respaldo en $B"
-  python3 "$here/apply_patches.py" --home "$H"
 fi
+python3 "$here/apply_patches.py" --home "$H"
 
 install -m 644 "$here/persona_experiment.py" "$PE/persona_experiment.py"
 install -m 755 "$here/persona_experiment_tripwire.py" "$H/scripts/persona_experiment_tripwire.py"

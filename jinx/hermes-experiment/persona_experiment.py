@@ -170,8 +170,9 @@ def presion_tasks(text: str, pending: list, days: int) -> list:
     return urgent_tasks(text, None, days)
 
 
-def presion_claim(budget_day: str) -> bool:
-    """True si la presión puede aplicarse ahora. Apagado: siempre. Encendido: una vez por día de presupuesto."""
+def presion_claim(budget_day: str, commit: bool = True) -> bool:
+    """True si la presión puede aplicarse ahora. Apagado: siempre. Encendido: una vez por día de presupuesto.
+    `commit=False` (un --dry-run) mira sin reclamar el día."""
     if not on("presion_once_per_day"):
         return True
     path = _home() / "state" / "persona_experiment_presion.json"
@@ -180,6 +181,8 @@ def presion_claim(budget_day: str) -> bool:
             return False
     except (OSError, ValueError):
         pass
+    if not commit:
+        return True
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"day": budget_day, "at": datetime.now().isoformat(timespec="seconds")}),

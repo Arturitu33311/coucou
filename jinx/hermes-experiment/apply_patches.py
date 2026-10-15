@@ -66,7 +66,7 @@ ZW = ("scripts/zynara_worry.py", [
      "                sys.path.insert(0, str(HERMES_HOME / \"plugins\" / \"persona-engine\"))\n"
      "                import persona_experiment as _px\n"
      "                pendientes = _px.presion_tasks(texto, pendientes, PRESION_DIAS)\n"
-     "                _claim = lambda: _px.presion_claim(dia_presupuesto())  # noqa: E731\n"
+     "                _claim = lambda: _px.presion_claim(dia_presupuesto(), \"--dry-run\" not in sys.argv)  # noqa: E731\n"
      "            except Exception:\n"
      "                _claim = lambda: True  # noqa: E731\n"
      "            if len(pendientes) >= PRESION_MIN_TAREAS and _claim():\n"),

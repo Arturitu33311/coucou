@@ -205,6 +205,12 @@ class PresionTest(unittest.TestCase):
         self.assertFalse(px.presion_claim("2026-10-14"))
         self.assertTrue(px.presion_claim("2026-10-15"))
 
+    def test_dry_run_does_not_consume_the_day(self):
+        self.assertTrue(px.presion_claim("2026-10-14", commit=False))
+        self.assertTrue(px.presion_claim("2026-10-14", commit=False))
+        self.assertTrue(px.presion_claim("2026-10-14"))
+        self.assertFalse(px.presion_claim("2026-10-14", commit=False))
+
     def test_off_always_claims(self):
         self.h.set({"enabled": False})
         self.assertTrue(px.presion_claim("2026-10-14"))
