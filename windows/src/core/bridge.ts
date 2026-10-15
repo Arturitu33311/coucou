@@ -423,6 +423,8 @@ export const Bridge = {
   jinxTest: () => callOrThrow<string>("jinx_test"),
   /** The tail of Jinx's shared thread (Telegram, the phones, this PC); null when Jinx is reached through
    *  the Hermes API instead of the gateway. */
+  /** A coding agent's news for Jinx to pass on where you are (or by Telegram); true when it went to Telegram. */
+  jinxNotify: (text: string, kind: "info" | "warn" | "alert") => call<boolean>("jinx_notify", { text, kind }),
   jinxHistory: (n: number) =>
     callOrThrow<{ id: string; ts: number; src: string; text: string }[] | null>("jinx_history", { n }),
   /**

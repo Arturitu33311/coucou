@@ -57,6 +57,9 @@ class Deps:
     # Los eventos emocionales recientes de Hermes (turn log) para que la cara siga a lo que acaba de pasar:
     # () -> [{"t", "trigger", "deltas"}], o lanza. None = sin eventos (la cara sale solo del estado).
     events: Optional[Callable[[], list]] = None
+    # El servidor de presencia (op notify): (text, kind, source) -> True/False (alguien mira / nadie) o lanza si
+    # no está. None = el de este equipo en 127.0.0.1:8897.
+    presence: Optional[Callable[[str, str, str], bool]] = None
 
 
 # ---------- ánimo ----------
@@ -84,6 +87,47 @@ def split_mood(text):
 from jinx_baseline import baseline_emote, mood_now, parse_emotion_state, parse_events_log  # noqa: E402,F401
 
 _MOOD_LATCH = {}  # la histéresis de "contenta" (jinx_baseline.mood_now) entre llamadas de este proceso
+
+
+# ---------- avisos de los agentes (op notify) ----------
+#
+# Coucou del PC le cuenta a Jinx lo que hacen sus agentes de código (Claude Code, Antigravity, OpenCode…)
+# cuando no estás en el PC: una tarea larga que terminó, un error, un permiso que lleva rato esperando.
+# Jinx lo dice en el dispositivo que estés usando (el servidor de presencia, como sus otros avisos) y, si nadie
+# está mirando ninguno, por Telegram. No entra en el hilo: no son palabras suyas ni tuyas.
+
+NOTIFY_MAX = 300
+NOTIFY_KINDS = ("info", "warn", "alert")
+PRESENCE_URL = os.environ.get("JINX_PRESENCE_URL", "http://127.0.0.1:8897/api/mochi/message")
+
+
+def presence_post(text, kind, source, url=PRESENCE_URL, opener=urllib.request.urlopen):
+    """Un aviso al servidor de presencia (desde el propio servidor no hace falta llave). True si alguien mira
+    un dispositivo, False si nadie; lanza si el servidor no está."""
+    body = json.dumps({"text": text, "kind": kind, "source": source, "mood": None}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    with opener(req, timeout=6) as r:
+        d = json.loads(r.read() or b"{}")
+    if not d.get("ok"):
+        raise RuntimeError("presencia rechazó el aviso")
+    return d.get("watched") is not False
+
+
+def _notify(req, deps):
+    text = req.get("text") if isinstance(req.get("text"), str) else ""
+    text = " ".join(text.split())[:NOTIFY_MAX]
+    if not text:
+        return _err("notify necesita text")
+    kind = req.get("kind") if req.get("kind") in NOTIFY_KINDS else "info"
+    source = str(req.get("source") or "agentes")[:60]
+    try:
+        watched = (deps.presence or presence_post)(text, kind, source)
+    except Exception:  # noqa: BLE001 - sin presencia (p. ej. el gateway de respaldo del portátil): Telegram
+        watched = None
+    telegram = False
+    if watched is not True:
+        telegram = bool(deps.mirror.send(MIRROR_PREFIX["jinx"] + text))
+    return {"ev": "notified", "watched": watched, "telegram": telegram}
 
 
 def _mood_event(deps):
@@ -272,6 +316,8 @@ def handle(req, deps):
                "mirrored_ids": mirrored_ids}
     elif op == "mood":
         yield _mood_event(deps)
+    elif op == "notify":
+        yield _notify(req, deps)
     elif op == "core":
         yield {"ev": "core", "core": deps.core_text, "memory": deps.memory_text}
     elif op == "provision":
@@ -802,7 +848,7 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
     except ValueError:
         req = {}
     # Sólo se construye el cerebro real si la op lo necesita (history no).
-    needs_real = isinstance(req, dict) and req.get("op") in ("send", "core", "provision", "merge")
+    needs_real = isinstance(req, dict) and req.get("op") in ("send", "core", "provision", "merge", "notify")
     t_start = time.time()
     try:
         # Las ops ligeras (history, mood) no necesitan cerebro ni bóveda; mood sí necesita poder leer el estado.

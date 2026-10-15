@@ -1003,6 +1003,18 @@ async fn jinx_send(
     jinx::send(app, &jinx, text, context, hub_shared).await
 }
 
+/// A coding agent's news for Jinx to pass on (see jinx_gateway::notify). Nothing when the gateway is not used.
+#[tauri::command]
+async fn jinx_notify(shared: State<'_, Shared>, text: String, kind: String) -> Result<bool, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(false);
+    }
+    tauri::async_runtime::spawn_blocking(move || jinx_gateway::notify(&text, &kind))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// The tail of Jinx's shared thread (Telegram, the phones and this PC), when the gateway is used.
 #[tauri::command]
 async fn jinx_history(shared: State<'_, Shared>, n: u32) -> Result<Option<Vec<serde_json::Value>>, String> {
@@ -1398,6 +1410,7 @@ pub fn run() {
             agent_stop,
             jinx_send,
             jinx_history,
+            jinx_notify,
             jinx_approve,
             jinx_stop,
             jinx_test,

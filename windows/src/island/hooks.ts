@@ -17,6 +17,8 @@ import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { N_, t } from "../i18n/i18n";
 import { ApprovalQueue } from "./approval-queue";
 import { SessionRegistry } from "./session-registry";
+import { AgentNotices, WAIT_MS, type Notice } from "./agent-notices";
+import { Presence } from "../core/presence";
 
 const CLAUDE_ID = "integration_claude";
 const CURSOR_ID = "agent_cursor";
@@ -40,10 +42,20 @@ export function pillSessions(pillId: string): { live: number; working: number } 
   return sessions.count(pillId, Date.now());
 }
 
+/** What Jinx is told about the agents while you are away from the PC (agent-notices.ts). */
+let notices = new AgentNotices();
+
+/** Away: another device has Mochi (or the panel: nobody in use). Here, the island itself shows it all. */
+function tellJinx(n: Notice | null) {
+  if (!n || Presence.active) return;
+  void Bridge.jinxNotify(n.text, n.kind);
+}
+
 /** Tests start from an empty line and no sessions. */
 export function resetApprovalQueueForTests(): void {
   while (waiting.size) waiting.next(Number.MAX_SAFE_INTEGER);
   sessions.clear();
+  notices = new AgentNotices();
 }
 
 /** Once no card is up, the next waiting request gets its card. */
@@ -370,6 +382,8 @@ function handleHook(island: Island, payload: HookPayload) {
   const agentId = validAgent ? `agent_${validAgent}` : workspaceId;
   const isExternalAgent = validAgent !== null;
   const sessionId = payload.session_id ?? "";
+  /** How Jinx names it: "Claude Code", "Antigravity", "OpenCode"… */
+  const who = validAgent ? agentName(validAgent) : workspaceId === CURSOR_ID ? "Cursor" : "Claude Code";
 
   /** Alerts force the island open; work events only reveal the compact island. */
   const surface = (view: Parameters<Island["alert"]>[0], isAlert: boolean) => {
@@ -490,6 +504,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "UserPromptSubmit": {
+      notices.begin(agentId, sessionId, Date.now());
       ensurePill();
       supersedeStop();
       clearFinalLine(agentId);
@@ -502,6 +517,8 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PreToolUse": {
+      // (OpenCode and Antigravity's turns may start with a tool, not a prompt.)
+      notices.begin(agentId, sessionId, Date.now());
       ensurePill();
       supersedeStop();
       clearFinalLine(agentId);
@@ -558,6 +575,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop": {
+      tellJinx(notices.finished(agentId, sessionId, Date.now(), who, projectName));
       // A sibling session is still mid-turn behind this pill: only this session finished. Its last words go in
       // the steps; the pill keeps working.
       if (sessionId && sessions.endTurn(agentId, sessionId, Date.now()) === "sessionOnly") {
@@ -607,6 +625,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "StopFailure":
+      tellJinx(notices.failed(agentId, sessionId, Date.now(), who, projectName));
       // The error shows whatever the siblings do; this session's turn is over.
       if (sessionId) sessions.endTurn(agentId, sessionId, Date.now());
       supersedeStop();
@@ -617,6 +636,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SessionEnd":
+      notices.forget(agentId, sessionId);
       // Another session is still live behind this pill: only this one ended.
       if (sessionId && sessions.endSession(agentId, sessionId, Date.now()) === "sessionOnly") break;
       // Nothing left for the timer to do, and it must not outlive the session: a
@@ -660,6 +680,14 @@ function handleHook(island: Island, payload: HookPayload) {
       }
 
       const requestId = payload.request_id ?? "";
+      // Still unanswered after a while, with you away: Jinx tells you where you are.
+      if (requestId && replayingSince == null) {
+        const tool = payload.tool_name ?? "Tool";
+        window.setTimeout(() => {
+          const still = State.pendingApproval?.requestId === requestId || waiting.position(requestId) > 0;
+          if (still) tellJinx(notices.waiting(agentId, sessionId, Date.now(), who, projectName, tool));
+        }, WAIT_MS);
+      }
       // One card, one request: a second one never quietly replaces the first. It waits in line (up to five in
       // all, as on the Mac) and gets its card when this one is answered; past that, back to its terminal.
       if (State.pendingQuestion || (State.pendingApproval && State.pendingApproval.requestId !== requestId)) {

@@ -789,3 +789,32 @@ test("a declared agent's pill stays after its turn and its session; an undeclare
   seconds(6);
   assert.equal(task("agent_antigravity"), undefined);
 });
+
+// ── Jinx hears about the agents while you are away ───────────────────────────
+
+test("away from the PC, a long run finishing and a waiting permission reach Jinx; here, nothing does", async () => {
+  const { Presence } = await import("../src/core/presence.ts");
+  const oc = { coucou_agent: "opencode", session_id: "a", cwd: "/home/me/web" };
+  // How long a run took is read from the clock: this test moves it too.
+  mock.timers.reset();
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_800_000_000_000 });
+  try {
+    Presence.active = false;
+    hook({ hook_event_name: "PreToolUse", tool_name: "bash", ...oc });
+    seconds(5 * 60);
+    hook({ hook_event_name: "Stop", ...oc });
+    assert.deepEqual(sent("jinx_notify").at(-1), { text: "OpenCode terminó en web (5 min).", kind: "info" });
+    ask("r1");
+    seconds(45);
+    assert.deepEqual(sent("jinx_notify").at(-1), { text: "Claude Code te espera en proj: quiere usar Write.", kind: "alert" });
+    // At the PC: the island shows it, Jinx says nothing.
+    const before = sent("jinx_notify").length;
+    Presence.active = true;
+    hook({ hook_event_name: "UserPromptSubmit", session_id: "z", cwd: "/p" });
+    seconds(5 * 60);
+    hook({ hook_event_name: "Stop", session_id: "z", cwd: "/p" });
+    assert.equal(sent("jinx_notify").length, before);
+  } finally {
+    Presence.active = true;
+  }
+});

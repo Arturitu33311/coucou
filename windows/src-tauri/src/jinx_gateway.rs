@@ -277,6 +277,20 @@ pub fn background_mood() -> Result<Option<String>, String> {
     Err("Jinx's gateway gave no mood".into())
 }
 
+/// Tells Jinx what a coding agent did while you were away (`op: notify`): she says it on the device you are
+/// using, or by Telegram when nobody is watching. Ok(true) when it reached Telegram.
+pub fn notify(text: &str, kind: &str) -> Result<bool, String> {
+    let events = run(&json!({ "op": "notify", "text": text, "kind": kind, "source": "agentes" }), HISTORY_TIMEOUT)?;
+    for ev in &events {
+        match ev["ev"].as_str() {
+            Some("notified") => return Ok(ev["telegram"].as_bool().unwrap_or(false)),
+            Some("error") => return Err(ev["msg"].as_str().unwrap_or("error").to_string()),
+            _ => {}
+        }
+    }
+    Err("Jinx's gateway did not take the notice".into())
+}
+
 /// Is the gateway there and answering? What to tell the user.
 pub fn test() -> Result<String, String> {
     let lines = history(500)?.len();
