@@ -772,3 +772,20 @@ test("an external agent's pill stays while another of its sessions works", () =>
   assert.equal(task("agent_opencode").state, "working");
 });
 
+
+test("a declared agent's pill stays after its turn and its session; an undeclared one goes", () => {
+  State.settings = { ...State.settings, activeIntegrations: ["agent_opencode"] };
+  State.loadIntegrationTasks();
+  const oc = { coucou_agent: "opencode", session_id: "a", cwd: "/p" };
+  hook({ hook_event_name: "PreToolUse", tool_name: "bash", ...oc });
+  hook({ hook_event_name: "Stop", ...oc });
+  seconds(6);
+  assert.equal(task("agent_opencode").state, "idle");
+  hook({ hook_event_name: "SessionEnd", ...oc });
+  assert.ok(task("agent_opencode"));
+  const ag = { coucou_agent: "antigravity", session_id: "b", cwd: "/q" };
+  hook({ hook_event_name: "PreToolUse", tool_name: "run_command", ...ag });
+  hook({ hook_event_name: "Stop", ...ag });
+  seconds(6);
+  assert.equal(task("agent_antigravity"), undefined);
+});

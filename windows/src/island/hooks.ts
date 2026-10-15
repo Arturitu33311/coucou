@@ -585,7 +585,9 @@ function handleHook(island: Island, payload: HookPayload) {
         agentId,
         window.setTimeout(() => {
           stopTimers.delete(agentId);
-          if (isExternalAgent) {
+          // An agent's pill goes away after its turn unless it is declared (or the main pill): then it stays,
+          // as on the Mac, so Antigravity and OpenCode can sit next to Jinx like Claude Code.
+          if (isExternalAgent && !State.isKept(agentId)) {
             State.removeTask(agentId);
           } else {
             State.updateTask(agentId, "idle");
@@ -621,7 +623,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // pill recreated within 5.2 s would be removed by it.
       cancelStopTimer(agentId);
       State.clearSessionDiffs(agentId);
-      if (isExternalAgent) {
+      if (isExternalAgent && !State.isKept(agentId)) {
         State.removeTask(agentId);
       } else {
         State.updateTask(agentId, "idle");
