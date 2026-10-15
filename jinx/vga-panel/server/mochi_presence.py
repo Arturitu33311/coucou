@@ -92,6 +92,11 @@ def save():
         pass
 
 
+def hour_of(now: float) -> int:
+    """La hora local de `now` (de 22 a 6 Mochi duerme). Aparte para que los tests no dependan del huso horario."""
+    return time.localtime(now).tm_hour
+
+
 _jinx_cache = {"at": 0.0, "mood": None, "latch": {}}
 
 
@@ -105,7 +110,7 @@ def jinx_mood(now: float):
         try:
             st = parse_emotion_state(JINX_STATE_MD.read_text(encoding="utf-8"))
             mood, latch = mood_now(st, load_recent_events(JINX_EVENTS_LOG, now), now, latch,
-                                   time.localtime(now).tm_hour)
+                                   hour_of(now))
         except Exception:
             mood = None
     _jinx_cache.update(at=now, mood=mood, latch=latch)

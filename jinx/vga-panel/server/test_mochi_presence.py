@@ -188,6 +188,8 @@ class JinxMoodTest(unittest.TestCase):
         import json
         import tempfile
         m = load()
+        # De día, en cualquier huso horario donde corran los tests (la noche se prueba aparte).
+        m.hour_of = lambda now: 15
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
             f.write(text)
         m.JINX_STATE_MD = type(m.JINX_STATE_MD)(f.name)
