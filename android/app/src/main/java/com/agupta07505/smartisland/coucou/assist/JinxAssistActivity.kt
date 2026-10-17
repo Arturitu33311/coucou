@@ -142,6 +142,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
     fun setShown(visible: Boolean) {
         shown.value = visible
+        com.agupta07505.smartisland.coucou.presence.JinxChatScreen.visible = visible
     }
 
     private fun pollApprovals() {
@@ -207,6 +208,8 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
             val line = repo.enqueue(t)
             refresh()
             val r = repo.answer(line)
+            // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
+            if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->
                 when (r) {
                     is SendResult.Answered -> ui.copy(

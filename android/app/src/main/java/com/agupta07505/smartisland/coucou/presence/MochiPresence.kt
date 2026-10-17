@@ -114,6 +114,11 @@ object PresenceNet {
     }
 }
 
+/** Whether Jinx's chat tab is on screen (set by its screen); her replies then are not repeated on the island. */
+object JinxChatScreen {
+    @Volatile var visible = false
+}
+
 /** What the island shows of Jinx's inbox: one card with the latest text. */
 object IslandJinx {
     const val KEY = "coucou_jinx"
@@ -308,9 +313,22 @@ object MochiPresence {
         // Only the device Mochi is on shows Jinx's texts, and it does not ack them while another one is.
         if (!DeviceActivity.active.value) return
         val nowS = System.currentTimeMillis() / 1000
-        val (stale, fresh) = inbox.partition { nowS - it.ts > 3600 }
-        ack(app, stale.map { it.id }.toSet())
+        val (stale, recent) = inbox.partition { nowS - it.ts > 3600 }
+        // A reply of Jinx's while her chat is on screen here is already read there: not on the island too.
+        val (seen, fresh) = recent.partition { alreadyInChat(it, JinxChatScreen.visible) }
+        ack(app, (stale + seen).map { it.id }.toSet())
         shownIds = IslandJinx.publish(app, fresh, autoExpandAlert = true)
+    }
+
+    /** A Jinx reply (the gateway's `jinx-chat` source) shown in her open chat needs no island card. Pure. */
+    fun alreadyInChat(m: PresenceMsg, chatVisible: Boolean): Boolean = chatVisible && m.source == CHAT_SOURCE
+
+    const val CHAT_SOURCE = "jinx-chat"
+
+    /** Looks at the inbox now (a reply just came while her chat is not on screen), not at the next tick. */
+    fun pokeNow(app: Context) {
+        if (job?.isActive != true) return
+        ioScope.launch { runCatching { tick(app) } }
     }
 
     /** Jinx's background mood in a heartbeat answer (`jinx_mood`, one of Mochi's emotes), else null. Pure. */

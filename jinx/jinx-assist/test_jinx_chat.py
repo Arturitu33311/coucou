@@ -54,13 +54,13 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(ev[-1], {"ev": "done", "mode": "or", "text": "respuesta", "mirrored": True})
         ids = [d["id"] for d in self.thread.read()]
         self.assertEqual(ids, ["c1:s21", "c1:jinx"])
-        self.assertEqual(self.mirror.sent, ["📱 hola", "⚠️ Respaldo (Hermes no contestó): respuesta"])
+        self.assertEqual(self.mirror.sent, ["hola", "⚠️ respuesta"])
         self.assertEqual(self.thread.unmirrored(), [])
 
     def test_a_reply_from_hermes_goes_to_telegram_without_a_mark(self):
         self.brain.reply = lambda messages: ("hermes", "la real")
         self.events({"op": "send", "text": "hola", "cid": "c9", "src": "s22"})
-        self.assertEqual(self.mirror.sent, ["📱 hola", "la real"])
+        self.assertEqual(self.mirror.sent, ["hola", "la real"])
         self.assertNotIn("via", self.thread.read()[-1])
 
     def test_the_backup_mark_survives_a_merge(self):
@@ -69,6 +69,28 @@ class GatewayTest(unittest.TestCase):
         other.merge([{"id": "x:jinx", "ts": 1.0, "src": "jinx", "text": "t", "cid": "x", "via": "or"},
                      {"id": "y:jinx", "ts": 2.0, "src": "jinx", "text": "t", "cid": "y", "via": "bogus"}])
         self.assertEqual([d.get("via") for d in other.read()], ["or", None])
+
+    def test_someone_watching_gets_the_reply_on_their_island_not_telegram(self):
+        got = []
+        self.deps.presence = lambda t, k, src: got.append((t, k, src)) or True
+        self.brain.reply = lambda messages: ("hermes", "la real")
+        ev = self.events({"op": "send", "text": "hola", "cid": "c7", "src": "s22"})
+        self.assertEqual(got, [("la real", "info", "jinx-chat")])
+        self.assertEqual(self.mirror.sent, [])
+        self.assertTrue(ev[-1]["mirrored"])
+        self.assertEqual(self.thread.unmirrored(), [])  # handled: never repeated to Telegram later
+
+    def test_nobody_watching_or_no_presence_sends_it_to_telegram(self):
+        self.deps.presence = lambda t, k, src: False
+        self.brain.reply = lambda messages: ("hermes", "la real")
+        self.events({"op": "send", "text": "hola", "cid": "c8", "src": "s22"})
+        self.assertEqual(self.mirror.sent, ["hola", "la real"])
+
+    def test_a_backup_reply_carries_only_the_warning_emoji(self):
+        got = []
+        self.deps.presence = lambda t, k, src: got.append(t) or True
+        self.events({"op": "send", "text": "hola", "cid": "c6", "src": "s22"})
+        self.assertEqual(got, ["⚠️ respuesta"])
 
     def test_same_cid_twice_does_not_call_the_model_again(self):
         self.events({"op": "send", "text": "hola", "cid": "c1", "src": "s21"})
@@ -103,7 +125,7 @@ class GatewayTest(unittest.TestCase):
         self.mirror.sent.clear()
         self.events({"op": "send", "text": "dos", "cid": "c2", "src": "s21"})
         self.assertEqual(self.thread.unmirrored(), [])
-        self.assertEqual(self.mirror.sent[:2], ["📱 uno", "⚠️ Respaldo (Hermes no contestó): respuesta"])
+        self.assertEqual(self.mirror.sent[:2], ["uno", "⚠️ respuesta"])
 
     def test_telegram_text_is_cut_but_thread_keeps_it_whole(self):
         long = "x" * 10000
@@ -120,7 +142,7 @@ class GatewayTest(unittest.TestCase):
         ev = self.events({"op": "send", "text": "desde el escritorio", "cid": "p1", "src": "pc"})
         self.assertEqual(ev[-1]["ev"], "done")
         self.assertEqual([d["src"] for d in self.thread.read()], ["pc", "jinx"])
-        self.assertEqual(self.mirror.sent, ["💻 desde el escritorio", "⚠️ Respaldo (Hermes no contestó): respuesta"])
+        self.assertEqual(self.mirror.sent, ["desde el escritorio", "⚠️ respuesta"])
 
     def test_unknown_src_is_rejected(self):
         ev = self.events({"op": "send", "text": "x", "cid": "c", "src": "evil"})
@@ -141,7 +163,7 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(ev["added"], 1)
         self.assertEqual([d["text"] for d in ev["items"]], ["de telegram", "sin red"])
         self.assertEqual(ev["mirrored_ids"], ["c9:s22"])
-        self.assertEqual(self.mirror.sent, ["📱 sin red"])
+        self.assertEqual(self.mirror.sent, ["sin red"])
 
     def test_concurrent_sends_of_the_same_cid_call_the_model_once(self):
         import threading

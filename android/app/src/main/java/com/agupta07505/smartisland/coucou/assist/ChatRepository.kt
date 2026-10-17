@@ -69,8 +69,9 @@ class ChatRepository(
             try {
                 val text = b.reply(store.tail(CONTEXT))
                 val via = if (b.via == Via.Cloud) "or" else "local"
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, false, via = via))
-                flushMirror()
+                // Alan is on this phone (he just wrote here): he reads it here, it does not go to Telegram.
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true, via = via))
+                store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, b.via)
             } catch (e: ChatException) {
                 reason = e.message ?: reason

@@ -31,18 +31,18 @@ BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
 # Quien puede escribir por el gateway: los dos teléfonos y Coucou del PC (local, sin ssh).
 SRCS = ("s21", "s22", "pc")
 # Cómo se ve cada origen al espejarlo en Telegram.
-# En Telegram, lo que escribió Alan lleva de dónde vino (📱 un teléfono, 💻 el PC). Lo de Jinx va sin marca,
-# salvo cuando importa: si no contestó Hermes sino un respaldo, que se sepa.
-MIRROR_PREFIX = {"jinx": "", "pc": "💻 "}
+# En Telegram los mensajes van tal cual, sin marca de quién ni de dónde. La única marca es ⚠️: Jinx no contestó
+# con Hermes sino con un respaldo (OpenRouter, un modelo local).
+MIRROR_PREFIX = {"jinx": ""}
 BACKUP_MODES = ("or", "local")
-BACKUP_PREFIX = "⚠️ Respaldo (Hermes no contestó): "
+BACKUP_PREFIX = "⚠️ "
+# Lo que se manda a la isla de una respuesta (el servidor de presencia guarda hasta 500).
+ISLAND_MAX = 480
 
 
 def mirror_prefix(line):
-    """La marca de una línea al espejarla en Telegram. Pura."""
-    if line.get("src") == "jinx":
-        return BACKUP_PREFIX if line.get("via") in BACKUP_MODES else ""
-    return MIRROR_PREFIX.get(line.get("src"), "📱 ")
+    """La marca de una línea al espejarla en Telegram: ⚠️ si es de Jinx y la dio un respaldo; si no, nada. Pura."""
+    return BACKUP_PREFIX if line.get("src") == "jinx" and line.get("via") in BACKUP_MODES else ""
 TG_MAX = 4000
 
 
@@ -68,8 +68,8 @@ class Deps:
     # Los eventos emocionales recientes de Hermes (turn log) para que la cara siga a lo que acaba de pasar:
     # () -> [{"t", "trigger", "deltas"}], o lanza. None = sin eventos (la cara sale solo del estado).
     events: Optional[Callable[[], list]] = None
-    # El servidor de presencia (op notify): (text, kind, source) -> True/False (alguien mira / nadie) o lanza si
-    # no está. None = el de este equipo en 127.0.0.1:8897.
+    # El servidor de presencia (op notify y las respuestas): (text, kind, source) -> True/False (alguien mira /
+    # nadie) o lanza si no está. None = sin presencia (todo va a Telegram); los gateways reales usan presence_post.
     presence: Optional[Callable[[str, str, str], bool]] = None
     # Las aprobaciones de Hermes (ops approvals/approve): (petición) -> evento del puente. None = sin Hermes.
     approvals: Optional[Callable[[dict], dict]] = None
@@ -111,6 +111,8 @@ _MOOD_LATCH = {}  # la histéresis de "contenta" (jinx_baseline.mood_now) entre 
 
 NOTIFY_MAX = 300
 NOTIFY_KINDS = ("info", "warn", "alert")
+# La fuente de las respuestas de Jinx en la isla: el dispositivo que tiene abierto el chat no las repite.
+ISLAND_SOURCE = "jinx-chat"
 PRESENCE_URL = os.environ.get("JINX_PRESENCE_URL", "http://127.0.0.1:8897/api/mochi/message")
 
 
@@ -134,12 +136,12 @@ def _notify(req, deps):
     kind = req.get("kind") if req.get("kind") in NOTIFY_KINDS else "info"
     source = str(req.get("source") or "agentes")[:60]
     try:
-        watched = (deps.presence or presence_post)(text, kind, source)
+        watched = deps.presence(text, kind, source) if deps.presence else None
     except Exception:  # noqa: BLE001 - sin presencia (p. ej. el gateway de respaldo del portátil): Telegram
         watched = None
     telegram = False
     if watched is not True:
-        telegram = bool(deps.mirror.send(MIRROR_PREFIX["jinx"] + text))
+        telegram = bool(deps.mirror.send(text))
     return {"ev": "notified", "watched": watched, "telegram": telegram}
 
 
@@ -259,6 +261,23 @@ def _settle_mirror(deps, ids):
     return _mirrored(deps, ids)
 
 
+def _deliver(deps, ids, line, mood=None):
+    """La respuesta va a la isla del dispositivo que Alan está usando (el servidor de presencia); solo si nadie
+    mira (o no hay presencia: el gateway de respaldo del portátil) va a Telegram. True: el gateway se hace cargo
+    de las líneas (el cliente no las repite en Telegram)."""
+    text = mirror_prefix(line) + line["text"]
+    if len(text) > ISLAND_MAX:
+        text = text[: ISLAND_MAX - 1] + "…"
+    try:
+        watched = deps.presence(text, "info", ISLAND_SOURCE) if deps.presence else None
+    except Exception:  # noqa: BLE001 - sin presencia: Telegram, como siempre
+        watched = None
+    if watched is True:
+        deps.thread.mark_mirrored(ids)  # alguien mira un dispositivo: lo ve ahí, no en Telegram
+        return True
+    return _settle_mirror(deps, ids)
+
+
 def _pull_hermes(deps):
     """Mezcla en el hilo lo hablado en la sesión de Telegram de Hermes (lo que no está ya). Nunca falla."""
     if deps.hermes is None:
@@ -315,7 +334,7 @@ def _send(req, deps):
         out, mood = split_mood((out or "").strip())
         out = (out or "").strip() or "(sin respuesta)"
         line = deps.thread.append("jinx", out, cid=cid, mood=mood, via=mode)
-        done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _settle_mirror(deps, ids)}
+        done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _deliver(deps, ids, line, mood)}
         if mood:
             done["mood"] = mood  # solo si la respuesta traía una etiqueta válida; nunca el ánimo de fondo
         yield done
@@ -784,7 +803,7 @@ def build_server_deps(base=BASE, defer=False, secret=server_secret):
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
                 state=None if no_hermes else ssh_state_reader,
                 events=None if no_hermes else ssh_events_reader,
-                approvals=None if no_hermes else ssh_runner)
+                approvals=None if no_hermes else ssh_runner, presence=presence_post)
 
 
 def build_real_deps(base=BASE, defer=False):
@@ -821,7 +840,7 @@ def build_real_deps(base=BASE, defer=False):
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
                 state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
                 events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader,
-                approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner)
+                approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner, presence=presence_post)
 
 
 def flush_mirror_main():

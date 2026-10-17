@@ -36,14 +36,10 @@ data class ChatLine(
     }
 
     /**
-     * How the line goes to Telegram (the gateway's mirror_prefix): Alan's lines say where they were written,
-     * Jinx's go unmarked unless a backup answered instead of Hermes.
+     * How the line goes to Telegram (the gateway's mirror_prefix): as written, with no mark of who or where,
+     * except ⚠️ in front of a reply of Jinx's that a backup gave instead of Hermes.
      */
-    val mirrorPrefix: String get() = when (src) {
-        "jinx" -> if (via in BACKUP_VIAS) BACKUP_PREFIX else ""
-        "pc" -> "💻 "
-        else -> "📱 "
-    }
+    val mirrorPrefix: String get() = if (src == "jinx" && via in BACKUP_VIAS) BACKUP_PREFIX else ""
 }
 
 /**
@@ -76,7 +72,7 @@ object JinxApprovalReview {
 
 /** The backups that mark Jinx's line in Telegram (the gateway's BACKUP_MODES) and how. */
 val BACKUP_VIAS = listOf("or", "local")
-const val BACKUP_PREFIX = "⚠️ Respaldo (Hermes no contestó): "
+const val BACKUP_PREFIX = "⚠️ "
 
 sealed interface ChatEvent {
     data object Ack : ChatEvent

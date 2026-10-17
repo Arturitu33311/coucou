@@ -68,6 +68,18 @@ a minute). The rules live in one module, `jinx/jinx-assist/jinx_baseline.py` (`b
 
 The laptop finds the server as the ssh host `server` (`~/.ssh/config`; `COUCOU_JINX_SERVER` overrides it, `""` turns it off).
 
+### Where Jinx's replies show up (island first, Telegram only when nobody is looking)
+
+The gateway sends each reply to the presence server (`source: jinx-chat`). When a device is in use
+(`watched: true`), the reply shows on that device's island and does not go to Telegram; both lines are marked
+handled, so they are never sent there later. When nobody is looking (`vga`), or there is no presence (the
+laptop's fallback gateway), it goes to Telegram as before. The device whose Jinx chat is open does not repeat
+the reply on its island. The laptop reads the presence inbox only while it is the device in use
+(`presence.rs inbox_round`), as the phone does.
+
+Telegram gets the lines as written, without any mark of who or where. The only mark is `⚠️`, in front of a
+reply that a backup (OpenRouter, a local model) gave instead of Hermes. The thread keeps that in `via`.
+
 ### Jinx asking for permission (approvals)
 
 Hermes asks before a command it flags as dangerous only when someone can answer. Its plain session chat

@@ -127,15 +127,22 @@ class ChatRepositoryTest {
         assertTrue(s.pending().isEmpty())
     }
 
-    @Test fun phoneAnswersAreMirroredAndFailuresStayQueued() {
-        val s = store(); val m = FakeMirror(ok = false)
+    @Test fun aPhoneAnswerStaysOnThePhoneNotTelegram() {
+        val s = store(); val m = FakeMirror(ok = true)
         val r = repo(s, null, listOf(FakeBrain(Via.Cloud)), m)
         r.send("hola")
-        assertEquals(2, s.unmirrored().size)
-        m.ok = true; m.sent.clear()
         r.flushMirror()
-        assertEquals(listOf("📱 hola", "⚠️ Respaldo (Hermes no contestó): desde el teléfono"), m.sent)
+        assertEquals(emptyList<String>(), m.sent)
         assertTrue(s.unmirrored().isEmpty())
+        assertEquals("or", s.all().last().via)
+    }
+
+    @Test fun leftoversGoToTelegramUnmarkedButABackupKeepsItsWarning() {
+        val s = store(); val m = FakeMirror(ok = true)
+        s.append(ChatLine("c1:s21", 1.0, "s21", "hola", "c1", false))
+        s.append(ChatLine("c1:jinx", 2.0, "jinx", "ya", "c1", false, via = "or"))
+        repo(s, null, emptyList(), m).flushMirror()
+        assertEquals(listOf("hola", "⚠️ ya"), m.sent)
     }
 
     @Test fun syncSendsOurLinesAndTakesTheOnesWeLack() {

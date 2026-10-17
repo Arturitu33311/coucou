@@ -370,7 +370,7 @@ class MoodGatewayTest(unittest.TestCase):
                                   "mirrored": True, "mood": "laughing"})
         line = self.thread.read()[-1]
         self.assertEqual((line["text"], line["mood"]), ("jajaja buenísimo", "laughing"))
-        self.assertEqual(self.mirror.sent[-1], "⚠️ Respaldo (Hermes no contestó): jajaja buenísimo")
+        self.assertEqual(self.mirror.sent[-1], "⚠️ jajaja buenísimo")
         self.assertNotIn("[[", "".join(self.mirror.sent))
 
     def test_untagged_reply_has_no_mood_key_at_all(self):

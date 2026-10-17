@@ -32,6 +32,34 @@ let islandRef: Island | null = null;
 export function registerJinxHandlers(island: Island) {
   islandRef = island;
   void onEvent<JinxEvent>("jinx", (ev) => handle(island, ev));
+  void onEvent<IslandMsg>("jinx-island", (m) => showIslandMessage(island, m));
+}
+
+/** What Jinx sent through the presence server while this laptop is the device in use (presence.rs). */
+type IslandMsg = { id: number; text: string; kind: string; source: string; mood: string | null };
+
+/** Is Jinx's chat what the island shows right now? */
+function chatOpen(): boolean {
+  return State.focusId === JINX_ID && State.mode === "expanded";
+}
+
+/**
+ * Shown on the island, since Alan is here and not on Telegram: a reply to something written elsewhere comes
+ * with the shared thread (unless her chat is open, where it is already); anything else is said as a line.
+ */
+export function showIslandMessage(island: Island, m: IslandMsg) {
+  if (m.source === "jinx-chat") {
+    void loadJinxThread(true);
+    if (chatOpen()) return;
+  } else {
+    say(m.text);
+  }
+  if (!chatOpen()) State.setPillBadge(JINX_ID, "finished");
+  Sound.play(m.kind === "alert" ? "approval" : "finish");
+  if (State.mode === "hidden") island.reveal();
+  const emote = replyEmote(m.mood, m.text);
+  if (emote) island.emote(emote, JINX_EMOTE_S);
+  State.notify();
 }
 
 /** Through the gateway Jinx's questions wait on the server; they are looked for this often while she works. */

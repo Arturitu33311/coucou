@@ -460,9 +460,64 @@ async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<(String, Optio
     Some(read_answer(&body))
 }
 
+/// The inbox messages to show: newer than `after`, with text, from the last hour (as on the phone: older news
+/// is not news). `(id, payload for the island)`. Pure.
+pub fn new_messages(body: &Value, after: i64, now_s: i64) -> Vec<(i64, Value)> {
+    let mut out = Vec::new();
+    for m in body.get("messages").and_then(Value::as_array).into_iter().flatten() {
+        let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
+        let text = m.get("text").and_then(Value::as_str).unwrap_or("").trim();
+        let ts = m.get("ts").and_then(Value::as_i64).unwrap_or(now_s);
+        if id <= after || text.is_empty() || now_s - ts > 3600 {
+            continue;
+        }
+        out.push((id, json!({
+            "id": id,
+            "text": text.chars().take(500).collect::<String>(),
+            "kind": m.get("kind").and_then(Value::as_str).unwrap_or("info"),
+            "source": m.get("source").and_then(Value::as_str).unwrap_or(""),
+            "mood": m.get("mood").cloned().unwrap_or(Value::Null),
+        })));
+    }
+    out.sort_by_key(|(id, _)| *id);
+    out
+}
+
+static LAST_INBOX: Mutex<i64> = Mutex::new(0);
+
+/// While this laptop is the device in use, what Jinx sent through the presence server (a reply to a message
+/// written elsewhere, a notice, a question waiting for permission) goes to the island as `jinx-island`
+/// events and is acked, so no other device shows it again. Never on another device's turn.
+async fn inbox_round(app: &AppHandle) {
+    let (Some(url), Some(key)) = (crate::secrets::get("presence-url"), crate::secrets::get("presence-key")) else {
+        return;
+    };
+    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(5)).build() else { return };
+    let base = url.trim_end_matches('/').to_string();
+    let Ok(resp) = client.get(format!("{base}/api/mochi/inbox?since_id=0")).header("X-Mochi-Key", &key).send().await else {
+        return;
+    };
+    let Ok(body) = resp.json::<Value>().await else { return };
+    let after = *LAST_INBOX.lock().unwrap();
+    let now_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    for (id, payload) in new_messages(&body, after, now_s) {
+        let _ = app.emit_to(crate::island::WINDOW_LABEL, "jinx-island", payload);
+        let _ = client
+            .post(format!("{base}/api/mochi/ack"))
+            .header("X-Mochi-Key", &key)
+            .json(&json!({ "id": id, "by": SERVER_LAPTOP }))
+            .send()
+            .await;
+        *LAST_INBOX.lock().unwrap() = id;
+    }
+}
+
 /// Starts the clock: own idle and lock every 2 s (which also expires peers that went quiet), and the
 /// server heartbeat every 30 s when it is configured. Safe to call once at start.
 pub fn start(app: &AppHandle) {
+    let inbox_app = app.clone();
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut tick: u64 = 0;
@@ -526,6 +581,10 @@ pub fn start(app: &AppHandle) {
             });
             if configured {
                 WAKE.notify_one();
+                // Jinx's messages are this laptop's to show only while it is the one in use.
+                if with(|l| l.server.as_ref().map_or(false, |(a, _)| *a == from_server(SERVER_LAPTOP))) {
+                    inbox_round(&inbox_app).await;
+                }
             }
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
@@ -586,6 +645,22 @@ mod tests {
         assert_eq!(vga.0.server_active.as_deref(), Some(VGA));
         let pc = parse_peer(&json!({"device":"s21","idle":1,"server_active":"pc"})).unwrap();
         assert_eq!(pc.0.server_active.as_deref(), Some(LAPTOP));
+    }
+
+    #[test]
+    fn only_new_inbox_messages_with_text_are_shown_in_order() {
+        let body = json!({"messages": [
+            {"id": 7, "text": "b", "kind": "alert", "source": "jinx"},
+            {"id": 5, "text": "a", "source": "jinx-chat"},
+            {"id": 3, "text": "old"},
+            {"id": 9, "text": "  "},
+            {"id": 11, "text": "stale", "ts": 1000}
+        ]});
+        let got = new_messages(&body, 4, 10_000);
+        assert_eq!(got.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![5, 7]);
+        assert_eq!(got[0].1["source"], "jinx-chat");
+        assert_eq!(got[1].1["kind"], "alert");
+        assert_eq!(got[0].1["kind"], "info");
     }
 
     #[test]
