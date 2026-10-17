@@ -75,10 +75,10 @@ for intento in $(seq 1 "$INTENTOS"); do
     # blackhole en esta red (2026-10-14, ver hermes_telegram_retry.py); la ruta normal daba timeout.
     PIN=()
     [ "$intento" -ge 2 ] && PIN=(--resolve api.telegram.org:443:149.154.167.99)
-    HTTP=$(curl -s --max-time 20 "${PIN[@]}" -o "$BODY_FILE" -w '%{http_code}' \
-        -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-        -H "Content-Type: application/json" \
-        -d "$PAYLOAD")
+    # URL (lleva el token) y cuerpo por stdin (-K -): no aparecen en `ps`
+    HTTP=$(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TOKEN" |
+        curl -s --max-time 20 "${PIN[@]}" -o "$BODY_FILE" -w '%{http_code}' \
+        -K - -X POST -H "Content-Type: application/json" --data-binary "$PAYLOAD")
 
     case "$HTTP" in
         000|429|5??)
