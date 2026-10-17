@@ -269,6 +269,28 @@ def _prompt_agente(d: dict, adjuntos: list[str], sin_leer: list[str]) -> str:
     )
 
 
+def _sandbox(work: Path) -> list[str] | None:
+    """Comando bwrap para el agente: lee instrucciones del profesor y paginas web (texto no confiable) y tiene ejecucion de
+    codigo, asi que corre sin acceso al resto del $HOME (ssh, .hermes/.env, otros perfiles), con su propia identidad
+    (SOUL, config, skills, memoria) de solo lectura y escribiendo solo en su carpeta de trabajo. La red queda abierta
+    (OpenRouter y busqueda web). None si no hay bwrap: sin aislamiento no se ejecuta el agente."""
+    import shutil
+    bwrap = shutil.which("bwrap")
+    if not bwrap:
+        return None
+    home = str(Path.home())
+    perfil = HERMES / "profiles" / PERFIL
+    cmd = [bwrap, "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+           "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", home,
+           "--ro-bind", str(HERMES / "hermes-agent"), str(HERMES / "hermes-agent"),
+           "--bind", str(perfil), str(perfil)]
+    for f in ("SOUL.md", "config.yaml", "skills", "memories", "venv"):   # su identidad no la reescribe una pagina inyectada
+        if (perfil / f).exists():
+            cmd += ["--ro-bind", str(perfil / f), str(perfil / f)]
+    cmd += ["--bind", str(work), str(work), "--chdir", str(work)]
+    return cmd
+
+
 def _agente(tt, d: dict, aid: str):
     """Corre el perfil `tareas` de Hermes (herramientas y skills, sin la personalidad de Jinx) en un directorio propio.
     Devuelve (carpeta, [archivos]) o ('NO_APLICA', []) o None si fallo."""
@@ -294,18 +316,25 @@ def _agente(tt, d: dict, aid: str):
             print(f"[borrador] no pude bajar {nombre}: {str(e)[:80]}", file=sys.stderr)
             sin_leer.append(nombre)
     nombres = sorted(x.name for x in (work / "adjuntos").iterdir())
+    caja = _sandbox(work)
+    if caja is None:
+        print("[borrador] sin bwrap: el agente no corre sin aislamiento", file=sys.stderr)
+        return None
     try:
-        r = subprocess.run([str(HERMES_BIN), "-p", PERFIL, "chat", "-q", _prompt_agente(d, nombres, sin_leer), "-Q",
-                            "--source", "tool", "--max-turns", "40"],
-                           env=dict(os.environ, OPENROUTER_API_KEY=key), cwd=str(work), capture_output=True, text=True, timeout=900)
+        r = subprocess.run(caja + [str(HERMES_BIN), "-p", PERFIL, "chat", "-q", _prompt_agente(d, nombres, sin_leer), "-Q",
+                                   "--source", "tool", "--max-turns", "40"],
+                           env={"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(Path.home()), "LANG": "C.UTF-8", "OPENROUTER_API_KEY": key},
+                           cwd=str(work), capture_output=True, text=True, timeout=900)
     except (subprocess.TimeoutExpired, OSError) as e:
         print(f"[borrador] agente: {type(e).__name__}", file=sys.stderr)
         return None
     salida = r.stdout or ""
     if "NO_APLICA" in salida.split("ARCHIVO:")[0][-400:] and "ARCHIVO:" not in salida:
         return "NO_APLICA", []
-    archivos = [f for f in sorted(work.rglob("*")) if f.is_file() and f.suffix.lower() in SALIDAS
-                and "adjuntos" not in f.parts and f.stat().st_size < 25_000_000][:5]
+    raiz = work.resolve()
+    archivos = [f for f in sorted(work.rglob("*")) if f.suffix.lower() in SALIDAS and "adjuntos" not in f.parts
+                and not f.is_symlink() and f.is_file() and f.resolve().is_relative_to(raiz)
+                and f.stat().st_nlink == 1 and f.stat().st_size < 25_000_000][:5]
     if r.returncode != 0 or not archivos:
         print(f"[borrador] agente sin archivos (rc={r.returncode}): {(r.stderr or salida)[-200:]}", file=sys.stderr)
         return None
