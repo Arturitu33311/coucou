@@ -280,11 +280,19 @@ def _sandbox(work: Path) -> list[str] | None:
         return None
     home = str(Path.home())
     perfil = HERMES / "profiles" / PERFIL
-    cmd = [bwrap, "--die-with-parent", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
+    cmd = [bwrap, "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--unshare-pid", "--unshare-ipc", "--unshare-uts",
            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", home,
-           "--ro-bind", str(HERMES / "hermes-agent"), str(HERMES / "hermes-agent"),
-           "--bind", str(perfil), str(perfil)]
-    for f in ("SOUL.md", "config.yaml", "skills", "memories", "venv"):   # su identidad no la reescribe una pagina inyectada
+           # /run trae el bus de systemd del usuario y los sockets (docker, dbus): desde ahi se sale de la caja
+           "--tmpfs", "/run"]
+    for tapar in ("/mnt", "/media", "/srv", "/root", "/var/lib/docker"):
+        if os.path.isdir(tapar):
+            cmd += ["--tmpfs", tapar]
+    cmd += ["--ro-bind", str(HERMES / "hermes-agent"), str(HERMES / "hermes-agent"),
+            "--bind", str(perfil), str(perfil)]
+    # su identidad y todo lo que Hermes carga o ejecuta despues (hooks, cron, bin, lsp, plugins...) es de solo lectura:
+    # una pagina inyectada no se deja persistencia ni reescribe sus reglas
+    for f in ("SOUL.md", "config.yaml", "profile.yaml", "skills", "memories", "venv", "hooks", "cron", "bin", "lsp",
+              "plugins", "skins", "home", "backups"):
         if (perfil / f).exists():
             cmd += ["--ro-bind", str(perfil / f), str(perfil / f)]
     cmd += ["--bind", str(work), str(work), "--chdir", str(work)]
