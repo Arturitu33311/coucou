@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -80,6 +81,7 @@ internal fun AssistContent(
     onDownloadModel: () -> Unit,
     onTestModel: () -> Unit,
     modifier: Modifier = Modifier,
+    onApproval: (JinxApproval, String) -> Unit = { _, _ -> },
 ) {
     var draft by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
@@ -151,6 +153,10 @@ internal fun AssistContent(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(12.dp))
                     .background(CoucouColors.Warning.copy(alpha = 0.10f)).padding(horizontal = 12.dp, vertical = 8.dp),
             )
+        }
+
+        ui.approvals.firstOrNull()?.let { a ->
+            ApprovalCard(a, waiting = ui.approvals.size - 1, answering = ui.answering == a.key, onAnswer = { onApproval(a, it) })
         }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -277,5 +283,80 @@ private fun Typing() {
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         repeat(3) { i -> Box(Modifier.size(7.dp).clip(CircleShape).background(CoucouColors.TextSecondary.copy(alpha = 0.4f + i * 0.2f))) }
+    }
+}
+
+/**
+ * Jinx (Hermes) wants to run something she flagged as dangerous and waits for Alan. Allowing asks for the
+ * fingerprint (or the screen lock) first, like Claude Code's permissions on the island; with neither, a second
+ * tap. The whole command has to be readable here: one the server had to cut is not allowed from the phone.
+ * "Always" is never offered here: a permanent rule is set where it can be read calmly (the PC, Telegram).
+ */
+@Composable
+private fun ApprovalCard(a: JinxApproval, waiting: Int, answering: Boolean, onAnswer: (String) -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val secure = remember { com.agupta07505.smartisland.coucou.agents.ConfirmActivity.available(context) }
+    var armed by remember(a.key) { mutableStateOf<String?>(null) }
+    var message by remember(a.key) { mutableStateOf<String?>(null) }
+    val cut = JinxApprovalReview.cut(a.command)
+
+    fun allow(choice: String) {
+        if (cut) {
+            message = "Demasiado largo para revisarlo aquí: contéstalo en el PC o en Telegram"
+            return
+        }
+        when {
+            secure -> com.agupta07505.smartisland.coucou.agents.ConfirmActivity.ask(
+                context,
+                if (choice == "session") "¿Permitir a Jinx en esta sesión?" else "¿Permitir a Jinx?",
+                a.description.ifEmpty { a.command }.take(120),
+            ) { ok -> if (ok) onAnswer(choice) else message = "No confirmado" }
+            armed == choice -> onAnswer(choice)
+            else -> armed = choice
+        }
+    }
+
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(16.dp))
+            .background(CoucouColors.Warning.copy(alpha = 0.10f)).padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MochiGlyph(size = 26.dp, tint = MochiEmerald, mood = MochiMood.Alert)
+            Spacer(Modifier.size(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Jinx pide permiso", color = CoucouColors.Text, fontSize = 15.sp)
+                if (a.description.isNotEmpty()) {
+                    Text(a.description, color = CoucouColors.TextSecondary, fontSize = 12.sp)
+                }
+            }
+            if (waiting > 0) Text("+$waiting", color = CoucouColors.TextTertiary, fontSize = 12.sp)
+        }
+        Spacer(Modifier.size(6.dp))
+        Text(
+            a.command,
+            color = CoucouColors.Text,
+            fontSize = 12.sp,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            modifier = Modifier.fillMaxWidth().heightIn(max = 140.dp).clip(RoundedCornerShape(8.dp))
+                .background(CoucouColors.SurfaceHigh)
+                .verticalScroll(rememberScrollState()).padding(8.dp),
+        )
+        message?.let { Text(it, color = CoucouColors.Warning, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+        Spacer(Modifier.size(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (choice in JinxApprovalReview.buttons(a)) {
+                val label = when (choice) {
+                    "deny" -> "Denegar"
+                    "session" -> if (armed == choice) "Toca otra vez" else "Esta sesión"
+                    else -> if (armed == choice) "Toca otra vez" else "Permitir"
+                }
+                androidx.compose.material3.TextButton(
+                    onClick = { if (choice == "deny") onAnswer("deny") else allow(choice) },
+                    enabled = !answering,
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                        .background(if (choice == "deny") CoucouColors.SurfaceHigh else CoucouColors.Accent.copy(alpha = 0.22f)),
+                ) { Text(label, color = if (choice == "deny") CoucouColors.Warning else CoucouColors.Text, fontSize = 13.sp) }
+            }
+        }
     }
 }

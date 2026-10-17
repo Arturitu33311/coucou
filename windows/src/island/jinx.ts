@@ -27,8 +27,53 @@ let streaming: ChatMessage | null = null;
 /** Approvals that arrived while another card held the island. */
 const waiting: Approval[] = [];
 
+let islandRef: Island | null = null;
+
 export function registerJinxHandlers(island: Island) {
+  islandRef = island;
   void onEvent<JinxEvent>("jinx", (ev) => handle(island, ev));
+}
+
+/** Through the gateway Jinx's questions wait on the server; they are looked for this often while she works. */
+const APPROVAL_POLL_MS = 3_000;
+/** Questions already shown (run|request), so each one gets one card. */
+const gatewaySeen = new Set<string>();
+let polling = false;
+const keyOf = (run: string, request: string) => `${run}|${request}`;
+
+/**
+ * While a message waits for Jinx through the gateway, the questions she asks (a command Hermes flagged) are
+ * on the server: they get the same card as the Hermes API's. One answered on the phone loses its card here.
+ * With the Hermes API the list is always empty (its questions arrive as events).
+ */
+async function pollGatewayApprovals() {
+  if (polling) return;
+  polling = true;
+  try {
+    while (State.jinxBusy && islandRef) {
+      const items = await Bridge.jinxApprovals();
+      if (items) {
+        const live = new Set(items.map((i) => keyOf(i.run_id, i.request_id)));
+        for (const it of items) {
+          const k = keyOf(it.run_id, it.request_id);
+          if (gatewaySeen.has(k)) continue;
+          gatewaySeen.add(k);
+          showApproval(islandRef, {
+            kind: "approval", runId: it.run_id, requestId: it.request_id, command: it.command, description: it.description,
+          });
+        }
+        const p = State.pendingApproval;
+        if (p?.jinxRun) {
+          const k = keyOf(p.jinxRun, p.requestId);
+          if (gatewaySeen.has(k) && !live.has(k)) handle(islandRef, { kind: "resolved", requestId: p.requestId });
+        }
+        for (const k of [...gatewaySeen]) if (!live.has(k) && k !== keyOf(p?.jinxRun ?? "", p?.requestId ?? "")) gatewaySeen.delete(k);
+      }
+      await new Promise((r) => window.setTimeout(r, APPROVAL_POLL_MS));
+    }
+  } finally {
+    polling = false;
+  }
 }
 
 /** Lines of the shared thread to show. */
@@ -66,6 +111,7 @@ export function jinxStarted() {
   streaming = null;
   State.jinxBusy = true;
   State.updateTask(JINX_ID, "thinking");
+  void pollGatewayApprovals();
 }
 
 /** The send itself failed (no address, no key, unreachable): nothing is running. */

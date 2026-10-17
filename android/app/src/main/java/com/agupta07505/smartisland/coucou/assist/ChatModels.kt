@@ -38,6 +38,34 @@ data class ChatLine(
     }
 }
 
+/**
+ * Something Jinx (Hermes) wants to do and is waiting for Alan to allow: a command it flagged as dangerous.
+ * [choices] are what Hermes offers (once, session, always, deny); the phone never offers "always".
+ */
+data class JinxApproval(
+    val runId: String,
+    val requestId: String,
+    val command: String,
+    val description: String,
+    val choices: List<String>,
+    val ts: Double,
+) {
+    val key: String get() = "$runId|$requestId"
+}
+
+/** What has to be true before a Jinx approval can be allowed from the phone. Pure, tested. */
+object JinxApprovalReview {
+    /** The server keeps at most this many characters of a command and ends a longer one with "…". */
+    const val SERVER_LIMIT = 2000
+
+    /** The server cut this command: its tail cannot be reviewed here, so it is not allowed from here. */
+    fun cut(command: String): Boolean = command.length >= SERVER_LIMIT - 10 && command.endsWith("…")
+
+    /** The buttons the phone shows, in order: allowing once, for the session when Hermes offers it, denying. */
+    fun buttons(a: JinxApproval): List<String> =
+        listOf("once", "session").filter { it in a.choices } + "deny"
+}
+
 sealed interface ChatEvent {
     data object Ack : ChatEvent
     /** [mirrored]: the gateway confirms both lines reached Telegram (true for gateways that do not say). */
@@ -53,6 +81,8 @@ sealed interface ChatEvent {
     data class Merged(val added: Int, val items: List<ChatLine>, val mirroredIds: List<String>) : ChatEvent
     data class Core(val core: String, val memory: String) : ChatEvent
     data class Secrets(val openrouterKey: String, val telegramToken: String, val chat: String) : ChatEvent
+    data class Approvals(val items: List<JinxApproval>) : ChatEvent
+    data class Approved(val choice: String) : ChatEvent
 }
 
 open class ChatException(message: String) : Exception(message)
@@ -72,6 +102,25 @@ object ChatProtocol {
 
     fun core(): String = JSONObject().put("op", "core").toString()
     fun provision(): String = JSONObject().put("op", "provision").toString()
+    fun approvals(): String = JSONObject().put("op", "approvals").toString()
+
+    fun approve(a: JinxApproval, choice: String): String = JSONObject().put("op", "approve")
+        .put("run_id", a.runId).put("request_id", a.requestId).put("choice", choice).toString()
+
+    private val CHOICES = listOf("once", "session", "always", "deny")
+
+    fun approvalFromJson(o: JSONObject): JinxApproval? {
+        val run = o.optString("run_id").takeIf { it.isNotEmpty() } ?: return null
+        val offered = o.optJSONArray("choices")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
+        return JinxApproval(
+            runId = run,
+            requestId = o.optString("request_id"),
+            command = o.optString("command"),
+            description = o.optString("description"),
+            choices = CHOICES.filter { it in offered }.ifEmpty { listOf("once", "deny") },
+            ts = o.optDouble("ts", 0.0),
+        )
+    }
 
     fun lineToJson(l: ChatLine): JSONObject = JSONObject()
         .put("id", l.id).put("ts", l.ts).put("src", l.src).put("text", l.text)
@@ -113,6 +162,10 @@ object ChatProtocol {
             )
             "core" -> ChatEvent.Core(o.optString("core"), o.optString("memory"))
             "secrets" -> ChatEvent.Secrets(o.optString("openrouter_key"), o.optString("telegram_token"), o.optString("chat"))
+            "approvals" -> ChatEvent.Approvals(
+                o.optJSONArray("items")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it)?.let(::approvalFromJson) } }.orEmpty(),
+            )
+            "approved" -> ChatEvent.Approved(o.optString("choice"))
             else -> null
         }
     }.toList()

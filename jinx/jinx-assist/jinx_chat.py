@@ -60,6 +60,8 @@ class Deps:
     # El servidor de presencia (op notify): (text, kind, source) -> True/False (alguien mira / nadie) o lanza si
     # no está. None = el de este equipo en 127.0.0.1:8897.
     presence: Optional[Callable[[str, str, str], bool]] = None
+    # Las aprobaciones de Hermes (ops approvals/approve): (petición) -> evento del puente. None = sin Hermes.
+    approvals: Optional[Callable[[dict], dict]] = None
 
 
 # ---------- ánimo ----------
@@ -128,6 +130,38 @@ def _notify(req, deps):
     if watched is not True:
         telegram = bool(deps.mirror.send(MIRROR_PREFIX["jinx"] + text))
     return {"ev": "notified", "watched": watched, "telegram": telegram}
+
+
+APPROVE_CHOICES = ("once", "session", "always", "deny")
+
+
+def _approvals(deps):
+    """`op: approvals`: lo que Hermes espera que Alan apruebe. Nunca falla: sin Hermes, lista vacía."""
+    if deps.approvals is None:
+        return {"ev": "approvals", "items": []}
+    try:
+        ev = deps.approvals({"op": "approvals"})
+    except Exception:  # noqa: BLE001 - el puente puede no contestar; el cliente pregunta luego
+        ev = None
+    items = ev.get("items") if isinstance(ev, dict) and ev.get("ev") == "approvals" else None
+    return {"ev": "approvals", "items": [d for d in items or [] if isinstance(d, dict)]}
+
+
+def _approve(req, deps):
+    """`op: approve`: la respuesta de Alan (ya confirmada con su huella en el cliente) a una pregunta de Hermes.
+    El puente solo acepta lo que tiene pendiente; aquí solo se filtra la forma."""
+    run_id, request_id, choice = req.get("run_id"), req.get("request_id", ""), req.get("choice")
+    if not isinstance(run_id, str) or not run_id or not isinstance(request_id, str) or choice not in APPROVE_CHOICES:
+        return _err("approve necesita run_id, request_id y choice")
+    if deps.approvals is None:
+        return _err("sin Hermes aquí")
+    try:
+        ev = deps.approvals({"op": "approve", "run_id": run_id, "request_id": request_id, "choice": choice})
+    except Exception as e:  # noqa: BLE001
+        return _err("no pude contestar a Hermes: %s" % e)
+    if not isinstance(ev, dict) or ev.get("ev") not in ("approved", "error"):
+        return _err("Hermes no contestó")
+    return ev
 
 
 def _mood_event(deps):
@@ -318,6 +352,10 @@ def handle(req, deps):
         yield _mood_event(deps)
     elif op == "notify":
         yield _notify(req, deps)
+    elif op == "approvals":
+        yield _approvals(deps)
+    elif op == "approve":
+        yield _approve(req, deps)
     elif op == "core":
         yield {"ev": "core", "core": deps.core_text, "memory": deps.memory_text}
     elif op == "provision":
@@ -503,8 +541,15 @@ def hermes_argv(cmd, host=None):
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, cmd]
 
 
-def ssh_runner(payload, timeout=85):
+# Un `send` puede esperar a que Alan apruebe un comando (Hermes da 300 s): el puente corta el turno a los 80 s
+# sin preguntas y a los ~490 s con una; esto solo es la red de seguridad por encima.
+SEND_WAIT = 500
+
+
+def ssh_runner(payload, timeout=None):
     """Una petición al puente de Hermes (por ssh, o local en el servidor); devuelve el evento JSON o lanza."""
+    if timeout is None:
+        timeout = SEND_WAIT if payload.get("op") == "send" else 85
     p = subprocess.run(
         hermes_argv(HERMES_CMD),
         input=json.dumps(payload) + "\n", capture_output=True, text=True, timeout=timeout)
@@ -722,7 +767,8 @@ def build_server_deps(base=BASE, defer=False, secret=server_secret):
                          "chat": lazy("TELEGRAM_ALLOWED_CHAT")},
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
                 state=None if no_hermes else ssh_state_reader,
-                events=None if no_hermes else ssh_events_reader)
+                events=None if no_hermes else ssh_events_reader,
+                approvals=None if no_hermes else ssh_runner)
 
 
 def build_real_deps(base=BASE, defer=False):
@@ -758,7 +804,8 @@ def build_real_deps(base=BASE, defer=False):
                 lambda: {"openrouter_key": jinx_brain.key or "", "telegram_token": token(), "chat": chat()},
                 base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
                 state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
-            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader)
+                events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader,
+                approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner)
 
 
 def flush_mirror_main():
@@ -855,7 +902,8 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
         deps = build_real_deps(defer=True) if needs_real else Deps(
             Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE,
             state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
-            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader)
+            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader,
+            approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner)
     except Exception as e:  # noqa: BLE001
         stdout.write(json.dumps(_err("gateway sin cerebro: %s" % e)) + "\n")
         return 0

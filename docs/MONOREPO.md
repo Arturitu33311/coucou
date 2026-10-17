@@ -68,6 +68,31 @@ a minute). The rules live in one module, `jinx/jinx-assist/jinx_baseline.py` (`b
 
 The laptop finds the server as the ssh host `server` (`~/.ssh/config`; `COUCOU_JINX_SERVER` overrides it, `""` turns it off).
 
+### Jinx asking for permission (approvals)
+
+Hermes asks before a command it flags as dangerous only when someone can answer. Its plain session chat
+(`/api/sessions/{id}/chat`, what the gateway used) has nobody, so Hermes applied `approvals.unattended_mode`
+(deny by default) and Jinx silently could not run those commands from the phones or the PC. Now:
+
+1. The bridge (`jinx_hermes_chat.py`, on the server) sends through `/api/sessions/{id}/chat/stream`. An
+   `approval.request` is written to `~/.hermes/state/coucou/approvals.json` and announced on the device in use
+   (presence, kind `alert`). The turn then waits for Alan (Hermes gives 300 s). A Hermes without the stream
+   endpoint falls back to the old `/chat`.
+2. Gateway ops `approvals` (the list) and `approve` (`run_id`, `request_id`, `choice`) pass through to the bridge.
+   It answers only what is in that file, with a choice Hermes offered (`POST /v1/runs/{run_id}/approval`).
+3. Phone: Jinx's tab shows the card while a message waits (every 3 s) and while the tab is open (every 10 s).
+   Allowing (once / this session) asks for the fingerprint or the screen lock (`ConfirmActivity`, the same as
+   Claude Code's permissions on the island); denying does not. "Always" is never offered from the phone. A
+   command the server had to cut (2000 characters) cannot be allowed there.
+4. PC: while a message waits, the island polls the same list and uses the Hermes API's card; a click answers it.
+   A question answered on the phone loses its card on the PC.
+5. Telegram keeps Hermes's own approval prompt there.
+
+Timeouts follow: a `send` may last ~490 s with a question (the bridge cuts at 80 s without one); the gateway
+waits 500 s and the phone and PC 520 s.
+
+The fingerprint is checked on the phone only: the server trusts the phone's ssh key, as it does for everything else.
+
 ### Which device has Mochi (presence contract)
 
 One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.

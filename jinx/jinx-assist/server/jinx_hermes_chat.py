@@ -6,20 +6,41 @@ Corre EN EL SERVER (`~/.hermes/scripts/jinx_hermes_chat.py`, con el python del v
 
   {"op":"send","text":"…"}  -> {"ev":"done","text":"…","session_id":"…"} | {"ev":"error","msg":"…"}
   {"op":"history","n":40}   -> {"ev":"history","items":[{"id","role","text","ts"}…]}
+  {"op":"approvals"}        -> {"ev":"approvals","items":[{"run_id","request_id","command","description","choices","ts"}…]}
+  {"op":"approve","run_id","request_id","choice"} -> {"ev":"approved","choice":"…"} | {"ev":"error","msg":"…"}
+
+Aprobaciones: `send` va por `/api/sessions/{id}/chat/stream`, que es el único camino de sesión donde Hermes
+PREGUNTA antes de un comando peligroso (el `/chat` normal no tiene a quién preguntar y aplica
+`approvals.unattended_mode`, que por defecto niega). Mientras el turno espera, la pregunta queda en
+APPROVALS_FILE; el teléfono (o el PC) la lee con `approvals`, Alan la confirma con su huella y `approve` la
+contesta con `POST /v1/runs/{run_id}/approval`. Solo se puede contestar lo que está en ese archivo. Si este
+Hermes no tiene el endpoint de stream, `send` vuelve al `/chat` de siempre.
 
 Habla con la API de Hermes (`/api/sessions/{id}/chat`), dentro de la sesión de Telegram más reciente, así que
 la Jinx real contesta con SU contexto (memoria, herramientas, lo hablado por Telegram). La llave de la API
 se resuelve aquí (bóveda) y no sale de este proceso: nunca se imprime ni se envía a otro lado.
 """
+import fcntl
 import json
 import os
+import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
 CANDIDATE_BASES = ("http://127.0.0.1:8642", "http://100.92.254.125:8642")
 SEND_TIMEOUT = 75
 READ_TIMEOUT = 20
+# Hermes espera una aprobación hasta `approvals.timeout` (300 s por defecto); pasado esto la pregunta ya no vale.
+APPROVAL_LIFE = 330
+# Un turno sin preguntas pendientes no pasa de esto (como el /chat de antes); con una, espera a Alan.
+TURN_LIMIT = 80
+APPROVALS_FILE = os.environ.get(
+    "JINX_APPROVALS_FILE", os.path.expanduser("~/.hermes/state/coucou/approvals.json"))
+CHOICES = ("once", "session", "always", "deny")
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{0,256}$")
 
 
 class ApiError(Exception):
@@ -82,6 +103,170 @@ class HttpApi:
     def post(self, path, body):
         return self._request("POST", path, body, timeout=self.timeout_send)
 
+    def stream(self, path, body):
+        """Los eventos SSE de un POST, como (nombre, datos) uno por uno. Lanza ApiError si no se puede abrir."""
+        url = self._pick_base() + path
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers={
+            "Authorization": "Bearer " + self.key, "Content-Type": "application/json",
+            "Accept": "text/event-stream"})
+        try:
+            r = urllib.request.urlopen(req, timeout=self.timeout_send)
+        except urllib.error.HTTPError as e:
+            raise ApiError("HTTP %s" % e.code)
+        except Exception as e:  # noqa: BLE001
+            raise ApiError(redact("%s: %s" % (type(e).__name__, e), self.key))
+        with r:
+            try:
+                yield from sse_events(r)
+            except ApiError:
+                raise
+            except Exception as e:  # noqa: BLE001 - la conexión puede romperse a medias
+                raise ApiError(redact("se cortó el stream: %s: %s" % (type(e).__name__, e), self.key))
+
+
+def sse_events(lines):
+    """(nombre, datos) de cada evento de un stream SSE (líneas en bytes). Un comentario (el keepalive de Hermes,
+    cada 10 s) sale como ("keepalive", {}) para que quien lee pueda mirar el reloj; la basura se salta. Pura."""
+    name, data = "", []
+    for raw in lines:
+        line = raw.decode("utf-8", "replace").rstrip("\r\n") if isinstance(raw, bytes) else raw.rstrip("\r\n")
+        if not line:
+            if data:
+                try:
+                    payload = json.loads("\n".join(data))
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict):
+                    yield name or payload.get("event") or "", payload
+            name, data = "", []
+        elif line.startswith(":"):
+            yield "keepalive", {}
+        elif line.startswith("event:"):
+            name = line[6:].strip()
+        elif line.startswith("data:"):
+            data.append(line[5:].lstrip(" ") if line[5:6] == " " else line[5:])
+
+
+class ApprovalStore:
+    """Las preguntas de Hermes que esperan respuesta, en un archivo JSON con candado (varios procesos: el `send`
+    que espera y el `approve` que contesta). Las viejas (más de APPROVAL_LIFE) se tiran al leer."""
+
+    def __init__(self, path=APPROVALS_FILE, clock=time.time):
+        self.path = path
+        self.clock = clock
+
+    def _edit(self, change):
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                items = json.loads(f.read() or "[]")
+            except ValueError:
+                items = []
+            now = self.clock()
+            items = [d for d in items if isinstance(d, dict) and now - float(d.get("ts") or 0) < APPROVAL_LIFE]
+            out = change(items)
+            f.seek(0)
+            f.truncate()
+            f.write(json.dumps(items, ensure_ascii=False))
+            return out
+
+    def add(self, item):
+        def change(items):
+            items[:] = [d for d in items if not (d["run_id"] == item["run_id"] and d["request_id"] == item["request_id"])]
+            items.append(item)
+        self._edit(change)
+
+    def list(self):
+        return self._edit(lambda items: [dict(d) for d in items])
+
+    def find(self, run_id, request_id):
+        return self._edit(lambda items: next(
+            (dict(d) for d in items if d["run_id"] == run_id and d["request_id"] == request_id), None))
+
+    def remove(self, run_id, request_id=None):
+        def change(items):
+            items[:] = [d for d in items if not (d["run_id"] == run_id and (request_id is None or d["request_id"] == request_id))]
+        self._edit(change)
+
+
+def clip(text, n):
+    t = " ".join(str(text or "").split())
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+def clip_keep_lines(text, n):
+    """Como clip, pero un comando conserva sus saltos de línea: es lo que Alan tiene que leer antes de aprobar."""
+    t = str(text or "").strip()
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+def approval_item(data, clock=time.time):
+    """Lo que se guarda (y se le enseña a Alan) de un `approval.request`, o None si no trae run_id. Pura."""
+    run_id = str(data.get("run_id") or "")
+    request_id = str(data.get("request_id") or "")
+    if not RUN_ID_RE.match(run_id) or not REQUEST_ID_RE.match(request_id):
+        return None
+    raw = data.get("choices")
+    choices = [c for c in CHOICES if isinstance(raw, list) and c in raw] or ["once", "deny"]
+    if "deny" not in choices:
+        choices.append("deny")
+    return {"run_id": run_id, "request_id": request_id, "command": clip_keep_lines(data.get("command"), 2000),
+            "description": clip(data.get("description"), 200), "choices": choices, "ts": clock()}
+
+
+PRESENCE_URL = os.environ.get("JINX_PRESENCE_URL", "http://127.0.0.1:8897/api/mochi/message")
+
+
+def announce_approval(item, url=PRESENCE_URL, opener=urllib.request.urlopen):
+    """Dice en el dispositivo que Alan está usando (el servidor de presencia, aquí mismo) que Jinx espera su
+    permiso, para que vaya a la pestaña de Jinx. Nunca falla: sin presencia, la pregunta sigue en el archivo."""
+    text = "Jinx necesita tu permiso: %s" % (item.get("description") or "un comando")
+    body = json.dumps({"text": clip(text, 200), "kind": "alert", "source": "jinx", "mood": None}).encode()
+    try:
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        with opener(req, timeout=3):
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _send_stream(api, sid, text, store, clock=time.monotonic):
+    """Un turno por el stream de la sesión: guarda las preguntas mientras espera. (texto, session_id).
+    Tope: TURN_LIMIT sin preguntas; cada pregunta lo alarga a APPROVAL_LIFE + TURN_LIMIT desde que llegó."""
+    answer, failed, runs = None, None, set()
+    deadline = clock() + TURN_LIMIT
+    try:
+        for name, data in api.stream("/api/sessions/%s/chat/stream" % sid, {"message": text}):
+            if clock() > deadline:
+                raise ApiError("Hermes tardó demasiado")
+            if data.get("run_id"):
+                runs.add(str(data["run_id"]))
+            if name == "approval.request":
+                item = approval_item(data)
+                if item:
+                    store.add(item)
+                    announce_approval(item)
+                    deadline = max(deadline, clock() + APPROVAL_LIFE + TURN_LIMIT)
+            elif name == "approval.responded":
+                store.remove(str(data.get("run_id") or ""), str(data.get("request_id") or "") or None)
+            elif name == "assistant.completed":
+                answer = _text_of(data.get("content"))
+                sid = data.get("session_id") or sid
+            elif name in ("run.failed", "error"):
+                failed = str(data.get("error") or data.get("message") or "Hermes no pudo terminar")
+            elif name in ("run.cancelled", "run.interrupted"):
+                failed = failed or "el turno se canceló"
+            elif name == "done":
+                break
+    finally:
+        for run in runs:
+            store.remove(run)
+    if answer is None and failed:
+        raise ApiError(failed)
+    return answer or "", sid
+
 
 def pick_telegram_session(sessions):
     """(id, message_count) de la sesión de Telegram viva más reciente, o None."""
@@ -106,8 +291,9 @@ def _text_of(content):
     return ""
 
 
-def handle(req, api):
+def handle(req, api, store=None):
     op = req.get("op") if isinstance(req, dict) else None
+    store = store or ApprovalStore()
     try:
         if op == "send":
             text = req.get("text")
@@ -117,11 +303,44 @@ def handle(req, api):
             if not picked:
                 return {"ev": "error", "msg": "no hay una sesión de Telegram activa en Hermes"}
             sid = picked[0]
-            res = api.post("/api/sessions/%s/chat" % sid, {"message": text})
-            answer = _text_of((res.get("message") or {}).get("content"))
+            try:
+                answer, sid = _send_stream(api, sid, text, store)
+            except ApiError as e:
+                # Un Hermes sin el endpoint de stream: el /chat de siempre (sin aprobaciones, como antes).
+                if str(e) not in ("HTTP 404", "HTTP 405"):
+                    raise
+                res = api.post("/api/sessions/%s/chat" % sid, {"message": text})
+                answer = _text_of((res.get("message") or {}).get("content"))
+                sid = res.get("session_id") or sid
             if not answer.strip():
                 return {"ev": "error", "msg": "Hermes no devolvió texto"}
-            return {"ev": "done", "text": answer.strip(), "session_id": res.get("session_id") or sid}
+            return {"ev": "done", "text": answer.strip(), "session_id": sid}
+        if op == "approvals":
+            items = [{k: d[k] for k in ("run_id", "request_id", "command", "description", "choices", "ts")}
+                     for d in store.list()]
+            return {"ev": "approvals", "items": items}
+        if op == "approve":
+            run_id, request_id, choice = req.get("run_id"), req.get("request_id") or "", req.get("choice")
+            if not isinstance(run_id, str) or not RUN_ID_RE.match(run_id) or not isinstance(request_id, str) \
+                    or not REQUEST_ID_RE.match(request_id):
+                return {"ev": "error", "msg": "approve necesita run_id y request_id"}
+            pending = store.find(run_id, request_id)
+            if pending is None:
+                return {"ev": "error", "msg": "esa aprobación ya no está pendiente"}
+            if choice not in pending["choices"]:
+                return {"ev": "error", "msg": "opción no válida para esta aprobación"}
+            body = {"choice": choice}
+            if request_id:
+                body["request_id"] = request_id
+            try:
+                api.post("/v1/runs/%s/approval" % run_id, body)
+            except ApiError as e:
+                if str(e) == "HTTP 409":
+                    store.remove(run_id, request_id)
+                    return {"ev": "error", "msg": "esa aprobación ya no está pendiente"}
+                raise
+            store.remove(run_id, request_id)
+            return {"ev": "approved", "choice": choice}
         if op == "history":
             n = req.get("n", 40)
             n = n if isinstance(n, int) and 0 < n <= 200 else 40

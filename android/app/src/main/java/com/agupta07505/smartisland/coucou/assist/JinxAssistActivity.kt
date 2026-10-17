@@ -60,6 +60,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -75,6 +78,10 @@ data class AssistUi(
     val model: ModelState = ModelState.NotDownloaded,
     val modelPercent: Int = -1,
     val modelBusy: Boolean = false,
+    /** What Jinx is waiting for Alan to allow (on the server), oldest first. */
+    val approvals: List<JinxApproval> = emptyList(),
+    /** The key of the approval whose answer is on its way. */
+    val answering: String? = null,
 )
 
 class AssistModel(app: Application) : AndroidViewModel(app) {
@@ -87,6 +94,13 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         server = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.SERVER) },
         laptop = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) },
     )
+    // Its own connections: a `send` can hold the chat's for minutes while Jinx waits for Alan's permission,
+    // and this is how that permission is seen and given meanwhile.
+    private val approvalsApi = FailoverChatApi(
+        server = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.SERVER) },
+        laptop = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) },
+    )
+    private val shown = MutableStateFlow(false)
     private val modelStore = ModelStore(File(app.filesDir, "models"), GemmaModel.spec)
     private val localBrain = LocalModelBrain(
         modelReady = { modelStore.state() == ModelState.Ready },
@@ -111,6 +125,47 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
             ModelDownloads.percent.collect { p ->
                 _ui.update { it.copy(modelBusy = p >= 0, modelPercent = p) }
             }
+        }
+        // Jinx's questions are looked for while one of this phone's messages waits for her (every 3 s), and
+        // while her tab is on screen (every 10 s, for those asked from the PC). Otherwise nothing runs.
+        viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.flow.combine(shown, _ui.map { it.busy }.distinctUntilChanged()) { s, b -> s to b }
+                .collectLatest { (visible, busy) ->
+                    while (visible || busy) {
+                        pollApprovals()
+                        kotlinx.coroutines.delay(if (busy) 3_000 else 10_000)
+                    }
+                }
+        }
+    }
+
+    /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
+    fun setShown(visible: Boolean) {
+        shown.value = visible
+    }
+
+    private fun pollApprovals() {
+        // A failed look keeps what was shown: the next one says whether it is still there.
+        val items = runCatching { approvalsApi.approvals() }.getOrNull() ?: return
+        _ui.update { ui -> ui.copy(approvals = items.sortedBy { it.ts }) }
+    }
+
+    /**
+     * Alan's answer to one of Jinx's questions. Allowing has already been confirmed with the fingerprint (or
+     * the screen lock) by the card; [choice] is once, session or deny, never always from the phone.
+     */
+    fun answerApproval(a: JinxApproval, choice: String) {
+        if (choice !in JinxApprovalReview.buttons(a) || _ui.value.answering != null) return
+        _ui.update { it.copy(answering = a.key, notice = "") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = try {
+                approvalsApi.approve(a, choice)
+                if (choice == "deny") "Le dije a Jinx que no." else "Permiso dado a Jinx."
+            } catch (e: ChatException) {
+                "No se pudo contestar: ${e.message}"
+            }
+            _ui.update { ui -> ui.copy(answering = null, notice = msg, approvals = ui.approvals.filter { it.key != a.key }) }
+            pollApprovals()
         }
     }
 
@@ -257,6 +312,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         localBrain.release()
         laptopApi.close()
+        approvalsApi.close()
         super.onCleared()
     }
 }
@@ -280,7 +336,8 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
     val agents by CoucouRuntime.agentUi.collectAsState()
     LifecycleResumeEffect(model) {
         model.onOpen()
-        onPauseOrDispose { }
+        model.setShown(true)
+        onPauseOrDispose { model.setShown(false) }
     }
     AssistContent(
         ui = ui,
@@ -290,6 +347,7 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
         onProvision = { model.provision() },
         onDownloadModel = { model.downloadModel() },
         onTestModel = { model.testLocalModel() },
+        onApproval = { a, choice -> model.answerApproval(a, choice) },
         modifier = modifier,
     )
 }

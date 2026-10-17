@@ -1027,10 +1027,30 @@ async fn jinx_history(shared: State<'_, Shared>, n: u32) -> Result<Option<Vec<se
         .map_err(|e| e.to_string())?
 }
 
-/// `choice`: once | session | always | deny.
+/// `choice`: once | session | always | deny. Through the gateway when it is used (the question is on the
+/// server), else straight to the Hermes API.
 #[tauri::command]
-async fn jinx_approve(run_id: String, request_id: String, choice: String) -> Result<(), String> {
+async fn jinx_approve(shared: State<'_, Shared>, run_id: String, request_id: String, choice: String) -> Result<(), String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if jinx_gateway::use_gateway(&backend) {
+        return tauri::async_runtime::spawn_blocking(move || jinx_gateway::approve(&run_id, &request_id, &choice))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     jinx::approve(&run_id, &request_id, &choice).await
+}
+
+/// What Jinx waits for Alan to allow, when she is reached through the gateway (the Hermes API streams its
+/// questions as `jinx` events instead: empty then).
+#[tauri::command]
+async fn jinx_approvals(shared: State<'_, Shared>) -> Result<Vec<serde_json::Value>, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(Vec::new());
+    }
+    tauri::async_runtime::spawn_blocking(jinx_gateway::approvals)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1412,6 +1432,7 @@ pub fn run() {
             jinx_history,
             jinx_notify,
             jinx_approve,
+            jinx_approvals,
             jinx_stop,
             jinx_test,
             ingest_file,

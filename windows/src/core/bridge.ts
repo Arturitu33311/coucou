@@ -419,6 +419,11 @@ export const Bridge = {
   jinxSend: (text: string, context: ChatContext | null) => callOrThrow<void>("jinx_send", { text, context }),
   jinxApprove: (runId: string, requestId: string, choice: "once" | "session" | "always" | "deny") =>
     callOrThrow<void>("jinx_approve", { runId, requestId, choice }),
+  /** What Jinx waits for Alan to allow, when she is reached through the gateway (empty otherwise). */
+  jinxApprovals: () =>
+    call<{ run_id: string; request_id: string; command: string; description: string; choices: string[]; ts: number }[]>(
+      "jinx_approvals",
+    ),
   jinxStop: () => call<void>("jinx_stop"),
   jinxTest: () => callOrThrow<string>("jinx_test"),
   /** The tail of Jinx's shared thread (Telegram, the phones, this PC); null when Jinx is reached through

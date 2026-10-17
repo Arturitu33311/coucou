@@ -23,7 +23,9 @@ use crate::log;
 /// What the gateway calls this computer in the thread (it also allows "s21" and "s22").
 pub const SRC: &str = "pc";
 /// A reply may go through Hermes over ssh (85 s) and then the fallback brain: give it room.
-const SEND_TIMEOUT: Duration = Duration::from_secs(150);
+/// A message can wait for Alan to allow a command Jinx asked for (Hermes waits 300 s): the server cuts a turn
+/// at 80 s without a question and at ~490 s with one. Same as the phone's SEND_TIMEOUT_SEC.
+const SEND_TIMEOUT: Duration = Duration::from_secs(520);
 const HISTORY_TIMEOUT: Duration = Duration::from_secs(20);
 /// The gateway prints a few lines; anything this long is not it.
 const MAX_OUTPUT: usize = 4 << 20;
@@ -289,6 +291,36 @@ pub fn notify(text: &str, kind: &str) -> Result<bool, String> {
         }
     }
     Err("Jinx's gateway did not take the notice".into())
+}
+
+/// What Jinx (Hermes) is waiting for Alan to allow (`op: approvals`): `{run_id, request_id, command,
+/// description, choices, ts}`, oldest first. Empty when none, or when the gateway could not ask.
+pub fn approvals() -> Result<Vec<Value>, String> {
+    let events = run(&json!({ "op": "approvals" }), HISTORY_TIMEOUT)?;
+    for ev in &events {
+        if ev["ev"].as_str() == Some("approvals") {
+            return Ok(ev["items"].as_array().cloned().unwrap_or_default());
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// Alan's answer (after a click on the card) to one of those questions (`op: approve`). The server answers
+/// only what it has pending.
+pub fn approve(run_id: &str, request_id: &str, choice: &str) -> Result<(), String> {
+    if !matches!(choice, "once" | "session" | "always" | "deny") {
+        return Err("unknown approval choice".into());
+    }
+    let req = json!({ "op": "approve", "run_id": run_id, "request_id": request_id, "choice": choice });
+    let events = run(&req, HISTORY_TIMEOUT)?;
+    for ev in &events {
+        match ev["ev"].as_str() {
+            Some("approved") => return Ok(()),
+            Some("error") => return Err(ev["msg"].as_str().unwrap_or("error").to_string()),
+            _ => {}
+        }
+    }
+    Err("Jinx's gateway did not take the answer".into())
 }
 
 /// Is the gateway there and answering? What to tell the user.

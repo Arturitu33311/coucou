@@ -18,6 +18,12 @@ interface ChatApi {
     fun merge(lines: List<ChatLine>, have: List<String>): ChatEvent.Merged
     fun core(): ChatEvent.Core
     fun provision(): ChatEvent.Secrets
+
+    /** What Jinx is waiting for Alan to allow (on the server). Gateways that do not know the op say nothing. */
+    fun approvals(): List<JinxApproval> = emptyList()
+
+    /** Alan's answer, already confirmed on the phone (fingerprint) when it allows something. */
+    fun approve(a: JinxApproval, choice: String): ChatEvent.Approved = throw ChatException("sin aprobaciones aquí")
 }
 
 /**
@@ -119,11 +125,18 @@ class LaptopChatApi(
 
     override fun core() = ChatProtocol.expect<ChatEvent.Core>(ask(ChatProtocol.core(), 20))
     override fun provision() = ChatProtocol.expect<ChatEvent.Secrets>(ask(ChatProtocol.provision(), 20))
+    override fun approvals() = ChatProtocol.expect<ChatEvent.Approvals>(ask(ChatProtocol.approvals(), 20)).items
+    override fun approve(a: JinxApproval, choice: String) =
+        ChatProtocol.expect<ChatEvent.Approved>(ask(ChatProtocol.approve(a, choice), 25))
 
     companion object {
         /** A laptop that is not there is known in 3 s, not in `Ssh`'s default 8. */
         const val PROBE_MS = 3_000
-        const val SEND_TIMEOUT_SEC = 90L
+        /**
+         * A message can wait for Alan to allow a command Jinx asked for (Hermes waits 300 s): the server cuts a
+         * turn at 80 s without a question and at ~490 s with one, so the phone waits a bit longer than that.
+         */
+        const val SEND_TIMEOUT_SEC = 520L
     }
 }
 
@@ -195,6 +208,9 @@ class FailoverChatApi(
 
     override fun core() = ChatProtocol.expect<ChatEvent.Core>(ask(ChatProtocol.core(), 20))
     override fun provision() = ChatProtocol.expect<ChatEvent.Secrets>(ask(ChatProtocol.provision(), 20))
+    override fun approvals() = ChatProtocol.expect<ChatEvent.Approvals>(ask(ChatProtocol.approvals(), 20)).items
+    override fun approve(a: JinxApproval, choice: String) =
+        ChatProtocol.expect<ChatEvent.Approved>(ask(ChatProtocol.approve(a, choice), 25))
 
     override fun close() {
         server.close()
