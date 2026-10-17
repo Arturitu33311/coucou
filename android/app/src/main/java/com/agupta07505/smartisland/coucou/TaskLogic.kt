@@ -288,16 +288,22 @@ object TaskLogic {
     private val DAY = Regex("""(\d{4})-(\d{2})-(\d{2})""")
     private val FULL_ISO = Regex("""(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?""")
 
-    /** Parses a due string into a unix-epoch reminder (seconds). Handles full ISO datetimes and plain dates. */
+    /**
+     * When one of her pendientes with a `due` rings (unix seconds), or null. A full date and time (what her
+     * gateway sends for Teams tasks: "2026-10-17T05:59:00Z") rings then — in its own zone when it says one, in
+     * this phone's when not; a day alone rings at 09:00 that day here. Same as the PC (tasks.rs due_reminder):
+     * both pass due-vectors.json.
+     */
     fun dueReminder(due: String, offset: (Long) -> Long): Long? {
         val iso = FULL_ISO.matchEntire(due.trim())
         if (iso != null) {
+            val (_, mo, d, h, mi, se, zone) = iso.destructured
+            if (mo.toInt() !in 1..12 || d.toInt() !in 1..31 || h.toInt() > 23 || mi.toInt() > 59 || se.toInt() > 59) return null
             val ts = isoToUnix(due.trim()) ?: return null
-            val hasZone = iso.groupValues.size >= 8 && iso.groupValues[7].isNotEmpty()
-            return if (hasZone) ts else ts - offset(ts)
+            return if (zone.isNotEmpty()) ts else ts - offset(ts)
         }
         // Plain date → 09:00 that day, in this phone's time zone.
-        val m = DAY.matchEntire(due) ?: return null
+        val m = DAY.matchEntire(due.trim()) ?: return null
         val (y, mo, d) = m.destructured
         if (mo.toInt() !in 1..12 || d.toInt() !in 1..31) return null
         val nine = daysFromCivil(y.toLong(), mo.toLong(), d.toLong()) * 86_400L + 9 * 3600
