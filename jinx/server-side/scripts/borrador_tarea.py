@@ -18,6 +18,8 @@ import re
 import subprocess
 import sys
 import unicodedata
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -68,6 +70,33 @@ def _prompt(d: dict, adjuntos: list[str], sin_leer: list[str]) -> str:
     )
 
 
+class _SinRedireccion(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _bajar_graph(url: str, tok: str) -> bytes:
+    """El enlace viene de datos del profesor: el token solo viaja a graph.microsoft.com (https), y la redireccion a la
+    URL de descarga (otro host, ya autenticada) se sigue SIN la cabecera Authorization."""
+    from urllib.parse import urlparse
+    u = urlparse(url)
+    if u.scheme != "https" or (u.hostname or "").rstrip(".").lower() != "graph.microsoft.com":
+        raise ValueError("adjunto fuera de graph.microsoft.com: no se envia el token")
+    op = urllib.request.build_opener(_SinRedireccion)
+    try:
+        with op.open(urllib.request.Request(url, headers={"Authorization": "Bearer " + tok}), timeout=40) as x:
+            return x.read()
+    except urllib.error.HTTPError as e:
+        loc = e.headers.get("Location") if e.code in (301, 302, 303, 307, 308) else None
+        if not loc:
+            raise
+        d = urlparse(loc)
+        if d.scheme != "https":
+            raise ValueError("redireccion no https")
+        with urllib.request.urlopen(urllib.request.Request(loc), timeout=40) as x:   # sin token
+            return x.read()
+
+
 def _imagenes(tt, d: dict) -> tuple[list[dict], list[str], list[str]]:
     """(partes image_url, nombres leidos, nombres sin leer) de los adjuntos del profesor."""
     import base64
@@ -83,9 +112,7 @@ def _imagenes(tt, d: dict) -> tuple[list[dict], list[str], list[str]]:
             continue
         try:
             tok = tok or tt.get_access_token()
-            req = urllib.request.Request(link + "/content", headers={"Authorization": "Bearer " + tok})
-            with urllib.request.urlopen(req, timeout=40) as x:
-                b = x.read()
+            b = _bajar_graph(link + "/content", tok)
             mime = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp"}[ext]
             partes.append({"type": "image_url", "image_url": {"url": f"data:image/{mime};base64,{base64.b64encode(b).decode()}"}})
             leidos.append(nombre)
