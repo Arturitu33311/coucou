@@ -137,7 +137,7 @@ def _formatea_tarea(tarea: dict, detalle: dict | None = None) -> str:
     # Formatear vencimiento
     if vence:
         try:
-            dt = datetime.fromisoformat(vince.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(vence.replace("Z", "+00:00"))
             vence_str = dt.strftime("%d/%m %H:%M")
         except Exception:
             vence_str = str(vence)[:10]
@@ -232,6 +232,15 @@ def tick(*, dry_run: bool = False) -> dict:
         # Notificar
         if _notify(msg, dry_run=dry_run):
             resultado["notificadas"] += 1
+
+        # Borrador de texto en segundo plano (no bloquea el escaneo; nunca entrega nada). Lo omite en dry-run.
+        if not dry_run and aid:
+            try:
+                subprocess.Popen([sys.executable, str(_HERMES_HOME / "scripts" / "borrador_tarea.py"), aid],
+                                 stdout=open(_HERMES_HOME / "logs" / "borrador_tarea.log", "a"),
+                                 stderr=subprocess.STDOUT, start_new_session=True)
+            except Exception as e:  # noqa: BLE001
+                print(f"No pude lanzar el borrador de {aid}: {e}")
 
     # Actualizar known_ids con las tareas nuevas
     for aid, _ in truly_new:
