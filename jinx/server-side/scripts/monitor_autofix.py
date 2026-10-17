@@ -194,7 +194,10 @@ def main() -> int:
         if ok and act == "recovered":
             recovers.append(f"{svc} recuperado")
         if not ok and act in ("new_fail", "repeat_fail"):
-            if not dry_run:
+            if is_sys:
+                # unit de sistema: systemd ya lo relanza (Restart=always) y alan no puede reiniciarlo sin sudo; solo avisar
+                alerts.append(f"{svc}: {status} (systemd lo relanza solo)")
+            elif not dry_run:
                 # Simple fix: restart (up to 2 attempts)
                 fok, s2 = fix_restart(svc, is_sys)
                 if not fok:
