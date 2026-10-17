@@ -269,7 +269,7 @@ def _prompt_agente(d: dict, adjuntos: list[str], sin_leer: list[str]) -> str:
     )
 
 
-def _sandbox(work: Path) -> list[str] | None:
+def _sandbox(work: Path, copia: Path) -> list[str] | None:
     """Comando bwrap para el agente: lee instrucciones del profesor y paginas web (texto no confiable) y tiene ejecucion de
     codigo, asi que corre sin acceso al resto del $HOME (ssh, .hermes/.env, otros perfiles), con su propia identidad
     (SOUL, config, skills, memoria) de solo lectura y escribiendo solo en su carpeta de trabajo. La red queda abierta
@@ -287,14 +287,15 @@ def _sandbox(work: Path) -> list[str] | None:
     for tapar in ("/mnt", "/media", "/srv", "/root", "/var/lib/docker"):
         if os.path.isdir(tapar):
             cmd += ["--tmpfs", tapar]
+    # El perfil que ve el agente es una COPIA desechable (solo identidad: SOUL, config, skills, memoria), escribible
+    # pero que se borra al terminar: lo que Hermes cree (plugins, hooks, .env...) no sobrevive a la corrida. Lo
+    # que carga como identidad va ademas de solo lectura, y el venv es el original en solo lectura.
     cmd += ["--ro-bind", str(HERMES / "hermes-agent"), str(HERMES / "hermes-agent"),
-            "--bind", str(perfil), str(perfil)]
-    # su identidad y todo lo que Hermes carga o ejecuta despues (hooks, cron, bin, lsp, plugins...) es de solo lectura:
-    # una pagina inyectada no se deja persistencia ni reescribe sus reglas
-    for f in ("SOUL.md", "config.yaml", "profile.yaml", "skills", "memories", "venv", "hooks", "cron", "bin", "lsp",
-              "plugins", "skins", "home", "backups"):
-        if (perfil / f).exists():
-            cmd += ["--ro-bind", str(perfil / f), str(perfil / f)]
+            "--bind", str(copia), str(perfil)]
+    for f in ("SOUL.md", "config.yaml", "profile.yaml", "skills", "memories"):
+        if (copia / f).exists():
+            cmd += ["--ro-bind", str(copia / f), str(perfil / f)]
+    cmd += ["--ro-bind", str(perfil / "venv"), str(perfil / "venv")]
     cmd += ["--bind", str(work), str(work), "--chdir", str(work)]
     return cmd
 
@@ -324,10 +325,27 @@ def _agente(tt, d: dict, aid: str):
             print(f"[borrador] no pude bajar {nombre}: {str(e)[:80]}", file=sys.stderr)
             sin_leer.append(nombre)
     nombres = sorted(x.name for x in (work / "adjuntos").iterdir())
-    caja = _sandbox(work)
-    if caja is None:
-        print("[borrador] sin bwrap: el agente no corre sin aislamiento", file=sys.stderr)
-        return None
+    import shutil
+    import tempfile
+    perfil = HERMES / "profiles" / PERFIL
+    copia = Path(tempfile.mkdtemp(prefix="tareas-perfil-"))
+    try:
+        for f in ("SOUL.md", "config.yaml", "profile.yaml", "skills", "memories"):
+            if (perfil / f).is_dir():
+                shutil.copytree(perfil / f, copia / f, symlinks=False)
+            elif (perfil / f).is_file():
+                shutil.copy2(perfil / f, copia / f)
+        caja = _sandbox(work, copia)
+        if caja is None:
+            print("[borrador] sin bwrap: el agente no corre sin aislamiento", file=sys.stderr)
+            return None
+        r = _correr_agente(caja, d, nombres, sin_leer, key, work)
+    finally:
+        shutil.rmtree(copia, ignore_errors=True)
+    return r
+
+
+def _correr_agente(caja, d, nombres, sin_leer, key, work):
     try:
         r = subprocess.run(caja + [str(HERMES_BIN), "-p", PERFIL, "chat", "-q", _prompt_agente(d, nombres, sin_leer), "-Q",
                                    "--source", "tool", "--max-turns", "40"],
