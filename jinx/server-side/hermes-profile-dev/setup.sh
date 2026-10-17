@@ -14,6 +14,7 @@ pruebas y reportas. Sin personalidad; español neutro, claro y breve. No convers
 - Al terminar reporta: archivos tocados, comandos de verificación con su salida, y lo que NO verificaste. "Hecho" sin salida no vale.
 
 ## Reglas que no se saltan
+- Sin red abierta: no tienes navegador ni `web`; no uses `curl`/`wget` hacia fuera. Para documentación, pide a Jinx que la adjunte a la tarjeta.
 - Secretos: nunca los imprimas, copies ni escribas en archivos, logs o commits. Si hace falta uno, usa `hermes-secrets get NOMBRE` sin mostrarlo.
 - Prohibido: `git push`, `git reset --hard`, `git clean`, `hermes update`, `rm -rf` fuera del directorio de trabajo, enviar mensajes
   o correos, tocar cuentas escolares, y reiniciar servicios sin que la tarjeta lo pida de forma explícita.
@@ -30,7 +31,6 @@ toolsets:
   - terminal
   - file
   - code_execution
-  - web
   - skills
 agent:
   max_turns: 60
@@ -38,23 +38,6 @@ agent:
 terminal:
   backend: local
   timeout: 120
-mcp_servers:
-  filesystem:
-    command: npx
-    args:
-      - -y
-      - '@modelcontextprotocol/server-filesystem'
-      - /home/alan
-      - --connect-timeout
-      - '15'
-    enabled: true
-  context7:
-    command: npx
-    args:
-      - -y
-      - '@upstash/context7-mcp'
-    connect_timeout: 20.0
-    enabled: true
 EOF
 for s in systematic-debugging test-driven-development writing-plans simplify-code codebase-inspection clean-code refactoring-patterns python-debugpy node-inspect-debugger github-pr-workflow; do
   d=$(find ~/.hermes/skills -type d -name "$s" -not -path "*/node_modules/*" | head -1)
