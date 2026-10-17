@@ -134,7 +134,7 @@ class ChatRepositoryTest {
         assertEquals(2, s.unmirrored().size)
         m.ok = true; m.sent.clear()
         r.flushMirror()
-        assertEquals(listOf("📱 hola", "🟠 desde el teléfono"), m.sent)
+        assertEquals(listOf("📱 hola", "⚠️ Respaldo (Hermes no contestó): desde el teléfono"), m.sent)
         assertTrue(s.unmirrored().isEmpty())
     }
 

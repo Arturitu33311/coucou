@@ -54,8 +54,21 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(ev[-1], {"ev": "done", "mode": "or", "text": "respuesta", "mirrored": True})
         ids = [d["id"] for d in self.thread.read()]
         self.assertEqual(ids, ["c1:s21", "c1:jinx"])
-        self.assertEqual(self.mirror.sent, ["📱 hola", "🟠 respuesta"])
+        self.assertEqual(self.mirror.sent, ["📱 hola", "⚠️ Respaldo (Hermes no contestó): respuesta"])
         self.assertEqual(self.thread.unmirrored(), [])
+
+    def test_a_reply_from_hermes_goes_to_telegram_without_a_mark(self):
+        self.brain.reply = lambda messages: ("hermes", "la real")
+        self.events({"op": "send", "text": "hola", "cid": "c9", "src": "s22"})
+        self.assertEqual(self.mirror.sent, ["📱 hola", "la real"])
+        self.assertNotIn("via", self.thread.read()[-1])
+
+    def test_the_backup_mark_survives_a_merge(self):
+        from jinx_thread import Thread
+        other = Thread(tempfile.mkdtemp())
+        other.merge([{"id": "x:jinx", "ts": 1.0, "src": "jinx", "text": "t", "cid": "x", "via": "or"},
+                     {"id": "y:jinx", "ts": 2.0, "src": "jinx", "text": "t", "cid": "y", "via": "bogus"}])
+        self.assertEqual([d.get("via") for d in other.read()], ["or", None])
 
     def test_same_cid_twice_does_not_call_the_model_again(self):
         self.events({"op": "send", "text": "hola", "cid": "c1", "src": "s21"})
@@ -90,7 +103,7 @@ class GatewayTest(unittest.TestCase):
         self.mirror.sent.clear()
         self.events({"op": "send", "text": "dos", "cid": "c2", "src": "s21"})
         self.assertEqual(self.thread.unmirrored(), [])
-        self.assertEqual(self.mirror.sent[:2], ["📱 uno", "🟠 respuesta"])
+        self.assertEqual(self.mirror.sent[:2], ["📱 uno", "⚠️ Respaldo (Hermes no contestó): respuesta"])
 
     def test_telegram_text_is_cut_but_thread_keeps_it_whole(self):
         long = "x" * 10000
@@ -107,7 +120,7 @@ class GatewayTest(unittest.TestCase):
         ev = self.events({"op": "send", "text": "desde el escritorio", "cid": "p1", "src": "pc"})
         self.assertEqual(ev[-1]["ev"], "done")
         self.assertEqual([d["src"] for d in self.thread.read()], ["pc", "jinx"])
-        self.assertEqual(self.mirror.sent, ["💻 desde el escritorio", "🟠 respuesta"])
+        self.assertEqual(self.mirror.sent, ["💻 desde el escritorio", "⚠️ Respaldo (Hermes no contestó): respuesta"])
 
     def test_unknown_src_is_rejected(self):
         ev = self.events({"op": "send", "text": "x", "cid": "c", "src": "evil"})

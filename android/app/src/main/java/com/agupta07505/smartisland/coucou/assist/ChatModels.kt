@@ -17,6 +17,11 @@ data class ChatLine(
     val mirrored: Boolean,
     /** Jinx's mood when this line is hers and the gateway sent one: a name of [JinxMood.EMOTES], else null. */
     val mood: String? = null,
+    /**
+     * Which backup answered when it was not Hermes: "or" (OpenRouter) or "local" (the model on this phone or
+     * the laptop's). Null for Hermes and for Alan's lines. The same field (`via`) as the gateway's thread.
+     */
+    val via: String? = null,
 ) {
     val fromJinx: Boolean get() = src == "jinx"
 
@@ -30,9 +35,12 @@ data class ChatLine(
         else -> null
     }
 
-    /** How the line goes to Telegram (same as the laptop gateway's MIRROR_PREFIX). */
+    /**
+     * How the line goes to Telegram (the gateway's mirror_prefix): Alan's lines say where they were written,
+     * Jinx's go unmarked unless a backup answered instead of Hermes.
+     */
     val mirrorPrefix: String get() = when (src) {
-        "jinx" -> "🟠 "
+        "jinx" -> if (via in BACKUP_VIAS) BACKUP_PREFIX else ""
         "pc" -> "💻 "
         else -> "📱 "
     }
@@ -65,6 +73,10 @@ object JinxApprovalReview {
     fun buttons(a: JinxApproval): List<String> =
         listOf("once", "session").filter { it in a.choices } + "deny"
 }
+
+/** The backups that mark Jinx's line in Telegram (the gateway's BACKUP_MODES) and how. */
+val BACKUP_VIAS = listOf("or", "local")
+const val BACKUP_PREFIX = "⚠️ Respaldo (Hermes no contestó): "
 
 sealed interface ChatEvent {
     data object Ack : ChatEvent
@@ -126,6 +138,7 @@ object ChatProtocol {
         .put("id", l.id).put("ts", l.ts).put("src", l.src).put("text", l.text)
         .put("cid", l.cid ?: JSONObject.NULL).put("mirrored", l.mirrored)
         .also { o -> l.mood?.let { o.put("mood", it) } }
+        .also { o -> l.via?.takeIf { it in BACKUP_VIAS }?.let { o.put("via", it) } }
 
     fun lineFromJson(o: JSONObject): ChatLine? {
         val id = o.optString("id").takeIf { it.isNotEmpty() } ?: return null
@@ -139,6 +152,7 @@ object ChatProtocol {
             cid = if (o.isNull("cid")) null else o.optString("cid").takeIf { it.isNotEmpty() },
             mirrored = o.optBoolean("mirrored", false),
             mood = JinxMood.validEmote(if (o.isNull("mood")) null else o.optString("mood")),
+            via = o.optString("via").takeIf { it in BACKUP_VIAS },
         )
     }
 

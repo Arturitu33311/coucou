@@ -31,7 +31,7 @@ class NotifyTest(unittest.TestCase):
     def test_nobody_watching_or_no_presence_goes_to_telegram_as_jinx(self):
         ev = self.run_op({"text": "OpenCode tuvo un error en web."}, lambda t, k, s: False)
         self.assertEqual(ev[0]["telegram"], True)
-        self.assertEqual(self.mirror.sent, ["🟠 OpenCode tuvo un error en web."])
+        self.assertEqual(self.mirror.sent, ["OpenCode tuvo un error en web."])
 
         def down(t, k, s):
             raise OSError("no route")

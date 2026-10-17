@@ -31,7 +31,18 @@ BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
 # Quien puede escribir por el gateway: los dos teléfonos y Coucou del PC (local, sin ssh).
 SRCS = ("s21", "s22", "pc")
 # Cómo se ve cada origen al espejarlo en Telegram.
-MIRROR_PREFIX = {"jinx": "🟠 ", "pc": "💻 "}
+# En Telegram, lo que escribió Alan lleva de dónde vino (📱 un teléfono, 💻 el PC). Lo de Jinx va sin marca,
+# salvo cuando importa: si no contestó Hermes sino un respaldo, que se sepa.
+MIRROR_PREFIX = {"jinx": "", "pc": "💻 "}
+BACKUP_MODES = ("or", "local")
+BACKUP_PREFIX = "⚠️ Respaldo (Hermes no contestó): "
+
+
+def mirror_prefix(line):
+    """La marca de una línea al espejarla en Telegram. Pura."""
+    if line.get("src") == "jinx":
+        return BACKUP_PREFIX if line.get("via") in BACKUP_MODES else ""
+    return MIRROR_PREFIX.get(line.get("src"), "📱 ")
 TG_MAX = 4000
 
 
@@ -211,8 +222,7 @@ def _mirror_pending(deps):
     """Intenta espejar, en orden, lo que quedó sin espejar. Para al primer fallo."""
     done = []
     for d in deps.thread.unmirrored():
-        prefix = MIRROR_PREFIX.get(d["src"], "📱 ")
-        if not deps.mirror.send((prefix + d["text"])[:TG_MAX]):
+        if not deps.mirror.send((mirror_prefix(d) + d["text"])[:TG_MAX]):
             break
         done.append(d["id"])
     if done:
@@ -304,7 +314,7 @@ def _send(req, deps):
         # La etiqueta oculta de ánimo se quita ANTES de guardar y de espejar a Telegram; el emote viaja aparte.
         out, mood = split_mood((out or "").strip())
         out = (out or "").strip() or "(sin respuesta)"
-        line = deps.thread.append("jinx", out, cid=cid, mood=mood)
+        line = deps.thread.append("jinx", out, cid=cid, mood=mood, via=mode)
         done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _settle_mirror(deps, ids)}
         if mood:
             done["mood"] = mood  # solo si la respuesta traía una etiqueta válida; nunca el ánimo de fondo

@@ -57,7 +57,7 @@ class ChatRepository(
         laptop?.let { api ->
             try {
                 val done = api.send(user.text, cid, deviceId)
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored, done.mood))
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored, done.mood, done.mode.takeIf { it in BACKUP_VIAS }))
                 if (done.mirrored) store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, Via.Laptop)
             } catch (_: ChatException) {
@@ -68,7 +68,8 @@ class ChatRepository(
         for (b in brains) {
             try {
                 val text = b.reply(store.tail(CONTEXT))
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, false))
+                val via = if (b.via == Via.Cloud) "or" else "local"
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, false, via = via))
                 flushMirror()
                 return SendResult.Answered(line, b.via)
             } catch (e: ChatException) {

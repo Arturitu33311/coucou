@@ -47,7 +47,8 @@ class ThreadStoreTest {
         assertNull(line("a", 1.0, src = "s22").sourceLabel)
         assertEquals("💻 ", line("a", 1.0, src = "pc").mirrorPrefix)
         assertEquals("📱 ", line("a", 1.0, src = "s21").mirrorPrefix)
-        assertEquals("🟠 ", line("a", 1.0, src = "jinx").mirrorPrefix)
+        assertEquals("", line("a", 1.0, src = "jinx").mirrorPrefix)
+        assertEquals("⚠️ Respaldo (Hermes no contestó): ", line("a", 1.0, src = "jinx").copy(via = "or").mirrorPrefix)
     }
 
     @Test fun mergeAddsOnlyUnknownAndOrdersByTs() {

@@ -20,6 +20,9 @@ EMOTES = ("happy", "love", "proud", "surprised", "excited", "confused", "shy", "
           "scared", "grumpy", "smug", "laughing", "crying", "relieved", "determined", "flustered", "sleepy")
 
 
+# Cerebros de respaldo que se anotan en la línea de Jinx ("hermes" no se anota: es lo normal).
+VIAS = ("or", "local")
+
 def valid_mood(m):
     """El emote tal cual si es uno de EMOTES; si no, None."""
     return m if isinstance(m, str) and m in EMOTES else None
@@ -82,7 +85,7 @@ class Thread:
         with self._locked():
             return self._read()
 
-    def append(self, src, text, cid=None, ts=None, mirrored=False, mood=None):
+    def append(self, src, text, cid=None, ts=None, mirrored=False, mood=None, via=None):
         with self._locked():
             lines = self._read()
             lid = _line_id(src, cid)
@@ -93,6 +96,8 @@ class Thread:
                  "text": text, "cid": cid, "mirrored": mirrored}
             if valid_mood(mood):
                 d["mood"] = mood
+            if via in VIAS:
+                d["via"] = via  # qué cerebro contestó, cuando no fue Hermes (para marcarlo en Telegram)
             lines.append(d)
             self._write(lines)
             return d
@@ -126,10 +131,13 @@ class Thread:
                         flags_changed = True
                     continue
                 mood = valid_mood(d.get("mood"))
+                incoming_via = d.get("via")
                 d = {"id": d["id"], "ts": d["ts"], "src": d["src"], "text": d["text"],
                      "cid": d.get("cid"), "mirrored": bool(d.get("mirrored", False))}
                 if mood:
                     d["mood"] = mood
+                if incoming_via in VIAS:
+                    d["via"] = incoming_via
                 known.add(d["id"])
                 by_id[d["id"]] = d
                 lines.append(d)
