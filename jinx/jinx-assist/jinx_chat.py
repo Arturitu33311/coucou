@@ -616,6 +616,12 @@ class ChainBrain:
                 return b.reply(messages)
             except Exception as e:  # noqa: BLE001
                 last = e
+                # Por qué no contestó (sin el mensaje): así se ve cuándo y por qué habló el respaldo.
+                try:
+                    append_log(os.path.join(BASE, "gateway.log"), "%s brain=%s failed: %s" % (
+                        time.strftime("%Y-%m-%dT%H:%M:%S"), type(b).__name__, redact(str(e))[:160]))
+                except Exception:  # noqa: BLE001
+                    pass
         raise last
 
 
@@ -908,7 +914,12 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
         stdout.write(json.dumps(_err("gateway sin cerebro: %s" % e)) + "\n")
         return 0
     t_deps = time.time()
+    mode = "-"
     for ev in run_line(raw, deps):
+        if ev.get("ev") == "done":
+            mode = ev.get("mode") or "-"
+        elif ev.get("ev") == "error":
+            mode = "error"
         stdout.write(json.dumps(ev, ensure_ascii=False) + "\n")
         stdout.flush()
     t_end = time.time()
@@ -916,8 +927,8 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
     try:
         op = req.get("op", "?") if isinstance(req, dict) else "?"
         append_log(os.path.join(BASE, "gateway.log"),
-                   "%s op=%s deps=%.2fs run=%.2fs total=%.2fs" % (
-                       time.strftime("%Y-%m-%dT%H:%M:%S"), op, t_deps - t_start, t_end - t_deps, t_end - t_start))
+                   "%s op=%s mode=%s deps=%.2fs run=%.2fs total=%.2fs" % (
+                       time.strftime("%Y-%m-%dT%H:%M:%S"), op, mode, t_deps - t_start, t_end - t_deps, t_end - t_start))
     except OSError:
         pass
     return 0

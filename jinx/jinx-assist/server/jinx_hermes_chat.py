@@ -232,40 +232,108 @@ def announce_approval(item, url=PRESENCE_URL, opener=urllib.request.urlopen):
         pass
 
 
-def _send_stream(api, sid, text, store, clock=time.monotonic):
-    """Un turno por el stream de la sesión: guarda las preguntas mientras espera. (texto, session_id).
-    Tope: TURN_LIMIT sin preguntas; cada pregunta lo alarga a APPROVAL_LIFE + TURN_LIMIT desde que llegó."""
-    answer, failed, runs = None, None, set()
-    deadline = clock() + TURN_LIMIT
+BRIDGE_LOG = os.environ.get("JINX_BRIDGE_LOG", os.path.expanduser("~/.hermes/state/coucou/bridge.log"))
+
+
+def log_line(line, path=None):
+    """Una línea de diagnóstico SIN contenido (nombres de eventos, tiempos, motivos). Nunca falla."""
     try:
-        for name, data in api.stream("/api/sessions/%s/chat/stream" % sid, {"message": text}):
-            if clock() > deadline:
-                raise ApiError("Hermes tardó demasiado")
-            if data.get("run_id"):
-                runs.add(str(data["run_id"]))
-            if name == "approval.request":
-                item = approval_item(data)
-                if item:
-                    store.add(item)
-                    announce_approval(item)
-                    deadline = max(deadline, clock() + APPROVAL_LIFE + TURN_LIMIT)
-            elif name == "approval.responded":
-                store.remove(str(data.get("run_id") or ""), str(data.get("request_id") or "") or None)
-            elif name == "assistant.completed":
-                answer = _text_of(data.get("content"))
-                sid = data.get("session_id") or sid
-            elif name in ("run.failed", "error"):
-                failed = str(data.get("error") or data.get("message") or "Hermes no pudo terminar")
-            elif name in ("run.cancelled", "run.interrupted"):
-                failed = failed or "el turno se canceló"
-            elif name == "done":
-                break
+        path = path or BRIDGE_LOG
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+class StreamNotOpened(ApiError):
+    """El stream no llegó a abrirse (ningún evento): el mensaje no entró a Hermes, se puede usar /chat."""
+
+
+def _latest_reply(api, sid, since):
+    """La última respuesta de Jinx en la sesión escrita después de `since` (segundos), o None."""
+    try:
+        count = next((int(x.get("message_count") or 0) for x in _sessions(api) if x.get("id") == sid), 0)
+        d = api.get("/api/sessions/%s/messages?limit=6&offset=%d" % (sid, max(0, count - 6)))
+    except (ApiError, ValueError, TypeError):
+        return None
+    raw = d.get("messages") or d.get("data") or d.get("items") or []
+    best = None
+    for m in raw:
+        if m.get("role") != "assistant" or m.get("tool_calls"):
+            continue
+        try:
+            ts = float(m.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        text = _text_of(m.get("content")).strip()
+        if text and ts >= since and (best is None or ts > best[0]):
+            best = (ts, text)
+    return best[1] if best else None
+
+
+def _send_stream(api, sid, text, store, clock=time.monotonic, wall=time.time, pause=time.sleep):
+    """Un turno por el stream de la sesión: guarda las preguntas mientras espera. (texto, session_id).
+    Tope: TURN_LIMIT sin preguntas; cada pregunta lo alarga a APPROVAL_LIFE + TURN_LIMIT desde que llegó.
+    El texto sale de `assistant.completed`, si no de `run.completed`, si no de los deltas; si el stream
+    termina sin texto (p. ej. otro proceso tomó el turno: `run.queued`), se lee de la sesión."""
+    answer, failed, runs, deltas, seen = None, None, set(), [], {}
+    started_wall = wall() - 5
+    deadline = clock() + TURN_LIMIT
+    queued = False
+    try:
+        try:
+            events = api.stream("/api/sessions/%s/chat/stream" % sid, {"message": text})
+            for name, data in events:
+                seen[name] = seen.get(name, 0) + 1
+                if clock() > deadline:
+                    raise ApiError("Hermes tardó demasiado")
+                if data.get("run_id"):
+                    runs.add(str(data["run_id"]))
+                if name == "approval.request":
+                    item = approval_item(data)
+                    if item:
+                        store.add(item)
+                        announce_approval(item)
+                        deadline = max(deadline, clock() + APPROVAL_LIFE + TURN_LIMIT)
+                elif name == "approval.responded":
+                    store.remove(str(data.get("run_id") or ""), str(data.get("request_id") or "") or None)
+                elif name == "assistant.completed":
+                    answer = _text_of(data.get("content")) or answer
+                    sid = data.get("session_id") or sid
+                elif name == "run.completed":
+                    answer = answer or _text_of(data.get("output") or data.get("content"))
+                elif name in ("assistant.delta", "message.delta"):
+                    deltas.append(str(data.get("delta") or ""))
+                elif name == "run.queued":
+                    queued = True
+                elif name in ("run.failed", "error"):
+                    failed = str(data.get("error") or data.get("message") or "Hermes no pudo terminar")
+                elif name in ("run.cancelled", "run.interrupted"):
+                    failed = failed or "el turno se canceló"
+                elif name == "done":
+                    break
+        except ApiError as e:
+            if not seen and not isinstance(e, StreamNotOpened):
+                raise StreamNotOpened(str(e))
+            raise
     finally:
         for run in runs:
             store.remove(run)
-    if answer is None and failed:
+        log_line("send stream events=%s queued=%s answer=%s failed=%s" % (
+            ",".join("%s:%d" % kv for kv in sorted(seen.items())) or "-", queued,
+            bool(answer or "".join(deltas).strip()), bool(failed)))
+    answer = (answer or "").strip() or "".join(deltas).strip()
+    if not answer and not failed:
+        # El turno lo terminó (o lo sigue) otro proceso: la respuesta queda en la sesión.
+        while not answer and clock() < deadline:
+            answer = _latest_reply(api, sid, started_wall) or ""
+            if not answer:
+                pause(3)
+        log_line("send read-back found=%s queued=%s" % (bool(answer), queued))
+    if not answer and failed:
         raise ApiError(failed)
-    return answer or "", sid
+    return answer, sid
 
 
 def pick_telegram_session(sessions):
@@ -305,10 +373,10 @@ def handle(req, api, store=None):
             sid = picked[0]
             try:
                 answer, sid = _send_stream(api, sid, text, store)
-            except ApiError as e:
-                # Un Hermes sin el endpoint de stream: el /chat de siempre (sin aprobaciones, como antes).
-                if str(e) not in ("HTTP 404", "HTTP 405"):
-                    raise
+            except StreamNotOpened as e:
+                # El stream no abrió (un Hermes sin ese endpoint, o lo rechazó): el mensaje no entró, así que
+                # va por el /chat de siempre (sin aprobaciones, como antes).
+                log_line("send stream-not-opened (%s): /chat" % e)
                 res = api.post("/api/sessions/%s/chat" % sid, {"message": text})
                 answer = _text_of((res.get("message") or {}).get("content"))
                 sid = res.get("session_id") or sid

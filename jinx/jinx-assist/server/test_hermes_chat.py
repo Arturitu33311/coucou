@@ -7,6 +7,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import jinx_hermes_chat as hc
 
+hc.BRIDGE_LOG = os.path.join(tempfile.mkdtemp(), "bridge.log")
+
 
 class FakeApi:
     """Simula lo que el script pide a la API de Hermes (sin red)."""
@@ -170,6 +172,42 @@ class StreamSendTest(unittest.TestCase):
         t[0] = 0.0
         api = FakeApi(stream_events=[APPROVAL, tick, ("keepalive", {}), *DONE])
         self.assertEqual(hc._send_stream(api, "s", "x", tmp_store(), clock=clock)[0], "listo, borrado")
+
+
+    def test_a_stream_that_never_opened_goes_by_the_old_chat(self):
+        api = FakeApi(stream_events=[])
+        api.stream_error = hc.ApiError("HTTP 401")
+        orig = api.stream
+
+        def failing(path, body):
+            api.calls.append(("STREAM", path, body))
+            raise api.stream_error
+            yield  # noqa
+        api.stream = failing
+        out = hc.handle({"op": "send", "text": "x"}, api, tmp_store())
+        self.assertEqual(out["text"], "hola desde Hermes")
+        self.assertIn("/api/sessions/new_tg/chat", [c[1] for c in api.calls if c[0] == "POST"])
+
+    def test_a_stream_that_broke_after_starting_is_never_resent(self):
+        def broken(path, body):
+            yield ("run.started", {"run_id": "run_abc"})
+            raise hc.ApiError("se cortó el stream")
+        api = FakeApi()
+        api.stream = broken
+        out = hc.handle({"op": "send", "text": "x"}, api, tmp_store())
+        self.assertEqual(out["ev"], "error")
+        self.assertFalse([c for c in api.calls if c[0] == "POST"])
+
+    def test_without_completed_text_the_deltas_are_the_answer(self):
+        api = FakeApi(stream_events=[("assistant.delta", {"delta": "ho"}), ("assistant.delta", {"delta": "la"}),
+                                     ("done", {})])
+        self.assertEqual(hc.handle({"op": "send", "text": "x"}, api, tmp_store())["text"], "hola")
+
+    def test_a_turn_taken_elsewhere_is_read_back_from_the_session(self):
+        msgs = [{"id": "9", "role": "assistant", "content": "la real", "timestamp": str(10 ** 10)}]
+        api = FakeApi(stream_events=[("run.started", {}), ("run.queued", {"status": "queued"}), ("done", {})],
+                      messages=msgs)
+        self.assertEqual(hc.handle({"op": "send", "text": "x"}, api, tmp_store())["text"], "la real")
 
 
 class ApprovalOpsTest(unittest.TestCase):
