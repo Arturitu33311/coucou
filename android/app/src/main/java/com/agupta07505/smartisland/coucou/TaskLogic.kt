@@ -286,9 +286,17 @@ object TaskLogic {
     }
 
     private val DAY = Regex("""(\d{4})-(\d{2})-(\d{2})""")
+    private val FULL_ISO = Regex("""(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?""")
 
-    /** When a pendiente with only a day gets its reminder: 09:00 that day, in this phone's time zone. */
+    /** Parses a due string into a unix-epoch reminder (seconds). Handles full ISO datetimes and plain dates. */
     fun dueReminder(due: String, offset: (Long) -> Long): Long? {
+        val iso = FULL_ISO.matchEntire(due.trim())
+        if (iso != null) {
+            val ts = isoToUnix(due.trim()) ?: return null
+            val hasZone = iso.groupValues.size >= 8 && iso.groupValues[7].isNotEmpty()
+            return if (hasZone) ts else ts - offset(ts)
+        }
+        // Plain date → 09:00 that day, in this phone's time zone.
         val m = DAY.matchEntire(due) ?: return null
         val (y, mo, d) = m.destructured
         if (mo.toInt() !in 1..12 || d.toInt() !in 1..31) return null
