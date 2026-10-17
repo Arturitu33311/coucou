@@ -61,7 +61,7 @@ def _prompt(d: dict, adjuntos: list[str], sin_leer: list[str]) -> str:
         "- Sigue las instrucciones y la actividad de la imagen al pie de la letra (formato, numero de partes, extension).\n"
         "- Si piden fuentes, busca en la web y cita SOLO paginas que realmente encontraste, con su URL, en formato APA al final. "
         "Nunca inventes una fuente, URL, cita ni cifra.\n"
-        "- Escribe con voz de estudiante de preparatoria, clara y sin tono de enciclopedia; sin frases como 'como IA'.\n"
+        "- Redacta claro y breve, a nivel de preparatoria.\n"
         "- Solo lo que de verdad dependa de Alan (su nombre, una foto suya, una experiencia propia, un archivo que no puedes ver, "
         "algo que debe hacerse fuera, como una presentacion en Canva) va como [ALAN: que falta]. Todo lo demas, completo.\n"
         "- Si la tarea NO se puede avanzar desde texto (asistir a una sesion, un examen en linea), responde solo: NO_APLICA\n"
@@ -245,6 +245,75 @@ def _adjuntar(tt, aid: str, docx: Path) -> str:
     return "adjuntado sin entregar" if r.get("ok") else f"fallo ({r.get('error')})"
 
 
+PERFIL = "tareas"   # perfil de Hermes sin la personalidad de Jinx (~/.hermes/profiles/tareas)
+HERMES_BIN = Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "hermes"
+VENV_PY = HERMES / "profiles" / PERFIL / "venv" / "bin" / "python"
+SALIDAS = (".docx", ".pptx", ".pdf", ".xlsx")
+
+
+def _prompt_agente(d: dict, adjuntos: list[str], sin_leer: list[str]) -> str:
+    extra = ""
+    if adjuntos:
+        extra += ("\nLas imagenes de la tarea estan en ./adjuntos/ (" + ", ".join(adjuntos) +
+                  "): abrelas con tu herramienta de vision, ahi esta la actividad.\n")
+    if sin_leer:
+        extra += f"\nAdjuntos que no pudiste obtener: {', '.join(sin_leer)}. Marca lo que dependa de ellos como [ALAN: ...].\n"
+    return (
+        "Haz esta tarea escolar de Alan, o la parte que se pueda hacer desde aqui, y dejala como archivo(s) listos para usar "
+        "en el directorio actual. Elige el formato que pide la tarea (documento .docx, presentacion .pptx, etc.; si pide Canva "
+        "o algo que no puedes crear, haz el contenido en .pptx y dilo en una linea).\n\n"
+        f"CLASE: {d.get('clase')}\nTAREA: {d.get('titulo')}\nVENCE: {d.get('vence')}\nPUNTOS: {d.get('puntos_max')}\n\n"
+        f"INSTRUCCIONES:\n{d.get('instrucciones')}\n{extra}\n"
+        f"Para crear archivos Office usa {VENV_PY} (trae python-docx y python-pptx). Termina con una linea 'ARCHIVO: <ruta>' por "
+        "archivo creado, o solo NO_APLICA si no se puede avanzar desde texto o archivos."
+    )
+
+
+def _agente(tt, d: dict, aid: str):
+    """Corre el perfil `tareas` de Hermes (herramientas y skills, sin la personalidad de Jinx) en un directorio propio.
+    Devuelve (carpeta, [archivos]) o ('NO_APLICA', []) o None si fallo."""
+    key = tt._secret("OPENROUTER_API_KEY") or ""
+    if not key or not HERMES_BIN.exists() or not VENV_PY.exists():
+        return None
+    work = OUT_DIR / f"{aid[:8]}-{_slug(d.get('titulo', ''))}"
+    (work / "adjuntos").mkdir(parents=True, exist_ok=True)
+    os.chmod(work, 0o700)
+    # las imagenes se bajan aqui (token solo a graph.microsoft.com); el agente las ve con su herramienta de vision
+    leidos, sin_leer, tok = [], [], None
+    for r in d.get("recursos_profe") or []:
+        nombre, link = r.get("nombre") or "adjunto", r.get("link") or ""
+        if nombre.lower().rsplit(".", 1)[-1] not in ("jpg", "jpeg", "png", "webp") or not link or len(leidos) >= MAX_IMG:
+            sin_leer.append(nombre)
+            continue
+        try:
+            tok = tok or tt.get_access_token()
+            (work / "adjuntos" / _slug(nombre.rsplit(".", 1)[0])).with_suffix("." + nombre.rsplit(".", 1)[-1].lower()).write_bytes(
+                _bajar_graph(link + "/content", tok))
+            leidos.append(nombre)
+        except Exception as e:  # noqa: BLE001
+            print(f"[borrador] no pude bajar {nombre}: {str(e)[:80]}", file=sys.stderr)
+            sin_leer.append(nombre)
+    nombres = sorted(x.name for x in (work / "adjuntos").iterdir())
+    try:
+        r = subprocess.run([str(HERMES_BIN), "-p", PERFIL, "chat", "-q", _prompt_agente(d, nombres, sin_leer), "-Q",
+                            "--source", "tool", "--max-turns", "40"],
+                           env=dict(os.environ, OPENROUTER_API_KEY=key), cwd=str(work), capture_output=True, text=True, timeout=900)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"[borrador] agente: {type(e).__name__}", file=sys.stderr)
+        return None
+    salida = r.stdout or ""
+    if "NO_APLICA" in salida.split("ARCHIVO:")[0][-400:] and "ARCHIVO:" not in salida:
+        return "NO_APLICA", []
+    archivos = [f for f in sorted(work.rglob("*")) if f.is_file() and f.suffix.lower() in SALIDAS
+                and "adjuntos" not in f.parts and f.stat().st_size < 25_000_000][:5]
+    if r.returncode != 0 or not archivos:
+        print(f"[borrador] agente sin archivos (rc={r.returncode}): {(r.stderr or salida)[-200:]}", file=sys.stderr)
+        return None
+    for f in archivos:
+        os.chmod(f, 0o600)
+    return work, archivos
+
+
 def _avisa(msg: str) -> None:
     subprocess.run([str(NOTIFY), msg], env=dict(os.environ, MOCHI_ROUTE="0"), capture_output=True, text=True, timeout=120)
 
@@ -271,12 +340,31 @@ def crear(aid: str, force: bool = False, notificar: bool = True) -> str:
     idx = _index()
     previo = idx.get(huella)
     if previo and Path(previo["ruta"]).exists() and not force:
-        docx_prev = Path(previo["ruta"]).with_suffix(".docx")
-        estado = _adjuntar(tt, aid, docx_prev) if docx_prev.exists() else "sin archivo"
+        previos = [Path(x) for x in previo.get("archivos") or [] if Path(x).exists()] or \
+                  [Path(previo["ruta"]).with_suffix(".docx")]
+        previos = [x for x in previos if x.exists()]
+        estado = ", ".join(_adjuntar(tt, aid, x) for x in previos) if previos else "sin archivo"
         if notificar:
             _avisa(f"📝 «{d.get('titulo')}» ({d.get('clase')}) pide lo mismo que «{previo['titulo']}» ({previo['clase']}): "
                    f"no lo hice dos veces, reutilicé el mismo trabajo ({estado} en esta tarea). Está en el server: {previo['ruta']}")
         return f"repetida:{previo['ruta']}"
+    hecho = _agente(tt, d, aid)
+    if hecho and hecho[0] == "NO_APLICA":
+        return "no_aplica"
+    if hecho:
+        work, archivos = hecho
+        ruta = work.with_suffix(".md")
+        ruta.write_text(f"# {d.get('titulo')} ({d.get('clase')})\nHecho por el agente `{PERFIL}`. Archivos:\n" +
+                        "\n".join(f"- {a}" for a in archivos) + "\n", encoding="utf-8")
+        os.chmod(ruta, 0o600)
+        estado = ", ".join(f"{a.name}: {_adjuntar(tt, aid, a)}" for a in archivos)
+        idx[huella] = {"ruta": str(ruta), "titulo": d.get("titulo"), "clase": d.get("clase"), "archivos": [str(a) for a in archivos]}
+        INDEX.write_text(json.dumps(idx, ensure_ascii=False, indent=1))
+        os.chmod(INDEX, 0o600)
+        if notificar:
+            _avisa(f"📝 Ya hice lo que pide «{d.get('titulo')}» ({d.get('clase')}) con el agente de tareas y lo dejé en Teams "
+                   f"({estado}). Revísalo antes de entregar; lo que dice [ALAN] lo pones tú. En el server: {work}")
+        return f"ok:{ruta} ({estado})"
     texto = generar(tt, d)
     if not texto:
         return "error:el modelo no devolvió texto"
