@@ -673,4 +673,11 @@
     <string name="coucou_phrase_morning">Good morning ☀️</string>
     <string name="coucou_phrase_afternoon">Fancy a coffee? ☕</string>
     <string name="coucou_phrase_evening">Almost time to rest 🌙</string>
+    <string name="coucou_handoff_title">Continue on this phone</string>
+    <string name="coucou_handoff_working">Moving it over…</string>
+    <string name="coucou_handoff_nolink">No link to the laptop</string>
+    <string name="coucou_handoff_noanswer">The laptop did not answer</string>
+    <string name="coucou_handoff_failed">Not moved: %1$s</string>
+    <string name="coucou_handoff_connect">Connect %1$s to this phone</string>
+    <string name="coucou_handoff_ready">Opened. Press play when the headphones are on</string>
 </resources>

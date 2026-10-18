@@ -74,6 +74,12 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
+            android:name=".coucou.handoff.HandoffActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
             android:name=".coucou.phone.PhoneSetupActivity"
             android:exported="false"
             android:label="Coucou phone link"

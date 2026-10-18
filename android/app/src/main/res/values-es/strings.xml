@@ -66,4 +66,11 @@
     <string name="coucou_phrase_morning">Buenos días ☀️</string>
     <string name="coucou_phrase_afternoon">¿Un cafecito? ☕</string>
     <string name="coucou_phrase_evening">Ya casi a descansar 🌙</string>
+    <string name="coucou_handoff_title">Continuar en el celular</string>
+    <string name="coucou_handoff_working">Pasándolo…</string>
+    <string name="coucou_handoff_nolink">Sin enlace con la laptop</string>
+    <string name="coucou_handoff_noanswer">La laptop no respondió</string>
+    <string name="coucou_handoff_failed">No se pasó: %1$s</string>
+    <string name="coucou_handoff_connect">Conecta %1$s a este celular</string>
+    <string name="coucou_handoff_ready">Abierto. Dale play cuando tengas los audífonos</string>
 </resources>

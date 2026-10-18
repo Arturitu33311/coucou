@@ -59,6 +59,10 @@ sealed class RemoteMsg {
     data class Peer(val beat: Beat, val music: Boolean, val news: Boolean, val limit: Boolean = false) : RemoteMsg()
     /** The laptop says another phone left the link. */
     data class PeerGone(val device: String) : RemoteMsg()
+    /** The laptop offers what plays there to this phone (music handoff). */
+    data class Handoff(val offer: com.agupta07505.smartisland.coucou.handoff.HandoffOffer) : RemoteMsg()
+    /** How an accepted offer went on the laptop: it paused and let go of the headphones, or could not. */
+    data class HandoffDone(val id: String, val ok: Boolean, val why: String, val headset: String) : RemoteMsg()
     data object Pong : RemoteMsg()
     data object Disabled : RemoteMsg()
     data object Offline : RemoteMsg()
@@ -69,10 +73,31 @@ object RemoteProtocol {
     fun tasksSync(tasksJson: String): String =
         JSONObject().put("op", "tasks_sync").put("tasks", JSONArray(tasksJson)).toString()
 
-    fun parse(line: String, now: Long): RemoteMsg? {
+    /** The accept of the offer that is waiting: the only thing the phone can say about a handoff. */
+    fun handoffAccept(id: String) = JSONObject().put("op", "handoff_accept").put("id", id).toString()
+
+    /**
+     * [me]: this phone's id. A line addressed to another phone (the link is a broadcast) is dropped.
+     * Tests that do not care leave it out.
+     */
+    fun parse(line: String, now: Long, me: String? = null): RemoteMsg? {
         val o = runCatching { JSONObject(line) }.getOrNull() ?: return null
         fun s(k: String) = o.optString(k, "").takeIf { it != "null" } ?: ""
+        fun forMe() = me == null || o.optString("device") == me
         return when (o.optString("t")) {
+            "handoff" -> o.optString("id").takeIf { it.isNotEmpty() && it.length <= 64 && forMe() }?.let { id ->
+                RemoteMsg.Handoff(
+                    com.agupta07505.smartisland.coucou.handoff.HandoffOffer(
+                        id = id, kind = s("kind"), uri = s("uri"), title = s("title").take(200), artist = s("artist").take(200),
+                        player = s("player").take(60), posMs = o.optLong("pos_ms", 0L).coerceAtLeast(0L),
+                        lengthMs = o.optLong("length_ms", 0L).coerceAtLeast(0L), headset = s("headset").take(80),
+                        auto = o.optBoolean("auto", false), ttlS = o.optLong("ttl_s", 120L),
+                    ),
+                )
+            }
+            "handoff_done" -> o.optString("id").takeIf { it.isNotEmpty() && forMe() }?.let { id ->
+                RemoteMsg.HandoffDone(id, o.optBoolean("ok", false), s("why").take(200), s("headset").take(80))
+            }
             "hello" -> {
                 val arr = o.optJSONArray("pending")
                 RemoteMsg.Hello((0 until (arr?.length() ?: 0)).mapNotNull { pendingOf(arr!!.getJSONObject(it), now) })
