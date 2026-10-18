@@ -14,7 +14,7 @@ export const KNOWN_AGENTS: Record<string, KnownAgent> = {
   gemini: { name: "Gemini CLI", color: "#8AB4F8" },
   copilot: { name: "Copilot CLI", color: "#818CF8" },
   muse: { name: "Muse Code", color: "#38BDF8" },
-  opencode: { name: "OpenCode", color: "#4ADE80" },
+  opencode: { name: "OpenCode", color: "#F472B6" },
   amp: { name: "Amp", color: "#F59E0B" },
   hermes: { name: "Hermes", color: "#C084FC" },
   "claude-desktop": { name: "Claude Desktop", color: "#D97757" },

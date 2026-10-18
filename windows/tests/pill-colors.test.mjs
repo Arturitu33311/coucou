@@ -29,7 +29,8 @@ test("the palette is ten different colours the catalog already uses", () => {
     "#2DD4BF", "#38BDF8", "#818CF8", "#C084FC", "#E879F9",
   ]);
   // "#F5F6F8" is the Mac's VS Code pill; this fork's main pill wears Claude Code's orange instead.
-  const catalog = new Set([...PILL_CATALOG.map((p) => p.color), "#F5F6F8"]);
+  // "#4ADE80" was OpenCode's green until it moved to pink here (too close to Jinx's): it stays in the picker.
+  const catalog = new Set([...PILL_CATALOG.map((p) => p.color), "#F5F6F8", "#4ADE80"]);
   assert.equal(new Set(PILL_PALETTE).size, 10);
   for (const hex of PILL_PALETTE) {
     assert.equal(normalizeHex(hex), hex, hex);

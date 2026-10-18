@@ -131,9 +131,11 @@ function setPillColor(color: string) {
   }
   const jinx = State.tasks.find((t) => t.id === JINX_ID);
   if (!jinx) return;
-  // Jinx keeps her own colour when nothing plays (MUSIC_RED is the "no cover" reset).
+  // Jinx wears the cover's colour only while the music plays: paused, stopped or with no cover (MUSIC_RED is the
+  // "no cover" reset) she is her own green again.
   const def = pillDefinition(JINX_ID);
-  jinx.color = color === MUSIC_RED && def ? pillColor(def.id, def.color, State.settings.pillColors) : color;
+  const playing = State.music?.status === "Playing";
+  jinx.color = (!playing || color === MUSIC_RED) && def ? pillColor(def.id, def.color, State.settings.pillColors) : color;
 }
 
 /**
@@ -143,6 +145,8 @@ function setPillColor(color: string) {
 function apply(track: MusicTrack | null) {
   const wasPlaying = State.music?.status === "Playing";
   applyTrack(track);
+  // Play ↔ pause changes whether Jinx wears the cover's colour.
+  if (State.music) setPillColor(State.music.accent);
   const jinxHome = !State.tasks.some((t) => t.id === MUSIC_ID) && State.tasks.some((t) => t.id === JINX_ID);
   if (jinxHome && !wasPlaying && State.music?.status === "Playing" && !State.paused && State.mode === "hidden") {
     islandRef?.revealSilently();

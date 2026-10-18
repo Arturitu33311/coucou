@@ -130,4 +130,8 @@ test("the cover's colour paints Jinx's pill and gives it back when the music sto
   State.music = { ...track("Playing"), accent: "#112233" };
   musicSettingsChanged({ setView() {}, defaultView() {}, refreshMusicStrip() {} });
   assert.equal(State.tasks[0].color, "#112233");
+  // paused: her own green again (the cover's colour is only for while it plays)
+  State.music = { ...track("Paused"), accent: "#112233" };
+  musicSettingsChanged({ setView() {}, defaultView() {}, refreshMusicStrip() {} });
+  assert.equal(State.tasks[0].color, "#39FF14");
 });

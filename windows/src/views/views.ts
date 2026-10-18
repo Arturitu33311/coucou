@@ -493,7 +493,7 @@ function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
   // The Music pill rests in the cover's colour (the fill the GNOME extension
   // gives its pill); every other pill rests plain.
   // Jinx's pill wears the cover's colour too when she carries the music (a Music pill of its own is folded away).
-  const tint = task.id === "integration_music" || (task.id === JINX_ID && State.musicHome())
+  const tint = task.id === "integration_music" || (task.id === JINX_ID && State.musicHome() && State.music?.status === "Playing")
     ? musicTint(State.music)?.soft ?? "" : "";
   const restBorder = tint ? `${task.color}8c` : `${task.color}24`;
   pill.style.background = tint;
