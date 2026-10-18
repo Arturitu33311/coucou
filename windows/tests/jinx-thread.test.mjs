@@ -49,7 +49,7 @@ let view;
 beforeEach(() => {
   calls.length = 0;
   State.settings = { ...DEFAULT_SETTINGS };
-  State.tasks = [{ id: JINX_ID, name: "Jinx", color: "#39FF14", state: "idle", stepIndex: 0, steps: [], source: "n8n", isIntegration: true }];
+  State.tasks = [{ id: JINX_ID, name: "Jinx", color: "#10B981", state: "idle", stepIndex: 0, steps: [], source: "n8n", isIntegration: true }];
   State.jinxHistory = [];
   State.jinxBusy = false;
   State.jinxMode = null;

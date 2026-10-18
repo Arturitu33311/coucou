@@ -8,7 +8,7 @@
 .chat-target { display: flex; gap: 4px; padding: 0 2px 6px; }
 .chat-target button { font: inherit; font-size: 10.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.14); background: transparent; color: inherit; opacity: 0.6; cursor: pointer; }
 .chat-target button.on { opacity: 1; background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
-.chat-target button.jinx.on { background: rgba(57,255,20,0.16); border-color: rgba(57,255,20,0.55); }
+.chat-target button.jinx.on { background: rgba(16,185,129,0.16); border-color: rgba(16,185,129,0.55); }
 /* A reply that ends on one yes/no question: its two buttons, under it. */
 .yn-row { display: flex; gap: 6px; padding: 2px 0 4px; }
 .yn { font: inherit; font-size: 11.5px; padding: 3px 14px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: inherit; cursor: pointer; }

@@ -55,7 +55,7 @@ test("the strip rides on Jinx's pill without a Music pill", () => {
 
 // ── The combined card: the player has the floor unless she is busy ───────────
 
-const jinxTask = (state = "idle") => ({ id: JINX_ID, name: "Jinx", color: "#39FF14", state, stepIndex: 0, steps: [] });
+const jinxTask = (state = "idle") => ({ id: JINX_ID, name: "Jinx", color: "#10B981", state, stepIndex: 0, steps: [] });
 
 function quiet() {
   State.settings = { ...DEFAULT_SETTINGS };
@@ -133,5 +133,5 @@ test("the cover's colour paints Jinx's pill and gives it back when the music sto
   // paused: her own green again (the cover's colour is only for while it plays)
   State.music = { ...track("Paused"), accent: "#112233" };
   musicSettingsChanged({ setView() {}, defaultView() {}, refreshMusicStrip() {} });
-  assert.equal(State.tasks[0].color, "#39FF14");
+  assert.equal(State.tasks[0].color, "#10B981");
 });

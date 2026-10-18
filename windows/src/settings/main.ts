@@ -788,7 +788,7 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: N_("Integration token"), placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: N_("API key"), placeholder: "cal_…", secret: true }] },
-  { id: "integration_jinx", name: "Jinx", color: "#39FF14",
+  { id: "integration_jinx", name: "Jinx", color: "#10B981",
     fields: [
       { key: "jinx-url", label: "Hermes address", placeholder: "http://100.x.y.z:8642", secret: false },
       { key: "jinx-api-key", label: N_("API key"), placeholder: "the gateway's API_SERVER_KEY", secret: true },

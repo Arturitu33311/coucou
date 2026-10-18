@@ -134,7 +134,7 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
   { id: "integration_music", name: "Music", color: "#FA2D48", category: "service",
     subtitle: N_("Integration"), source: "n8n", support: "linux", connect: none },
   // Jinx (the Hermes agent, this fork) as a character: chat, replies and permission requests.
-  { id: "integration_jinx", name: "Jinx", color: "#39FF14", category: "service",
+  { id: "integration_jinx", name: "Jinx", color: "#10B981", category: "service",
     subtitle: N_("Integration"), source: "n8n", support: "yes", connect: none },
   // Spotify's MPRIS interface on the session bus (src-tauri/src/spotify.rs).
   // Windows has nothing to read it from yet.

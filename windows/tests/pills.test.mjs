@@ -48,7 +48,7 @@ test("the catalog holds the Mac's pills, in the Mac's order, with the Mac's valu
     : row[0] === "integration_music" ? ["integration_music", "Music", "#FA2D48", "service", "Integration"]
     : row);
   fork.splice(fork.findIndex((row) => row[0] === "integration_music") + 1, 0,
-    ["integration_jinx", "Jinx", "#39FF14", "service", "Integration"]);
+    ["integration_jinx", "Jinx", "#10B981", "service", "Integration"]);
   assert.deepEqual(
     PILL_CATALOG.map((p) => [p.id, p.name, p.color, p.category, p.subtitle]),
     fork,
