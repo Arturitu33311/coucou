@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_MAIN_PILL, MAX_DECLARED, PILL_CATALOG, PILL_CATEGORIES, availablePills, chooseMainPill,
   isComingSoon, isHookPill, mainPillChoices, orderPills, pillDefinition, sanitizeDeclared, sessionSubtitle,
-  toggleDeclared, MUSIC_PILLS, foldedIntoJinx, jinxPresent,
+  toggleDeclared, MUSIC_PILLS, foldedIntoJinx, jinxPresent, HIDDEN_PILLS,
 } from "../src/core/pills.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 
@@ -329,6 +329,21 @@ test("with Jinx there, Music and Spotify are not drawn, offered or counted", () 
   assert.ok(!foldedIntoJinx({ mainPill: "integration_claude", activeIntegrations: [] }, "integration_music"));
   // The IDs stay in the catalog: they are contract values.
   assert.ok(pillDefinition("integration_music") && pillDefinition("integration_spotify"));
+});
+
+test("Hermes' pill stays in the catalog but is never offered, declared or drawn in the bar", () => {
+  assert.ok(pillDefinition("agent_hermes"), "the ID is a contract");
+  assert.deepEqual(HIDDEN_PILLS, ["agent_hermes"]);
+  assert.equal(toggleDeclared({ mainPill: "integration_jinx", activeIntegrations: [] }, "agent_hermes"), null);
+  State.settings.mainPill = "integration_jinx";
+  State.settings.activeIntegrations = ["agent_hermes"];
+  State.tasks = [];
+  State.loadIntegrationTasks();
+  assert.ok(!State.tasks.some((t) => t.id === "agent_hermes"), "declared but not loaded");
+  // a session of Hermes still creates the task (its hook code is kept), but the bar does not list it
+  State.upsertExternalAgent("agent_hermes", "Hermes", "#C084FC");
+  assert.ok(State.tasks.some((t) => t.id === "agent_hermes"));
+  assert.ok(!State.otherTasks.some((t) => t.id === "agent_hermes"));
 });
 
 test("already declared Music/Spotify are tolerated but take no slot and load no pill", () => {

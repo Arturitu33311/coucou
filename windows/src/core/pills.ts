@@ -162,6 +162,17 @@ export function foldedIntoJinx(d: Declared, id: string): boolean {
   return MUSIC_PILLS.includes(id) && jinxPresent(d);
 }
 
+/**
+ * Pills that stay in the catalog (their IDs and the code behind them are contracts) but are not drawn, offered or
+ * counted: Jinx is the only face of Hermes in this fork.
+ */
+export const HIDDEN_PILLS = ["agent_hermes"];
+
+/** True for a pill the bar and Settings leave out: hidden for good, or folded into Jinx (Music, Spotify). */
+export function notDrawn(d: Declared, id: string): boolean {
+  return HIDDEN_PILLS.includes(id) || foldedIntoJinx(d, id);
+}
+
 /** How many declared pills may sit next to the main one. */
 export const MAX_DECLARED = 4;
 
@@ -241,10 +252,10 @@ export function sanitizeDeclared(d: Declared, os: HostOs = HOST_OS): Declared {
 export function toggleDeclared(d: Declared, id: string, os: HostOs = HOST_OS): string[] | null {
   if (id === d.mainPill) return null;
   if (!availablePills(os).some((p) => p.id === id)) return null;
-  if (foldedIntoJinx(d, id)) return null;
+  if (notDrawn(d, id)) return null;
   if (d.activeIntegrations.includes(id)) return d.activeIntegrations.filter((x) => x !== id);
   // A Music/Spotify pill declared before Jinx came is tolerated but takes no slot.
-  const used = d.activeIntegrations.filter((x) => !foldedIntoJinx(d, x)).length;
+  const used = d.activeIntegrations.filter((x) => !notDrawn(d, x)).length;
   if (used >= MAX_DECLARED) return null;
   return [...d.activeIntegrations, id];
 }

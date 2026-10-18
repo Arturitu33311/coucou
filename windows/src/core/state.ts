@@ -3,7 +3,7 @@
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
 import {
-  DEFAULT_MAIN_PILL, HOST_OS, availablePills, foldedIntoJinx, orderPills, pillDefinition, sanitizeDeclared,
+  DEFAULT_MAIN_PILL, HIDDEN_PILLS, HOST_OS, availablePills, notDrawn, orderPills, pillDefinition, sanitizeDeclared,
   toggleDeclared, type HostOs, type PillDefinition,
 } from "./pills";
 import type { CodexPlanUsage, PlanUsage } from "./plan";
@@ -100,12 +100,6 @@ export interface ChatMessage {
   content: string;
   /** Where a line of Jinx's shared thread was written: "Telegram", "S21", "S22", "PC". */
   via?: string;
-}
-
-export interface LimitWindow {
-  pct: number;
-  /** Unix seconds. */
-  resetsAt: number | null;
 }
 
 /** A running agent session: Claude Code (as `claude agents` lists it) or OpenCode. */
@@ -473,8 +467,6 @@ class AppState {
   agentFilePath: string | null = null;
   /** Is there an Anthropic API key (Mochi's own chat)? null until asked. */
   mochiApi: boolean | null = null;
-  /** Claude Code's usage limits (percent used), when known. */
-  limits: { five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null = null;
   /**
    * The user clicked inside the Hub's panel: the island takes the keyboard (for ← → and 1–9) until
    * the pointer leaves, the view changes or the island closes. Never taken on hover.
@@ -584,7 +576,8 @@ class AppState {
   }
 
   get otherTasks(): AgentTask[] {
-    return this.tasks.filter((t) => t.id !== this.focusId);
+    // A hidden pill (Hermes: Jinx is its face) is kept but never drawn in the bar.
+    return this.tasks.filter((t) => t.id !== this.focusId && !HIDDEN_PILLS.includes(t.id));
   }
 
   setFocus(id: string) {
@@ -704,7 +697,7 @@ class AppState {
     this.settings.activeIntegrations = d.activeIntegrations;
     for (const def of availablePills(this.os)) {
       // With Jinx there, Music/Spotify are tolerated in the declaration but not drawn (the music lives in her).
-      const shouldLoad = def.id === d.mainPill || (d.activeIntegrations.includes(def.id) && !foldedIntoJinx(d, def.id));
+      const shouldLoad = def.id === d.mainPill || (d.activeIntegrations.includes(def.id) && !notDrawn(d, def.id));
       const idx = this.tasks.findIndex((t) => t.id === def.id);
       if (shouldLoad && idx < 0) this.tasks.push(taskFor(def, this.settings.pillColors));
       const busy = idx >= 0 && (this.tasks[idx].state !== "idle" || this.tasks[idx].steps.length > 0);

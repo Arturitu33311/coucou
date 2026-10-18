@@ -12,7 +12,7 @@ import {
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { SOUND_NAMES } from "../core/sound";
 import {
-  MAX_DECLARED, PILL_CATEGORIES, availablePills, chooseMainPill, foldedIntoJinx, jinxPresent, MUSIC_PILLS, isComingSoon, mainPillChoices,
+  MAX_DECLARED, PILL_CATEGORIES, availablePills, chooseMainPill, foldedIntoJinx, notDrawn, HIDDEN_PILLS, jinxPresent, MUSIC_PILLS, isComingSoon, mainPillChoices,
   sanitizeDeclared, toggleDeclared, type PillDefinition,
 } from "../core/pills";
 import { h, clear } from "../views/dom";
@@ -444,7 +444,7 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
   function row(def: PillDefinition): HTMLElement {
     const isMain = def.id === settings.mainPill;
     const on = settings.activeIntegrations.includes(def.id);
-    const full = !isMain && !on && settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length >= MAX_ACTIVE;
+    const full = !isMain && !on && settings.activeIntegrations.filter((x) => !notDrawn(settings, x)).length >= MAX_ACTIVE;
     const el = h("div", { class: full ? "pill-row full" : "pill-row" },
       colorDot(def, "width:10px;height:10px", () => settings.pillColors, pickColor),
       h("span", { class: "name", text: def.name }),
@@ -468,14 +468,14 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
   }
 
   function draw() {
-    const used = settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length;
+    const used = settings.activeIntegrations.filter((x) => !notDrawn(settings, x)).length;
     slots.textContent = t("{used}/{max} slots in use — the main tool doesn't take one.", { used, max: MAX_ACTIVE });
     slots.classList.toggle("full", used >= MAX_ACTIVE);
     main.value = settings.mainPill;
     clear(groups);
     for (const cat of PILL_CATEGORIES) {
       if (cat.id === "service") continue;
-      const pills = availablePills().filter((p) => p.category === cat.id);
+      const pills = availablePills().filter((p) => p.category === cat.id && !HIDDEN_PILLS.includes(p.id));
       if (pills.length === 0) continue;
       groups.append(h("div", { class: "pill-group" }, h("h3", { text: t(cat.title) }), ...pills.map(row)));
     }
@@ -816,7 +816,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
 
   function updateNote() {
-    const used = settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length;
+    const used = settings.activeIntegrations.filter((x) => !notDrawn(settings, x)).length;
     note.textContent = t("Pick up to {max} pills to show next to Mochi — {used}/{max} in use. Keys are stored in the {store}, never on disk.", { max: MAX_ACTIVE, used, store: KEY_STORE });
   }
   declaredViews.push(updateNote);
@@ -840,7 +840,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       if (on) {
         settings.activeIntegrations = settings.activeIntegrations.filter((x) => x !== def.id);
       } else {
-        if (settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length >= MAX_ACTIVE) return;
+        if (settings.activeIntegrations.filter((x) => !notDrawn(settings, x)).length >= MAX_ACTIVE) return;
         settings.activeIntegrations = [...settings.activeIntegrations, def.id];
       }
       sw.classList.toggle("on", !on);
