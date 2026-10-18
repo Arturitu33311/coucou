@@ -90,7 +90,7 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
   { id: "agent_muse", name: "Muse Code", color: "#38BDF8", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
   // A plugin that starts the relay, written from Settings → Agents (agents.rs).
-  { id: "agent_opencode", name: "OpenCode", color: "#F472B6", category: "agent",
+  { id: "agent_opencode", name: "OpenCode", color: "#FACC15", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
   { id: "agent_amp", name: "Amp", color: "#F59E0B", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },

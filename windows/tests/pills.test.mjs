@@ -22,7 +22,7 @@ test("the catalog holds the Mac's pills, in the Mac's order, with the Mac's valu
     ["agent_gemini", "Gemini CLI", "#8AB4F8", "agent", "Agent"],
     ["agent_copilot", "Copilot CLI", "#818CF8", "agent", "Agent"],
     ["agent_muse", "Muse Code", "#38BDF8", "agent", "Agent"],
-    ["agent_opencode", "OpenCode", "#F472B6", "agent", "Agent"],
+    ["agent_opencode", "OpenCode", "#FACC15", "agent", "Agent"],
     ["agent_amp", "Amp", "#F59E0B", "agent", "Agent"],
     ["agent_hermes", "Hermes", "#C084FC", "agent", "Agent"],
     ["agent_claude-desktop", "Claude Desktop", "#D97757", "agent", "Agent"],
