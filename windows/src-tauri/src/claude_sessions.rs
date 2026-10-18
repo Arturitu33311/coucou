@@ -102,26 +102,6 @@ fn find_agent(id: &str) -> Result<(String, String), String> {
         .ok_or_else(|| "That agent is no longer running".to_string())
 }
 
-/// Claude Code's usage limits as the statusline script last wrote them
-/// (~/.claude/rate_limits.json): used percentage and reset time of the 5-hour and 7-day windows.
-pub fn limits() -> Option<Value> {
-    let raw = std::fs::read_to_string(home_dir().join(".claude").join("rate_limits.json")).ok()?;
-    parse_limits(&raw)
-}
-
-fn parse_limits(raw: &str) -> Option<Value> {
-    let v: Value = serde_json::from_str(raw).ok()?;
-    let window = |k: &str| {
-        let pct = v[k]["used_percentage"].as_f64()?;
-        Some(json!({ "pct": pct.round(), "resetsAt": v[k]["resets_at"] }))
-    };
-    let (five, seven) = (window("five_hour"), window("seven_day"));
-    if five.is_none() && seven.is_none() {
-        return None;
-    }
-    Some(json!({ "five": five, "seven": seven, "ts": v["ts"] }))
-}
-
 // ── Transcript ────────────────────────────────────────────────────────────────
 
 fn transcript_path(projects: &Path, session_id: &str) -> Option<PathBuf> {
@@ -478,17 +458,6 @@ fn first_id(out: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_limits_file_becomes_two_percentages() {
-        let raw = r#"{"device":"x","ts":1,"five_hour":{"used_percentage":8.6,"resets_at":5},"seven_day":{"used_percentage":59,"resets_at":9}}"#;
-        let l = parse_limits(raw).unwrap();
-        assert_eq!(l["five"]["pct"], 9.0);
-        assert_eq!(l["seven"]["resetsAt"], 9);
-        assert!(parse_limits("{}").is_none());
-        assert!(parse_limits("nope").is_none());
-        assert!(parse_limits(r#"{"seven_day":{"used_percentage":3}}"#).unwrap()["five"].is_null());
-    }
 
     #[test]
     fn the_agents_queue_is_visible_as_queued_messages() {

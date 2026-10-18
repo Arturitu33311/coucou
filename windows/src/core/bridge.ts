@@ -5,7 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { AgentSession, LimitWindow, LyricLine, MusicTrack, Peripheral, Settings } from "./state";
+import type { AgentSession, LyricLine, MusicTrack, Peripheral, Settings } from "./state";
 import type { RecapHistory, RecapPrefs } from "../recap/summary";
 import type { SpotifyState } from "./spotify";
 
@@ -356,7 +356,6 @@ export const Bridge = {
   chatReset: () => call<void>("chat_reset"),
   // Claude Code and OpenCode sessions: the running ones, what was said, a message into one, a new one.
   agentsList: () => callOrThrow<AgentSession[]>("agents_list"),
-  rateLimits: () => call<{ five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null>("rate_limits"),
   agentMessages: (sessionId: string, offset: number) =>
     callOrThrow<{ offset: number; messages: { role: "user" | "assistant" | "tool" | "queued" | "dequeued" | "queue-clear"; text: string }[] }>(
       "agent_messages", { sessionId, offset }),

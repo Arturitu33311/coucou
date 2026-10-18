@@ -1093,12 +1093,6 @@ async fn agents_list() -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Array(all))
 }
 
-/// The 5-hour / 7-day usage percentages, when the statusline has written them.
-#[tauri::command]
-fn rate_limits() -> Option<serde_json::Value> {
-    claude_sessions::limits()
-}
-
 #[tauri::command]
 async fn agent_messages(session_id: String, offset: u64) -> Result<claude_sessions::Messages, String> {
     if opencode::is_opencode(&session_id) {
@@ -1423,7 +1417,6 @@ pub fn run() {
             sys_sample,
             server_sample,
             agents_list,
-            rate_limits,
             agent_messages,
             agent_send,
             agent_start,
