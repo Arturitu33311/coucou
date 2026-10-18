@@ -163,6 +163,19 @@ function gaugeRow(label: string, w: PlanWindow | undefined, weekly: boolean, now
   return row;
 }
 
+/**
+ * The 5-hour and weekly bars of Claude's plan, as the plan card draws them, for the Claude Code pill's idle card.
+ * Null when no numbers have arrived (the card then says what the hooks are doing instead).
+ */
+export function claudePlanRows(now = Date.now()): HTMLElement | null {
+  const u = State.planUsage;
+  if (!u || (!u.fiveHour && !u.sevenDay)) return null;
+  return h("div", { class: "plan-rows" },
+    gaugeRow(PLAN_TEXT.fiveHours, u.fiveHour, false, now),
+    gaugeRow(PLAN_TEXT.week, u.sevenDay, true, now),
+  );
+}
+
 function head(color: string, title: string, subtitle: string): HTMLElement {
   return h("div", { class: "plan-head" },
     dot(color, 7),

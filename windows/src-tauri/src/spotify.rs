@@ -475,11 +475,17 @@ pub fn spotify_installed() -> bool {
 
 /// Starts the listener when the pill is declared, stops it when it is not.
 /// Called at launch and after every settings save.
-pub fn sync(app: &AppHandle, active_integrations: &[String]) {
+/// Spotify's own reader runs only when its pill is declared and Jinx is not there: with Jinx, Spotify comes in
+/// through the generic MPRIS reader (music.rs) and is shown inside her card.
+pub fn reader_wanted(main_pill: &str, active_integrations: &[String]) -> bool {
+    active_integrations.iter().any(|id| id == PILL_ID) && !crate::music::jinx_present(main_pill, active_integrations)
+}
+
+pub fn sync(app: &AppHandle, main_pill: &str, active_integrations: &[String]) {
     #[cfg(target_os = "linux")]
-    linux::sync(app, active_integrations.iter().any(|id| id == PILL_ID));
+    linux::sync(app, reader_wanted(main_pill, active_integrations));
     #[cfg(not(target_os = "linux"))]
-    let _ = (app, active_integrations);
+    let _ = (app, main_pill, active_integrations);
 }
 
 // ── Linux: MPRIS over D-Bus ───────────────────────────────────────────────────

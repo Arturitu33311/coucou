@@ -13,7 +13,7 @@ import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { buildMusicCompact, buildMusicView } from "./music";
-import { buildJinxCard } from "./jinx";
+import { buildJinxCard, buildJinxMusicFace } from "./jinx";
 import { buildHub } from "../hub/hub";
 import { musicTint } from "../island/music";
 import { highlightRow, listRows, openRow } from "./github";
@@ -221,7 +221,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let pillIds = "";
   let detailOpen = false;
   let lastFocus: string | null = null;
-  let mode: "ticker" | "card" | "music" | "jinx" | "plan" | "diff" | "spotify" | null = null;
+  let mode: "ticker" | "card" | "music" | "jinx" | "jinxmusic" | "plan" | "diff" | "spotify" | null = null;
   let cardKey = "";
   /** The list row highlighted at the last sync, to scroll only when it moves. */
   let shownSelection: number | null = null;
@@ -246,6 +246,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   // so it is built once here and mounted into the left card when it is in focus.
   const music = buildMusicCompact(actions);
   const jinx = buildJinxCard(actions);
+  const jinxMusic = buildJinxMusicFace(actions, music);
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -282,7 +283,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     el,
     tick(nowMs: number) {
       // The Music card's bars and progress move every frame while it is in front.
-      if (mode === "music") {
+      if (mode === "music" || mode === "jinxmusic") {
         music.tick(nowMs);
         return true;
       }
@@ -378,6 +379,16 @@ function buildOverview(actions: ViewActions): ViewHost {
           }));
         }
         ticker.sync(task);
+      } else if (task?.id === JINX_ID && State.musicLeadsJinx()) {
+        // Music is playing and she is quiet: the player's compact face under a minimal header of hers.
+        if (mode !== "jinxmusic") {
+          clear(leftBody);
+          leftBody.append(jinxMusic.el);
+          mode = "jinxmusic";
+          cardKey = "";
+        }
+        jinxMusic.sync();
+        music.sync();
       } else if (task?.id === JINX_ID) {
         if (mode !== "jinx") {
           clear(leftBody);
@@ -409,6 +420,9 @@ function buildOverview(actions: ViewActions): ViewHost {
           language(), task.id, task.color, detailOpen, task.state, task.steps.join("|"),
           info?.loaded, info?.error, info?.configured,
           JSON.stringify(info?.data ?? {}),
+          // The idle cards: Claude Code's plan bars (countdowns move each 30 s), an agent's last session.
+          task.id === "integration_claude" ? `${JSON.stringify(State.planUsage)}|${Math.floor(Date.now() / 30_000)}` : "",
+          task.lastSession?.at ?? "",
         ].join("~");
         if (key !== cardKey) {
           cardKey = key;
@@ -421,7 +435,7 @@ function buildOverview(actions: ViewActions): ViewHost {
       jump.style.display = detailOpen || mode === "plan" || mode === "diff" ? "none" : "";
       // The Music card fills the shared left card with the cover's colour; any
       // other pill gets the plain card back.
-      if (mode !== "music") left.style.background = "";
+      if (mode !== "music" && mode !== "jinxmusic") left.style.background = "";
 
       // Ctrl+↓ Ctrl+↑ walk the open GitHub list (cardItemCount / cardSelection).
       const rows = mode === "card" ? listRows(leftBody) : [];
@@ -468,7 +482,8 @@ export function hasSessionTicker(task: AgentTask): boolean {
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
   const label = task.name;
-  const canvas = createMiniBot(task, 24);
+  // Jinx's mini Mochi dances to what plays, whichever player it is (she carries the music).
+  const canvas = createMiniBot(task, 24, task.id === JINX_ID ? () => State.musicHome() && State.musicPlaying : undefined);
   const pill = h(
     "div",
     { class: "pill", onclick: () => actions.setFocus(task.id) },
@@ -477,7 +492,9 @@ function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
   );
   // The Music pill rests in the cover's colour (the fill the GNOME extension
   // gives its pill); every other pill rests plain.
-  const tint = task.id === "integration_music" ? musicTint(State.music)?.soft ?? "" : "";
+  // Jinx's pill wears the cover's colour too when she carries the music (a Music pill of its own is folded away).
+  const tint = task.id === "integration_music" || (task.id === JINX_ID && State.musicHome())
+    ? musicTint(State.music)?.soft ?? "" : "";
   const restBorder = tint ? `${task.color}8c` : `${task.color}24`;
   pill.style.background = tint;
   pill.style.borderColor = restBorder;

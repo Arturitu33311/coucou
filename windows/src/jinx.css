@@ -51,3 +51,9 @@
 .jx-play { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 0; padding: 0; font-size: 8px; line-height: 20px;
   color: inherit; background: rgba(255, 255, 255, 0.12); cursor: pointer; }
 .jx-play:hover { background: rgba(255, 255, 255, 0.22); }
+/* Jinx's minimal header over the player's compact face (State.musicLeadsJinx). */
+.jx-music-face { position: relative; z-index: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; }
+.jx-music-face > .m-compact-wrap { flex: 1 1 auto; min-height: 0; }
+.jx-head-mini { padding: 7px 12px 0 108px; position: relative; z-index: 2; }
+.jx-head-mini .jx-mini-talk { margin-left: auto; padding: 1px 9px; font-size: 11px; }
+.jx-music-face .m-compact { padding-top: 4px; }

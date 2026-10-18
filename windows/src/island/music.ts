@@ -6,7 +6,9 @@
 // timestamp in it, so the lyrics and the seek bar cost nothing while idle.
 
 import { Bridge, onEvent } from "../core/bridge";
-import { MUSIC_ID, State, type MusicInfo, type MusicTrack } from "../core/state";
+import { JINX_ID, MUSIC_ID, State, type MusicInfo, type MusicTrack } from "../core/state";
+import { pillColor } from "../core/pill-colors";
+import { pillDefinition } from "../core/pills";
 import type { Island } from "./island";
 
 export const MUSIC_RED = "#FA2D48";
@@ -121,11 +123,33 @@ function keyOf(t: MusicTrack): string {
 }
 
 function setPillColor(color: string) {
-  const task = State.tasks.find((t) => t.id === MUSIC_ID);
-  if (task) task.color = color;
+  // The cover paints the Music pill, or Jinx's when she carries the music (the Music pill is folded away then).
+  const own = State.tasks.find((t) => t.id === MUSIC_ID);
+  if (own) {
+    own.color = color;
+    return;
+  }
+  const jinx = State.tasks.find((t) => t.id === JINX_ID);
+  if (!jinx) return;
+  // Jinx keeps her own colour when nothing plays (MUSIC_RED is the "no cover" reset).
+  const def = pillDefinition(JINX_ID);
+  jinx.color = color === MUSIC_RED && def ? pillColor(def.id, def.color, State.settings.pillColors) : color;
 }
 
+/**
+ * A track arrived. With Jinx carrying the music, a not-playing → playing change reveals a hidden island without the
+ * peek sound, as the Spotify pill does (SpotifyController.setPlaying) — it now covers every player.
+ */
 function apply(track: MusicTrack | null) {
+  const wasPlaying = State.music?.status === "Playing";
+  applyTrack(track);
+  const jinxHome = !State.tasks.some((t) => t.id === MUSIC_ID) && State.tasks.some((t) => t.id === JINX_ID);
+  if (jinxHome && !wasPlaying && State.music?.status === "Playing" && !State.paused && State.mode === "hidden") {
+    islandRef?.revealSilently();
+  }
+}
+
+function applyTrack(track: MusicTrack | null) {
   // A player with no title is idle, not "playing nothing": show the empty card.
   if (!track || !track.title) {
     // "Always ON", like the GNOME extension's setting: when the player closes the

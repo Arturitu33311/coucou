@@ -12,7 +12,7 @@ import {
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { SOUND_NAMES } from "../core/sound";
 import {
-  MAX_DECLARED, PILL_CATEGORIES, availablePills, chooseMainPill, isComingSoon, mainPillChoices,
+  MAX_DECLARED, PILL_CATEGORIES, availablePills, chooseMainPill, foldedIntoJinx, jinxPresent, MUSIC_PILLS, isComingSoon, mainPillChoices,
   sanitizeDeclared, toggleDeclared, type PillDefinition,
 } from "../core/pills";
 import { h, clear } from "../views/dom";
@@ -444,7 +444,7 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
   function row(def: PillDefinition): HTMLElement {
     const isMain = def.id === settings.mainPill;
     const on = settings.activeIntegrations.includes(def.id);
-    const full = !isMain && !on && settings.activeIntegrations.length >= MAX_ACTIVE;
+    const full = !isMain && !on && settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length >= MAX_ACTIVE;
     const el = h("div", { class: full ? "pill-row full" : "pill-row" },
       colorDot(def, "width:10px;height:10px", () => settings.pillColors, pickColor),
       h("span", { class: "name", text: def.name }),
@@ -468,7 +468,7 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
   }
 
   function draw() {
-    const used = settings.activeIntegrations.length;
+    const used = settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length;
     slots.textContent = t("{used}/{max} slots in use — the main tool doesn't take one.", { used, max: MAX_ACTIVE });
     slots.classList.toggle("full", used >= MAX_ACTIVE);
     main.value = settings.mainPill;
@@ -816,10 +816,20 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
 
   function updateNote() {
-    const used = settings.activeIntegrations.length;
+    const used = settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length;
     note.textContent = t("Pick up to {max} pills to show next to Mochi — {used}/{max} in use. Keys are stored in the {store}, never on disk.", { max: MAX_ACTIVE, used, store: KEY_STORE });
   }
   declaredViews.push(updateNote);
+
+  // With Jinx there, her card carries the music: Music and Spotify leave the list, with a note in their place.
+  const musicRows: HTMLElement[] = [];
+  const musicNote = h("div", { class: "hint", text: t("Music lives in Jinx's pill") });
+  const syncMusicRows = () => {
+    const folded = foldedIntoJinx(settings, MUSIC_PILLS[0]);
+    for (const r of musicRows) r.style.display = folded ? "none" : "flex";
+    musicNote.style.display = folded ? "" : "none";
+  };
+  declaredViews.push(syncMusicRows);
 
   const offered = new Set(availablePills().map((p) => p.id));
   for (const def of INTEGRATIONS.filter((d) => offered.has(d.id))) {
@@ -830,7 +840,7 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       if (on) {
         settings.activeIntegrations = settings.activeIntegrations.filter((x) => x !== def.id);
       } else {
-        if (settings.activeIntegrations.length >= MAX_ACTIVE) return;
+        if (settings.activeIntegrations.filter((x) => !foldedIntoJinx(settings, x)).length >= MAX_ACTIVE) return;
         settings.activeIntegrations = [...settings.activeIntegrations, def.id];
       }
       sw.classList.toggle("on", !on);
@@ -879,17 +889,19 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       });
     }
 
-    list.append(
-      h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
-        h("div", { style: "display:flex;align-items:center;gap:8px;min-width:132px;padding-top:4px" },
-          sw,
-          colorDot(def, "", () => settings.pillColors, pickColor),
-          h("span", { style: "font-size:12.5px", text: def.name }),
-        ),
-        rows,
+    const rowEl = h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
+      h("div", { style: "display:flex;align-items:center;gap:8px;min-width:132px;padding-top:4px" },
+        sw,
+        colorDot(def, "", () => settings.pillColors, pickColor),
+        h("span", { style: "font-size:12.5px", text: def.name }),
       ),
+      rows,
     );
+    if (MUSIC_PILLS.includes(def.id)) musicRows.push(rowEl);
+    list.append(rowEl);
   }
+  list.append(musicNote);
+  syncMusicRows();
 
   updateNote();
   return h("section", {}, h("h2", {}, h("span", { text: t("Integrations") })), note, list);
@@ -966,13 +978,22 @@ function musicSection(): HTMLElement {
     void save();
   });
 
+  // With Jinx there the music lives in her pill; without her, the Music pill is still the way in.
+  const intro = h("div", { class: "hint" });
+  const drawIntro = () => {
+    intro.textContent = jinxPresent(settings)
+      ? "Music lives in Jinx's pill: her card shows what plays (any player — Spotify, a browser tab, VLC…), " +
+        "tints the island with the cover's colour and lets you play, skip and seek from it."
+      : "Turn on the Music pill above (it takes one of the four slots). It follows whichever player is playing, " +
+        "tints the island with the cover's colour and lets you play, skip and seek from it.";
+  };
+  declaredViews.push(drawIntro);
+  drawIntro();
   return h(
     "section",
     {},
     h("h2", {}, h("span", { text: "Music" })),
-    h("div", { class: "hint", text:
-      "Turn on the Music pill above (it takes one of the four slots). It follows whichever player is playing, " +
-      "tints the island with the cover's colour and lets you play, skip and seek from it." }),
+    intro,
     h("div", { class: "row" },
       h("label", { text: "Lyrics and web covers" }),
       toggle(settings.musicOnline, (v) => { settings.musicOnline = v; void save(); }),

@@ -166,7 +166,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         log::line(format!("could not save settings: {err}"));
     }
     // The Music pill's switch decides whether the players are watched at all.
-    music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
+    music::sync_enabled(&app, music::reader_wanted(&settings.main_pill, &settings.active_integrations));
     notifs::sync_enabled(&app, settings.notification_peek);
     remote::sync_enabled(&app, settings.remote_enabled);
     clipboard::sync_enabled(&app, settings.clipboard_history);
@@ -182,7 +182,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         island::apply_geometry(&app, &settings.screen, collapsed);
     }
     integrations::settings_saved(&app, &settings.active_integrations);
-    spotify::sync(&app, &settings.active_integrations);
+    spotify::sync(&app, &settings.main_pill, &settings.active_integrations);
     if shortcuts_changed {
         shortcuts::apply(&app, &settings.shortcuts);
     }
@@ -1538,10 +1538,7 @@ pub fn run() {
             pipe::start(handle.clone());
             phone_link::start_if_enabled(&handle);
             integrations::start(handle.clone());
-            music::sync_enabled(
-                &handle,
-                loaded.active_integrations.iter().any(|x| x == "integration_music"),
-            );
+            music::sync_enabled(&handle, music::reader_wanted(&loaded.main_pill, &loaded.active_integrations));
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
@@ -1556,7 +1553,7 @@ pub fn run() {
             // Bluetooth devices' and controllers' batteries, announced by UPower (no polling).
             #[cfg(target_os = "linux")]
             peripherals::start(&handle);
-            spotify::sync(&handle, &loaded.active_integrations);
+            spotify::sync(&handle, &loaded.main_pill, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             Ok(())
         })

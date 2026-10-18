@@ -3943,6 +3943,28 @@
    "pt-BR": "Atualizar hooks…",
    "ru": "Обновить hooks…",
    "id": "Perbarui hooks…"
+  },
+  "Music lives in Jinx's pill": {
+   "zh-Hans": "音乐在 Jinx 的胶囊里",
+   "hi": "संगीत Jinx की पिल में है",
+   "es": "La música vive en la píldora de Jinx",
+   "ar": "الموسيقى داخل كبسولة Jinx",
+   "fr": "La musique vit dans la pilule de Jinx",
+   "bn": "গান Jinx-এর পিলের ভেতরে থাকে",
+   "pt-BR": "A música vive na pílula da Jinx",
+   "ru": "Музыка живёт в капсуле Jinx",
+   "id": "Musik ada di pil Jinx"
+  },
+  "Last session": {
+   "zh-Hans": "上次会话",
+   "hi": "पिछला सत्र",
+   "es": "Última sesión",
+   "ar": "الجلسة الأخيرة",
+   "fr": "Dernière session",
+   "bn": "শেষ সেশন",
+   "pt-BR": "Última sessão",
+   "ru": "Последняя сессия",
+   "id": "Sesi terakhir"
   }
  }
 }

@@ -115,7 +115,9 @@ export function islandDances(o: {
 }): boolean {
   if (!o.music || !DANCE_STATES.has(o.state)) return false;
   if (o.mode === "compact") return true;
-  return o.mode === "expanded" && o.view === "overview" && o.focusId === SPOTIFY_ID;
+  // The card that shows the music: Spotify's, the Music pill's, or Jinx's (she carries it in this fork).
+  return o.mode === "expanded" && o.view === "overview" && !!o.focusId &&
+    (o.focusId === SPOTIFY_ID || o.focusId === "integration_music" || o.focusId === "integration_jinx");
 }
 
 /** Mochi on the desktop: the compact island's rules (DesktopMochi.swift). */

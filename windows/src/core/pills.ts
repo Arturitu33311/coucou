@@ -149,6 +149,19 @@ export const JINX_PILL = "integration_jinx";
 /** The always-on pill unless the user picks another (a workspace tool, or Jinx). */
 export const DEFAULT_MAIN_PILL = "integration_claude";
 
+/** The pills whose job Jinx's card takes over when she is present (this fork): what plays shows inside her. */
+export const MUSIC_PILLS = ["integration_music", "integration_spotify"];
+
+/** Jinx is present when she is the main pill or a declared one. */
+export function jinxPresent(d: Declared): boolean {
+  return d.mainPill === JINX_PILL || (d.activeIntegrations ?? []).includes(JINX_PILL);
+}
+
+/** True for a pill that is neither drawn nor offered because Jinx carries the music (it stays tolerated if declared). */
+export function foldedIntoJinx(d: Declared, id: string): boolean {
+  return MUSIC_PILLS.includes(id) && jinxPresent(d);
+}
+
 /** How many declared pills may sit next to the main one. */
 export const MAX_DECLARED = 4;
 
@@ -228,8 +241,11 @@ export function sanitizeDeclared(d: Declared, os: HostOs = HOST_OS): Declared {
 export function toggleDeclared(d: Declared, id: string, os: HostOs = HOST_OS): string[] | null {
   if (id === d.mainPill) return null;
   if (!availablePills(os).some((p) => p.id === id)) return null;
+  if (foldedIntoJinx(d, id)) return null;
   if (d.activeIntegrations.includes(id)) return d.activeIntegrations.filter((x) => x !== id);
-  if (d.activeIntegrations.length >= MAX_DECLARED) return null;
+  // A Music/Spotify pill declared before Jinx came is tolerated but takes no slot.
+  const used = d.activeIntegrations.filter((x) => !foldedIntoJinx(d, x)).length;
+  if (used >= MAX_DECLARED) return null;
   return [...d.activeIntegrations, id];
 }
 

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_MAIN_PILL, MAX_DECLARED, PILL_CATALOG, PILL_CATEGORIES, availablePills, chooseMainPill,
   isComingSoon, isHookPill, mainPillChoices, orderPills, pillDefinition, sanitizeDeclared, sessionSubtitle,
-  toggleDeclared,
+  toggleDeclared, MUSIC_PILLS, foldedIntoJinx, jinxPresent,
 } from "../src/core/pills.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 
@@ -313,4 +313,37 @@ test("toggling declares up to four pills and never the main one", () => {
   State.toggleIntegration("agent_gemini");
   assert.ok(!ids().includes("agent_gemini"));
   assert.equal(State.focusId, "integration_claude");
+});
+
+// ── The music lives in Jinx's pill (this fork) ───────────────────────────────
+
+test("with Jinx there, Music and Spotify are not drawn, offered or counted", () => {
+  const jinxMain = { mainPill: "integration_jinx", activeIntegrations: [] };
+  assert.ok(jinxPresent(jinxMain));
+  assert.ok(jinxPresent({ mainPill: "integration_claude", activeIntegrations: ["integration_jinx"] }));
+  assert.ok(!jinxPresent({ mainPill: "integration_claude", activeIntegrations: ["integration_music"] }));
+  for (const id of MUSIC_PILLS) {
+    assert.ok(foldedIntoJinx(jinxMain, id));
+    assert.equal(toggleDeclared(jinxMain, id), null, `${id} cannot be switched on beside Jinx`);
+  }
+  assert.ok(!foldedIntoJinx({ mainPill: "integration_claude", activeIntegrations: [] }, "integration_music"));
+  // The IDs stay in the catalog: they are contract values.
+  assert.ok(pillDefinition("integration_music") && pillDefinition("integration_spotify"));
+});
+
+test("already declared Music/Spotify are tolerated but take no slot and load no pill", () => {
+  State.os = "linux"; // Music and Spotify are Linux pills
+  State.settings.mainPill = "integration_jinx";
+  State.settings.activeIntegrations = ["integration_music", "integration_spotify", "integration_n8n"];
+  State.tasks = [];
+  State.loadIntegrationTasks();
+  const loaded = State.tasks.map((t) => t.id);
+  assert.ok(loaded.includes("integration_jinx") && loaded.includes("integration_n8n"));
+  assert.ok(!loaded.includes("integration_music") && !loaded.includes("integration_spotify"));
+  // the declaration is kept as the user left it
+  assert.ok(State.settings.activeIntegrations.includes("integration_music"));
+  // four real slots are still free beside Jinx
+  const d = { mainPill: "integration_jinx", activeIntegrations: ["integration_music", "integration_spotify", "integration_n8n", "agent_gemini", "ai_anthropic"] };
+  assert.deepEqual(toggleDeclared(d, "integration_stripe")?.length, 6);
+  assert.equal(toggleDeclared({ ...d, activeIntegrations: [...d.activeIntegrations, "integration_stripe"] }, "integration_github"), null);
 });
