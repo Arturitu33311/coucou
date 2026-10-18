@@ -328,7 +328,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dodgeWindows: true,
   finishSound: "finish",
   finishSoundFile: "",
-  serverHost: "",
+  serverHost: "server",
   serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
   jinxShare: true,
   jinxBackend: "auto",
