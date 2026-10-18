@@ -470,17 +470,31 @@ async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<(String, Optio
     Some(read_answer(&body))
 }
 
-/// The inbox messages to show: newer than `after`, with text, from the last hour (as on the phone: older news
-/// is not news). `(id, payload for the island)`. Pure.
+/// A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure.
+pub fn with_age(text: &str, age_s: i64) -> String {
+    let hours = age_s / 3600;
+    if hours < 1 {
+        text.to_string()
+    } else if hours < 24 {
+        format!("🕓 {hours} h · {text}")
+    } else {
+        format!("🕓 {} d · {text}", hours / 24)
+    }
+}
+
+/// The inbox messages to show: newer than `after`, with text. Old ones are shown too, saying how old they are
+/// (as on the phone): they used to be dropped after an hour, and a briefing that came while nobody was there was
+/// lost. `(id, payload for the island)`. Pure.
 pub fn new_messages(body: &Value, after: i64, now_s: i64) -> Vec<(i64, Value)> {
     let mut out = Vec::new();
     for m in body.get("messages").and_then(Value::as_array).into_iter().flatten() {
         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
         let text = m.get("text").and_then(Value::as_str).unwrap_or("").trim();
         let ts = m.get("ts").and_then(Value::as_i64).unwrap_or(now_s);
-        if id <= after || text.is_empty() || now_s - ts > 3600 {
+        if id <= after || text.is_empty() {
             continue;
         }
+        let text = with_age(text, now_s - ts);
         out.push((id, json!({
             "id": id,
             "text": text.chars().take(500).collect::<String>(),
@@ -676,10 +690,19 @@ mod tests {
             {"id": 11, "text": "stale", "ts": 1000}
         ]});
         let got = new_messages(&body, 4, 10_000);
-        assert_eq!(got.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![5, 7]);
+        assert_eq!(got.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![5, 7, 11], "an old one is shown too, not dropped");
+        assert_eq!(got[2].1["text"], "🕓 2 h · stale");
         assert_eq!(got[0].1["source"], "jinx-chat");
         assert_eq!(got[1].1["kind"], "alert");
         assert_eq!(got[0].1["kind"], "info");
+    }
+
+    #[test]
+    fn a_late_message_says_how_late() {
+        assert_eq!(with_age("hola", 59 * 60), "hola");
+        assert_eq!(with_age("hola", -30), "hola", "a clock a little ahead");
+        assert_eq!(with_age("hola", 3 * 3600 + 10), "🕓 3 h · hola");
+        assert_eq!(with_age("hola", 49 * 3600), "🕓 2 d · hola");
     }
 
     #[test]

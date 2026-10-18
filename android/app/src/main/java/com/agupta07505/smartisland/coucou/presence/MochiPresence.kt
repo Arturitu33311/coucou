@@ -313,11 +313,20 @@ object MochiPresence {
         // Only the device Mochi is on shows Jinx's texts, and it does not ack them while another one is.
         if (!DeviceActivity.active.value) return
         val nowS = System.currentTimeMillis() / 1000
-        val (stale, recent) = inbox.partition { nowS - it.ts > 3600 }
         // A reply of Jinx's while her chat is on screen here is already read there: not on the island too.
-        val (seen, fresh) = recent.partition { alreadyInChat(it, JinxChatScreen.visible) }
-        ack(app, (stale + seen).map { it.id }.toSet())
-        shownIds = IslandJinx.publish(app, fresh, autoExpandAlert = true)
+        val (seen, fresh) = inbox.partition { alreadyInChat(it, JinxChatScreen.visible) }
+        ack(app, seen.map { it.id }.toSet())
+        // Old messages are shown too, with how old they are. They used to be acked unseen after an hour, so a
+        // briefing that arrived while the phone was off was marked read the moment the screen came on, and lost.
+        shownIds = IslandJinx.publish(app, fresh.map { withAge(it, nowS) }, autoExpandAlert = true)
+    }
+
+    /** A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure. */
+    fun withAge(m: PresenceMsg, nowS: Long): PresenceMsg {
+        val hours = (nowS - m.ts) / 3600
+        if (hours < 1) return m
+        val age = if (hours < 24) "$hours h" else "${hours / 24} d"
+        return m.copy(text = "🕓 $age · ${m.text}")
     }
 
     /** A Jinx reply (the gateway's `jinx-chat` source) shown in her open chat needs no island card. Pure. */

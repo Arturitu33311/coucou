@@ -66,6 +66,15 @@ class MochiPresenceTest {
     }
 
     @Test
+    fun a_late_message_says_how_late_and_is_never_dropped() {
+        val m = PresenceMsg(1, "Arrancamos el día", null, "info", "notify", 1_000)
+        assertEquals(m, MochiPresence.withAge(m, 1_000 + 59 * 60))
+        assertEquals("🕓 5 h · Arrancamos el día", MochiPresence.withAge(m, 1_000 + 5 * 3600 + 20).text)
+        assertEquals("🕓 2 d · Arrancamos el día", MochiPresence.withAge(m, 1_000 + 49 * 3600).text)
+        assertEquals(m, MochiPresence.withAge(m, 500))
+    }
+
+    @Test
     fun the_server_names_are_read_as_ours() {
         assertEquals("laptop", Arbiter.fromServer("pc"))
         assertEquals("s22", Arbiter.serverAnswer("s22"))
