@@ -196,7 +196,7 @@ const TOOL_LABELS: Record<string, string> = {
   Grep: N_("Searches"),
   WebSearch: N_("Searches the web"),
   WebFetch: N_("Fetches"),
-  TodoWrite: N_("Tasks"),
+  TodoWrite: N_("Planning"),
   Task: N_("Agent"),
   LS: N_("Lists"),
   MultiEdit: N_("Edits"),

@@ -3965,6 +3965,17 @@
    "pt-BR": "Última sessão",
    "ru": "Последняя сессия",
    "id": "Sesi terakhir"
+  },
+  "Planning": {
+   "zh-Hans": "规划中",
+   "hi": "योजना बना रहा है",
+   "es": "Planificando",
+   "ar": "يخطّط",
+   "fr": "Planification",
+   "bn": "পরিকল্পনা করছে",
+   "pt-BR": "Planejando",
+   "ru": "Планирование",
+   "id": "Merencanakan"
   }
  }
 }
