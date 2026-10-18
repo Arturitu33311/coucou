@@ -8,6 +8,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 import jinx_hermes_chat as hc
 
 hc.BRIDGE_LOG = os.path.join(tempfile.mkdtemp(), "bridge.log")
+# The sessions of FakeApi have already heard the Hub hint, so the older tests see the plain messages; the tests of
+# the hint itself use their own store. (Never the real file on this machine.)
+hc.HINT_FILE = os.path.join(tempfile.mkdtemp(), "hint_sent.json")
+with open(hc.HINT_FILE, "w") as _f:
+    json.dump({"new_tg": 9e12, "old_tg": 9e12}, _f)
 
 
 class FakeApi:
@@ -293,6 +298,68 @@ class HistoryTest(unittest.TestCase):
 class KeyHandlingTest(unittest.TestCase):
     def test_redact_hides_the_key_in_any_message(self):
         self.assertNotIn("SECRETKEY123", hc.redact("fallo con Bearer SECRETKEY123 en la llamada", "SECRETKEY123"))
+
+
+class HubHintTest(unittest.TestCase):
+    """Where the notes and the calendar are: said once per Hermes session, from the bridge (so the PC, the phones and
+    the laptop's backup gateway all get it), never in every message, and never shown as something Alan wrote."""
+
+    def store(self, clock=None):
+        return hc.HintStore(os.path.join(tempfile.mkdtemp(), "hint.json"), clock=clock or (lambda: 1000.0))
+
+    def sent_text(self, api):
+        post = [c for c in api.calls if c[0] in ("POST", "STREAM")][0]
+        return post[-1]["message"]
+
+    def test_the_first_message_of_a_session_carries_the_hint(self):
+        hints, api = self.store(), FakeApi()
+        hc.handle({"op": "send", "text": "hola jinx"}, api, tmp_store(), hints)
+        text = self.sent_text(api)
+        self.assertTrue(text.startswith(hc.HUB_HINT))
+        self.assertTrue(text.endswith("\n\nhola jinx"))
+        self.assertIn("notes.md, calendar.json", text)
+
+    def test_the_second_message_of_the_same_session_does_not(self):
+        hints = self.store()
+        hc.handle({"op": "send", "text": "uno"}, FakeApi(), tmp_store(), hints)
+        api = FakeApi()
+        hc.handle({"op": "send", "text": "dos"}, api, tmp_store(), hints)
+        self.assertEqual(self.sent_text(api), "dos")
+
+    def test_a_new_session_hears_it_again(self):
+        hints = self.store()
+        hc.handle({"op": "send", "text": "uno"}, FakeApi(), tmp_store(), hints)
+        other = FakeApi(sessions=[{"id": "tg_2", "source": "telegram", "last_active": "5", "message_count": 1}])
+        hc.handle({"op": "send", "text": "dos"}, other, tmp_store(), hints)
+        self.assertTrue(self.sent_text(other).startswith(hc.HUB_HINT))
+
+    def test_it_goes_through_the_stream_too(self):
+        hints, api = self.store(), FakeApi(stream_events=list(DONE))
+        hc.handle({"op": "send", "text": "hola"}, api, tmp_store(), hints)
+        self.assertTrue(self.sent_text(api).startswith(hc.HUB_HINT))
+
+    def test_a_failed_send_does_not_use_up_the_hint(self):
+        hints = self.store()
+        hc.handle({"op": "send", "text": "uno"}, FakeApi(fail_chat=True), tmp_store(), hints)
+        api = FakeApi()
+        hc.handle({"op": "send", "text": "otra vez"}, api, tmp_store(), hints)
+        self.assertTrue(self.sent_text(api).startswith(hc.HUB_HINT))
+
+    def test_old_entries_are_forgotten(self):
+        now = [1000.0]
+        hints = self.store(clock=lambda: now[0])
+        hints.mark("s1")
+        self.assertTrue(hints.seen("s1"))
+        now[0] += hc.HINT_KEEP_S + 1
+        hints.mark("s2")
+        self.assertFalse(hints.seen("s1"))
+        self.assertTrue(hints.seen("s2"))
+
+    def test_the_history_shows_what_alan_wrote_without_the_hint(self):
+        msgs = [{"id": 1, "role": "user", "content": hc.with_hint("hola jinx", True), "timestamp": 5},
+                {"id": 2, "role": "assistant", "content": "hola", "timestamp": 6}]
+        out = hc.handle({"op": "history", "n": 10}, FakeApi(messages=msgs))
+        self.assertEqual([i["text"] for i in out["items"]], ["hola jinx", "hola"])
 
 
 if __name__ == "__main__":
