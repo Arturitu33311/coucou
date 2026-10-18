@@ -364,7 +364,6 @@ export const Bridge = {
     callOrThrow<string>("agent_start", { cwd, prompt, backend }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
   calendarEvents: (days: number) => callOrThrow<unknown[]>("calendar_events", { days }),
-  jinxTasks: () => callOrThrow<unknown[]>("jinx_tasks"),
   tasksList: () => callOrThrow<import("../hub/tasks").Task[]>("tasks_list"),
   tasksAdd: (text: string, day: number | null, hour: number) =>
     callOrThrow<import("../hub/tasks").Task[]>("tasks_add", { text, day, hour }),

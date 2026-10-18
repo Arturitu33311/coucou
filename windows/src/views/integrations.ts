@@ -10,6 +10,7 @@ import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
 import { isComingSoon, pillDefinition } from "../core/pills";
 import { claudePlanRows } from "./usage";
+import { refreshHookPills } from "../island/integrations";
 import { readActivity, readPulse, readStats } from "../core/github";
 import { githubDetail, githubPulseCard } from "./github";
 import { N_, language, t } from "../i18n/i18n";
@@ -82,6 +83,10 @@ export function idleStatus(
   return configured ? ok(t("Connected · loading…")) : missing(t("Key not configured"));
 }
 
+/** Upstream's idle-card buttons that do nothing useful to Alan; kept in the code so merges stay additive. */
+const SHOW_OPEN_EDITOR = false;
+const SHOW_HOOK_REFRESH = false;
+
 function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const info = State.integrations[task.id];
   const configured = info?.configured ?? false;
@@ -93,7 +98,18 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   // bars, or the last session, or what the hooks are doing (the status line below).
   const extra = idleExtra(task);
   if (task.id === "integration_claude") {
-    // No "Open Visual Studio Code": the usage (or the hooks) is what this card is for.
+    // Upstream's "Open Visual Studio Code" is kept but off here (SHOW_OPEN_EDITOR): the usage, or the hooks, is
+    // what this card is for. Flip the constant to bring it back.
+    if (SHOW_OPEN_EDITOR) {
+      actions.append(
+        h("button", {
+          class: "link-btn",
+          style: `color:${task.color}b3`,
+          text: t("Open Visual Studio Code"),
+          onclick: () => void Bridge.openInVSCode(task.sessionCwd ?? null),
+        }),
+      );
+    }
   } else if (task.id === "agent_claude-desktop") {
     actions.append(
       h("button", {
@@ -125,15 +141,16 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const hookPill = def?.connect.kind === "hooks";
   if (isComingSoon(task.id) || def?.connect.kind === "none") {
     // Nothing to set up, and nothing to refresh.
-  } else if (hookPill) {
-    // A hook pill has nothing to poll, and a refresh changes nothing you can see.
-  } else if (configured && def?.category !== "ai") {
+  } else if (hookPill && !SHOW_HOOK_REFRESH) {
+    // A hook pill has nothing to poll, and a refresh changes nothing you can see (upstream's button is kept, off).
+  } else if (configured && (hookPill || def?.category !== "ai")) {
     actions.append(
       h("button", {
         class: "link-btn",
         style: `color:${task.color}d9`,
         text: t("Refresh"),
-        onclick: () => void Bridge.refreshIntegration(task.id),
+        // A hook pill has nothing to poll: look at its hooks again instead.
+        onclick: () => void (hookPill ? refreshHookPills() : Bridge.refreshIntegration(task.id)),
       }),
     );
   } else if (!configured) {

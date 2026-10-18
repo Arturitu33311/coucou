@@ -17,6 +17,14 @@ use crate::tasks::{self, JinxRow, Task};
 
 static SYNC: Mutex<()> = Mutex::new(());
 
+/// Whether the last round with the server's list worked (true until one fails): the phone↔laptop direct task merge
+/// (remote.rs) steps in only while it did not.
+static SERVER_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn server_ok() -> bool {
+    SERVER_OK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// What runs on the server: the adapter, with Hermes' python (what the phones' forced command runs too).
 /// The remote shell expands `$HOME`.
 const ADAPTER: &str = "$HOME/.hermes/hermes-agent/venv/bin/python $HOME/.hermes/scripts/coucou_pendientes.py";
@@ -168,8 +176,14 @@ pub fn sync(host: &str) -> SyncResult {
     };
     let read = || list(host);
     let rows = match read() {
-        Ok(r) => r,
-        Err(e) => return SyncResult { tasks: tasks::load(), jinx: Vec::new(), error: Some(e) },
+        Ok(r) => {
+            SERVER_OK.store(true, std::sync::atomic::Ordering::Relaxed);
+            r
+        }
+        Err(e) => {
+            SERVER_OK.store(false, std::sync::atomic::Ordering::Relaxed);
+            return SyncResult { tasks: tasks::load(), jinx: Vec::new(), error: Some(e) };
+        }
     };
     let mut plan = tasks::Plan::default();
     let mut error = None;

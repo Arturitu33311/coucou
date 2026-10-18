@@ -586,21 +586,6 @@ async fn calendar_events(days: u32) -> Result<Vec<calendar::Event>, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Jinx's open pending tasks, read from her state file on the server (needs the server set).
-#[tauri::command]
-async fn jinx_tasks(shared: State<'_, Shared>) -> Result<Vec<calendar::Task>, String> {
-    let host = {
-        let s = shared.settings.lock().unwrap();
-        s.server_host.trim().to_string()
-    };
-    if host.is_empty() {
-        return Err("not-configured".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || sysmon::remote_cat(&host, ".hermes/state/pendientes.json").map(|t| calendar::parse_tasks(&t)))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 // ── Hub: notes, and what Jinx can see of the Hub (see notes.rs, share.rs) ──────
 
 #[tauri::command]
@@ -1375,7 +1360,6 @@ pub fn run() {
             chat_reset,
             read_sound,
             calendar_events,
-            jinx_tasks,
             notes_load,
             notes_save,
             share_push,

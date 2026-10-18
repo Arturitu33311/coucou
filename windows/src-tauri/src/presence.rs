@@ -38,6 +38,11 @@ pub const IDLE_LIMIT_S: u64 = 300;
 /// What the laptop is called on the presence server (it says "pc"; here it is LAPTOP).
 pub const SERVER_LAPTOP: &str = "pc";
 
+/// A phone holds Mochi AND is a live peer of the remote link (`live`: Some(true)). Pure.
+pub fn phone_gets_link(winner: &str, live: Option<bool>) -> bool {
+    is_phone(winner) && live == Some(true)
+}
+
 /// The presence server's name for a device, in our ids ("pc" is the laptop). Pure.
 pub fn from_server(name: &str) -> String {
     if name == SERVER_LAPTOP { LAPTOP.to_string() } else { name.to_string() }
@@ -192,8 +197,10 @@ impl Live {
         let winner = decide(&me, &seen, self.previous.as_deref());
         self.previous = Some(winner.clone());
         self.active = winner == LAPTOP;
-        self.phone_holds = is_phone(&winner);
         let alive = |p: &Peer| now.duration_since(p.at) <= Duration::from_millis(FRESH_MS);
+        // Only a phone that is a live peer of the link gets the sessions from it; one that only the presence
+        // server named does not.
+        self.phone_holds = phone_gets_link(&winner, self.peers.get(&winner).map(|p| alive(p)));
         self.peer_music = self.peers.values().any(|p| alive(p) && p.music);
         self.peer_news = self.peers.values().any(|p| alive(p) && p.news && now.duration_since(p.at) <= NEWS_WINDOW);
     }
@@ -597,6 +604,15 @@ pub fn start(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_live_link_peer_counts_as_a_phone_that_gets_the_session() {
+        assert!(phone_gets_link("s22", Some(true)));
+        assert!(!phone_gets_link("s22", Some(false)), "silent for too long");
+        assert!(!phone_gets_link("s22", None), "named only by the presence server: no link");
+        assert!(!phone_gets_link("laptop", Some(true)));
+        assert!(!phone_gets_link("vga", None));
+    }
 
     fn beat(o: &Value) -> Beat {
         Beat {

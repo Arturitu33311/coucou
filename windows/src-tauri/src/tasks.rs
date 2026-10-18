@@ -887,6 +887,18 @@ mod tests {
         t
     }
 
+    /// The adapter lists only the closed rows of the last month, so an old closed row may be absent: a linked task whose
+    /// row is gone loses its link, and a finished one is never handed over again (it cannot reopen her old row).
+    #[test]
+    fn a_linked_task_whose_row_is_absent_loses_its_link_and_a_finished_one_is_not_re_added() {
+        let mut done = vec![shared("old", Some("abc123"))];
+        done[0].done = true;
+        let plan = reconcile(&mut done, &[], NOW);
+        assert!(plan.to_add.is_empty() && plan.to_resolve.is_empty());
+        assert_eq!(done[0].jinx_id, None);
+        assert!(reconcile(&mut done, &[], NOW).to_add.is_empty(), "the next round neither");
+    }
+
     #[test]
     fn a_shared_task_not_yet_hers_is_handed_over_while_it_is_open() {
         let mut l = vec![shared("a", None)];

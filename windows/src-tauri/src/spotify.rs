@@ -1328,6 +1328,15 @@ mod linux {
 mod tests {
     use super::*;
 
+    #[test]
+    fn spotifys_own_reader_steps_aside_when_jinx_carries_the_music() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(reader_wanted("integration_claude", &ids(&["integration_spotify"])));
+        assert!(!reader_wanted("integration_jinx", &ids(&["integration_spotify"])), "Jinx main: the generic reader has it");
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_spotify", "integration_jinx"])));
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_music"])));
+    }
+
     fn s(v: &str) -> Value {
         Value::Str(v.into())
     }

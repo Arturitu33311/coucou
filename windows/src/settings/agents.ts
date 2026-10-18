@@ -5,6 +5,7 @@
 import { Bridge, type AgentHookStatus } from "../core/bridge";
 import { clear, h } from "../views/dom";
 import { renderDiff, statusDot } from "./parts";
+import { HIDDEN_PILLS } from "../core/pills";
 import { t } from "../i18n/i18n";
 
 /** In the current language (src/i18n); the settings window redraws on a change. */
@@ -45,7 +46,10 @@ export function agentsSection(list: AgentHookStatus[] | null): HTMLElement {
   if (!list || list.length === 0) {
     blocks.append(h("div", { class: "hint", text: TEXT.none }));
   }
-  for (const status of list ?? []) blocks.append(agentBlock(status));
+  // Hermes stays installable in the code, but Jinx is its only face here: no row (HIDDEN_PILLS).
+  for (const status of list ?? []) {
+    if (!HIDDEN_PILLS.includes(`agent_${status.id}`)) blocks.append(agentBlock(status));
+  }
   return h(
     "section",
     {},
