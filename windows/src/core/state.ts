@@ -228,6 +228,10 @@ export interface Settings {
   notificationPeek: boolean;
   /** Let a phone follow Claude Code and answer its requests, through ssh (off until turned on). */
   remoteEnabled: boolean;
+  /** Carry the music to the phone you moved to: "off", "ask" (a card on the phone) or "auto" (also frees the headphones). */
+  musicHandoff: "off" | "ask" | "auto";
+  /** Seconds on the phone (and away from this computer) before the music is offered to it. */
+  handoffDwellS: number;
   /** What Mochi wears: "auto" (headphones with music, a night cap asleep, shades while focusing), "none" or one of them. */
   mochiOutfit: string;
   /** A dot on the island, with the program's name, while something records the microphone. */
@@ -273,6 +277,8 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherCity2: "",
   notificationPeek: false,
   remoteEnabled: false,
+  musicHandoff: "off",
+  handoffDwellS: 90,
   mochiOutfit: "auto",
   micIndicator: true,
   clipboardHistory: false,

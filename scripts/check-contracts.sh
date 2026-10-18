@@ -11,4 +11,5 @@ check() {
 }
 check windows/scripts/phone/merge-vectors.json    android/app/src/test/resources/merge-vectors.json
 check windows/scripts/phone/presence-vectors.json android/app/src/test/resources/presence-vectors.json
+check windows/scripts/phone/wire-fixtures.json    android/app/src/test/resources/wire-fixtures.json
 exit "$bad"

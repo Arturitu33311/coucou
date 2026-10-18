@@ -18,6 +18,13 @@
 // most twice the list limit, bookkeeping about the phone's own link with Jinx never taken). A phone
 // that is lost can therefore add or change reminders, which then follow the list to wherever it goes;
 // it still cannot make Coucou do anything else.
+//
+// A third thing goes out and can come back: the music handoff (handoff.rs). The laptop offers what plays
+// to the phone in use (`handoff`, addressed to one phone, with a title and an https address of a service
+// we know), and the phone may answer with one word, `handoff_accept`, for the offer that is waiting. It
+// is checked like a permission answer: that offer, that phone, once, before it expires, and only while
+// the person is still on that phone. Accepting makes the laptop pause that player and let go of the
+// Bluetooth headphones: nothing more, and nothing the phone chooses.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -208,6 +215,16 @@ fn tasks_line() -> Value {
     json!({ "t": "tasks", "tasks": tasks })
 }
 
+/// Is a phone listening on the link? (The handoff offers nothing to nobody.)
+pub fn has_listeners() -> bool {
+    on() && bus().receiver_count() > 0
+}
+
+/// A line for the phones (each ignores the ones addressed to another: the bus is a broadcast).
+pub fn publish_line(line: &Value) {
+    publish(line);
+}
+
 /// A hook event that waits for nobody.
 pub fn publish_event(payload: &Value) {
     if on() && bus().receiver_count() > 0 {
@@ -259,6 +276,8 @@ pub enum Action {
     Peer { beat: crate::presence::Beat, music: bool, news: bool },
     /// The phone's whole task list, to be merged with this one (newest change wins, see tasks.rs).
     TasksSync { tasks: Value },
+    /// The phone took the music offer that was waiting (handoff.rs checks it is that offer, for that phone).
+    HandoffAccept { id: String },
     Reject(String),
 }
 
@@ -272,6 +291,10 @@ pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action
         Some("peer") => match crate::presence::parse_peer(&v) {
             Some((beat, music, news)) => Action::Peer { beat, music, news },
             None => Action::Reject("not a phone beat".into()),
+        },
+        Some("handoff_accept") => match v.get("id").and_then(Value::as_str) {
+            Some(id) if !id.is_empty() && id.len() <= 64 => Action::HandoffAccept { id: id.to_string() },
+            _ => Action::Reject("handoff_accept needs the offer's id".into()),
         },
         Some("tasks_sync") => match v.get("tasks") {
             // Bounded here; each task is bounded again by tasks::sanitize_remote before it is merged.
@@ -434,6 +457,14 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
                 }
                 tasks_line()
             }
+            Action::HandoffAccept { id } => match device.as_deref() {
+                // A link that has not said which phone it is cannot take an offer addressed to one.
+                None => json!({ "t": "ack", "ok": false, "why": "say which phone this is first" }),
+                Some(d) => match crate::handoff::accept(d, &id) {
+                    Ok(()) => json!({ "t": "ack", "request_id": id, "ok": true }),
+                    Err(why) => json!({ "t": "ack", "request_id": id, "ok": false, "why": why }),
+                },
+            },
             Action::Answer { id, decision } => {
                 log::line(format!("phone link: {decision} for id={id}"));
                 pipe::answer(&app, &id, decision);

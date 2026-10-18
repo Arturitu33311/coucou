@@ -93,6 +93,14 @@ pub struct Settings {
     /// Let a phone follow Claude Code and answer its requests, through ssh (off until turned on).
     #[serde(default)]
     pub remote_enabled: bool,
+    /// Music handoff: when you have been on the phone for a while, offer to carry what plays here to it.
+    /// "off", "ask" (a card on the phone; nothing happens until you tap it) or "auto" (also frees the
+    /// headphones by itself once the offer is out). Off until turned on.
+    #[serde(default = "default_handoff")]
+    pub music_handoff: String,
+    /// How long the phone must have been the one in use (and this computer untouched) before the offer.
+    #[serde(default = "default_handoff_dwell")]
+    pub handoff_dwell_s: u64,
     /// What Mochi wears: "auto", "none", or one of headphones / nightcap / party / shades / bow.
     #[serde(default = "default_outfit")]
     pub mochi_outfit: String,
@@ -106,6 +114,14 @@ pub struct Settings {
     /// 5 minutes otherwise) for the pill and the Today tab. Off until turned on; needs a server.
     #[serde(default)]
     pub activities_on: bool,
+}
+
+fn default_handoff() -> String {
+    "off".into()
+}
+
+fn default_handoff_dwell() -> u64 {
+    90
 }
 
 fn default_outfit() -> String {
@@ -198,6 +214,8 @@ impl Default for Settings {
             weather_city2: String::new(),
             notification_peek: false,
             remote_enabled: false,
+            music_handoff: default_handoff(),
+            handoff_dwell_s: default_handoff_dwell(),
             mochi_outfit: default_outfit(),
             mic_indicator: true,
             clipboard_history: false,

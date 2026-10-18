@@ -109,6 +109,8 @@ struct Live {
     /// The presence server's address and key are in the keyring (so it is worth asking).
     server_configured: bool,
     previous: Option<String>,
+    /// Since when `previous` has been the winner (it moves only when the winner changes).
+    winner_since: Option<Instant>,
     /// What the page was last told.
     sent: Option<(bool, bool, bool)>,
     /// This device is playing something (the page says so).
@@ -159,6 +161,9 @@ impl Live {
             .collect();
         let me = self.my_beat();
         let winner = decide(&me, &seen, self.previous.as_deref());
+        if self.previous.as_deref() != Some(winner.as_str()) {
+            self.winner_since = Some(now);
+        }
         self.previous = Some(winner.clone());
         self.active = winner == LAPTOP;
         let alive = |p: &Peer| now.duration_since(p.at) <= Duration::from_millis(FRESH_MS);
@@ -192,6 +197,39 @@ fn publish(app: &AppHandle, payload: Option<Value>) {
         crate::log::line(format!("presence: {p} @{at_ms}ms"));
         let _ = app.emit("presence", p);
     }
+}
+
+/// Who has been the device in use, for how long, and how alive it looks: what the music handoff acts on.
+/// A summary of the same inputs `decide` reads; it adds no rule of its own to who wins.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Standing {
+    pub winner: String,
+    /// Seconds the winner has held it without a change.
+    pub held_s: u64,
+    /// Seconds since this computer's last input.
+    pub my_idle_s: u64,
+    /// The winner (when it is a phone) was heard lately, has its screen on and was touched lately.
+    pub winner_idle_s: u64,
+    pub winner_fresh: bool,
+    pub winner_screen_on: bool,
+}
+
+pub fn standing() -> Standing {
+    with(|l| {
+        l.settle();
+        let now = Instant::now();
+        let winner = l.previous.clone().unwrap_or_else(|| LAPTOP.to_string());
+        let held_s = l.winner_since.map(|t| now.duration_since(t).as_secs()).unwrap_or(0);
+        let me = l.my_beat();
+        let (fresh, screen, idle) = match l.peers.get(&winner) {
+            Some(p) => {
+                let age = now.duration_since(p.at);
+                (age <= Duration::from_millis(FRESH_MS), p.beat.screen_on, p.beat.idle_s + age.as_secs())
+            }
+            None => (winner == LAPTOP, me.screen_on, me.idle_s),
+        };
+        Standing { winner, held_s, my_idle_s: me.idle_s, winner_idle_s: idle, winner_fresh: fresh, winner_screen_on: screen }
+    })
 }
 
 /// What the page asks at start.
@@ -462,6 +500,11 @@ pub fn start(app: &AppHandle) {
             }
             let out = with(|l| l.recompute());
             publish(&app, out);
+            // The music handoff looks at who has been in use for how long (cheap unless it is on and a
+            // phone has held the island for a while).
+            if !alone {
+                crate::handoff::tick(&app);
+            }
             tick = tick.wrapping_add(1);
             let wait = if alone { Duration::from_secs(10) } else { Duration::from_millis(250) };
             // A phone arriving wakes the clock at once (on_peer notifies).
