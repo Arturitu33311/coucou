@@ -59,6 +59,11 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
     let _ = app;
 }
 
+/// The phone↔laptop task merge over the link is the backup for a setup with no server. Pure.
+pub fn direct_merge_wanted(server_host: &str) -> bool {
+    server_host.trim().is_empty()
+}
+
 fn on() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
@@ -436,14 +441,18 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
                 }
             }
             Action::TasksSync { tasks } => {
-                // Each device works alone; when they meet the newest change wins, then both have the same list.
-                match crate::tasks::merge_remote_json(&tasks.to_string()) {
-                    Ok(true) => {
-                        let _ = app.emit("tasks-changed", ());
-                        log::line("phone link: tasks merged");
+                // With a server, the phones and this laptop all meet in Jinx's list there (pendientes.rs): the
+                // direct merge is only the fallback for when there is none. Each device works alone; when they
+                // meet the newest change wins, then both have the same list.
+                if direct_merge_wanted(&crate::settings::load().server_host) {
+                    match crate::tasks::merge_remote_json(&tasks.to_string()) {
+                        Ok(true) => {
+                            let _ = app.emit("tasks-changed", ());
+                            log::line("phone link: tasks merged");
+                        }
+                        Ok(false) => {}
+                        Err(e) => log::line(format!("phone link: tasks not merged ({e})")),
                     }
-                    Ok(false) => {}
-                    Err(e) => log::line(format!("phone link: tasks not merged ({e})")),
                 }
                 tasks_line()
             }
@@ -544,6 +553,13 @@ mod tests {
         let n = event_line(&json!({ "hook_event_name": "Notification", "message": "Claude needs your permission" }));
         assert_eq!(n["message"], "Claude needs your permission");
         assert!(n.get("tool").is_none());
+    }
+
+    #[test]
+    fn the_direct_task_merge_is_only_the_backup_without_a_server() {
+        assert!(direct_merge_wanted(""));
+        assert!(direct_merge_wanted("  "));
+        assert!(!direct_merge_wanted("server"));
     }
 
     #[test]
