@@ -819,3 +819,28 @@ test("away from the PC, a long run finishing and a waiting permission reach Jinx
     Presence.active = true;
   }
 });
+
+test("a phone in use already gets the session over the remote link: no second notice from here", async () => {
+  const { Presence } = await import("../src/core/presence.ts");
+  const oc = { coucou_agent: "opencode", session_id: "p", cwd: "/home/me/web" };
+  mock.timers.reset();
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_800_000_000_000 });
+  try {
+    Presence.active = false;
+    Presence.phone = true;
+    const before = sent("jinx_notify").length;
+    hook({ hook_event_name: "PreToolUse", tool_name: "bash", ...oc });
+    seconds(5 * 60);
+    hook({ hook_event_name: "Stop", ...oc });
+    assert.equal(sent("jinx_notify").length, before);
+    // Nobody in use (the panel has Mochi): the notice still goes.
+    Presence.phone = false;
+    hook({ hook_event_name: "PreToolUse", tool_name: "bash", ...oc, session_id: "q" });
+    seconds(5 * 60);
+    hook({ hook_event_name: "Stop", ...oc, session_id: "q" });
+    assert.equal(sent("jinx_notify").length, before + 1);
+  } finally {
+    Presence.active = true;
+    Presence.phone = false;
+  }
+});

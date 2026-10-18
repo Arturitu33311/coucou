@@ -45,9 +45,12 @@ export function pillSessions(pillId: string): { live: number; working: number } 
 /** What Jinx is told about the agents while you are away from the PC (agent-notices.ts). */
 let notices = new AgentNotices();
 
-/** Away: another device has Mochi (or the panel: nobody in use). Here, the island itself shows it all. */
+/**
+ * Away: another device has Mochi (or the panel: nobody in use). Here, the island itself shows it all. Not when the
+ * device in use is a phone: it gets the session over the remote link already, and a notice would say it twice.
+ */
 function tellJinx(n: Notice | null) {
-  if (!n || Presence.active) return;
+  if (!n || Presence.active || Presence.phone) return;
   void Bridge.jinxNotify(n.text, n.kind);
 }
 

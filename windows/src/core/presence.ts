@@ -14,6 +14,8 @@ export interface PresenceState {
   peerNews: boolean;
   /** What Jinx feels between messages (her emotion state, from the presence server): one of Mochi's emotes, or null. */
   jinxMood?: string | null;
+  /** A phone is the device in use, and it gets the sessions over the remote link: nothing needs telling it twice. */
+  phone?: boolean;
 }
 
 export const Presence: PresenceState = { active: true, peerMusic: false, peerNews: false, jinxMood: null };

@@ -139,7 +139,7 @@ struct Live {
     /// Jinx's background mood, as the presence server last said it (one of Mochi's emotes; None: calm or unknown).
     jinx_mood: Option<String>,
     /// What the page was last told.
-    sent: Option<(bool, bool, bool, Option<String>)>,
+    sent: Option<(bool, bool, bool, Option<String>, bool)>,
     /// This device is playing something (the page says so).
     music: bool,
     /// Claude Code is rate-limited here (the page says so): the phone's Mochi is tired too.
@@ -147,6 +147,8 @@ struct Live {
     /// Something just arrived here (a notification): the phone's Mochi is startled until then.
     news_until: Option<Instant>,
     active: bool,
+    /// A phone holds Mochi: it is a live peer of the remote link, so it already gets the sessions from it.
+    phone_holds: bool,
     peer_music: bool,
     peer_news: bool,
 }
@@ -190,6 +192,7 @@ impl Live {
         let winner = decide(&me, &seen, self.previous.as_deref());
         self.previous = Some(winner.clone());
         self.active = winner == LAPTOP;
+        self.phone_holds = is_phone(&winner);
         let alive = |p: &Peer| now.duration_since(p.at) <= Duration::from_millis(FRESH_MS);
         self.peer_music = self.peers.values().any(|p| alive(p) && p.music);
         self.peer_news = self.peers.values().any(|p| alive(p) && p.news && now.duration_since(p.at) <= NEWS_WINDOW);
@@ -198,7 +201,7 @@ impl Live {
     /// Settles, and returns the payload for the page if it differs from what the page was last told.
     fn recompute(&mut self) -> Option<Value> {
         self.settle();
-        let now_state = (self.active, self.peer_music, self.peer_news, self.jinx_mood.clone());
+        let now_state = (self.active, self.peer_music, self.peer_news, self.jinx_mood.clone(), self.phone_holds);
         if self.sent.as_ref() == Some(&now_state) {
             return None;
         }
@@ -207,7 +210,7 @@ impl Live {
     }
 
     fn payload(&self) -> Value {
-        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news, "jinxMood": self.jinx_mood })
+        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news, "jinxMood": self.jinx_mood, "phone": self.phone_holds })
     }
 }
 
