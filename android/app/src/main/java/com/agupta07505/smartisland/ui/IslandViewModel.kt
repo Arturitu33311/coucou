@@ -195,9 +195,11 @@ class IslandViewModel(
                     pin(key)
                     selectedIndex.value = index
                     val isDemo = key.startsWith("demo_")
-                    // The switch is for other apps' notifications. What Coucou itself raises on purpose (a permission
-                    // request, a question, Claude Code asking for the person, Jinx) always opens when it arrives.
-                    if (settings.value.autoExpandOnNotification || isDemo || com.agupta07505.smartisland.coucou.IslandAgents.opensByItself(key)) {
+                    // The switch is for other apps' notifications. A card Coucou itself raised and asked to open (a
+                    // permission request or a question from any agent on the laptop, Jinx, a reminder, a handoff offer)
+                    // opens when it arrives whatever the switch says: whoever posts it decides.
+                    val ownCard = arranged[index].mode.isCoucou || key.startsWith("coucou_")
+                    if (settings.value.autoExpandOnNotification || isDemo || ownCard) {
                         expand()
                     }
                 }
