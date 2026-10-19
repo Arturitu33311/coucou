@@ -898,6 +898,15 @@ class SmartIslandOverlayService : AccessibilityService() {
         }
     }
 
+    /** The Claude app if it is installed; otherwise Claude Code on the web. */
+    private fun openClaudeApp() {
+        runCatchingLogged(TAG, "Failed to open the Claude app") {
+            val launch = packageManager.getLaunchIntentForPackage("com.anthropic.claude")
+                ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://claude.ai/code"))
+            startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
     private fun openNotification(notification: IslandNotification) {
         // Coucou's own cards belong to Coucou: Mochi and a reminder open the task list; a permission or a
         // question is answered where it is. None of them launches Smart Island's own screen.
@@ -910,6 +919,9 @@ class SmartIslandOverlayService : AccessibilityService() {
                         Intent(this, com.agupta07505.smartisland.coucou.CoucouTasksActivity::class.java)
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
+                    viewModel.collapse()
+                } else if (notification.mode == com.agupta07505.smartisland.model.IslandMode.Agent) {
+                    openClaudeApp()
                     viewModel.collapse()
                 }
             }

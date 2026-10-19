@@ -195,7 +195,9 @@ class IslandViewModel(
                     pin(key)
                     selectedIndex.value = index
                     val isDemo = key.startsWith("demo_")
-                    if (settings.value.autoExpandOnNotification || isDemo) {
+                    // The switch is for other apps' notifications. What Coucou itself raises on purpose (a permission
+                    // request, a question, Claude Code asking for the person, Jinx) always opens when it arrives.
+                    if (settings.value.autoExpandOnNotification || isDemo || com.agupta07505.smartisland.coucou.IslandAgents.opensByItself(key)) {
                         expand()
                     }
                 }

@@ -177,6 +177,13 @@ object IslandAgents {
     fun questionKey(id: String) = "coucou_question_$id"
     fun idOf(key: String) = key.substringAfter("coucou_approval_").substringAfter("coucou_question_")
 
+    /**
+     * Cards that expand when they arrive even with "auto-expand notifications" off: they are Coucou's own and
+     * wait for the person (the key says what it is; whether it is new is decided where it is posted).
+     */
+    fun opensByItself(key: String): Boolean =
+        key.startsWith("coucou_approval_") || key.startsWith("coucou_question_") || key == KEY_AGENT || key == com.agupta07505.smartisland.coucou.presence.IslandJinx.KEY
+
     /** Returns the keys now on the island, so the next call can take off what is gone. */
     fun publish(context: Context, ui: AgentUi, before: Set<String>): Set<String> {
         val repo = SmartIslandRepositories.notificationRepository(context)

@@ -117,6 +117,9 @@ object PresenceNet {
 object IslandJinx {
     const val KEY = "coucou_jinx"
 
+    /** The id of the last text that was put on the island as new. */
+    @Volatile private var announcedId = Long.MIN_VALUE
+
     fun publish(context: Context, msgs: List<PresenceMsg>, autoExpandAlert: Boolean): Set<Long> {
         val repo = SmartIslandRepositories.notificationRepository(context)
         if (msgs.isEmpty()) {
@@ -125,6 +128,13 @@ object IslandJinx {
         }
         val last = msgs.last()
         val mood = validMood(last.mood)
+        // The island expands a card only when it is new, and Jinx's is one card for all her texts: a text that
+        // has not been announced yet takes the card off first, so it arrives (and opens) like any new one.
+        // The same text on the next poll is an update and stays as it is.
+        if (last.id != announcedId) {
+            announcedId = last.id
+            repo.removeNotification(KEY)
+        }
         repo.postNotification(
             IslandNotification(
                 key = KEY,
@@ -136,7 +146,7 @@ object IslandJinx {
                 mode = IslandMode.JinxMsg,
                 category = "mochi:${mood ?: "Listening"}:${last.kind}",
             ),
-            autoExpand = autoExpandAlert && last.kind == "alert",
+            autoExpand = autoExpandAlert,
         )
         return msgs.map { it.id }.toSet()
     }
