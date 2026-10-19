@@ -28,7 +28,7 @@ mod local_chat;
 mod log;
 mod music;
 mod net;
-mod notes;
+mod hub_notes;
 mod notifs;
 mod openai_compat;
 mod opencode;
@@ -605,7 +605,7 @@ async fn jinx_tasks(shared: State<'_, Shared>) -> Result<Vec<calendar::Task>, St
 
 #[tauri::command]
 fn notes_load() -> String {
-    notes::load()
+    hub_notes::load()
 }
 
 /// Where the Hub's data goes for Jinx: the server, if one is set and sharing is on.
@@ -616,7 +616,7 @@ fn share_target(shared: &State<Shared>) -> Option<String> {
 
 #[tauri::command]
 fn notes_save(shared: State<Shared>, text: String) -> Result<(), String> {
-    notes::save(&text)?;
+    hub_notes::save(&text)?;
     if let Some(host) = share_target(&shared) {
         share::schedule(&host, "notes.md", text);
     }

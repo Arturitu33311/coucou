@@ -10,7 +10,7 @@ import { iconOf } from "../island/peripherals";
 import type { CalEvent } from "./calendar";
 import { pomodoroStatsNow, refreshStats } from "./pomodoro";
 import { ensureTasksLoaded, openTasks } from "./tasks";
-import { tile } from "./ui";
+import { tile } from "./hub-ui";
 import type { HubHost, HubTool } from "./types";
 
 interface Wx {

@@ -4,7 +4,7 @@ import "./style.css";
 import "./music.css";
 import "./pill.css";
 import "./jinx.css";
-import "./hub/hub.css";
+import "./hub/hub-island.css";
 import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";

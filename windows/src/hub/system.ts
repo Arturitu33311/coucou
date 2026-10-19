@@ -4,7 +4,7 @@ import { Bridge } from "../core/bridge";
 import { h } from "../views/dom";
 import { State } from "../core/state";
 import type { HubHost, HubTool } from "./types";
-import { Spark, gb, rate, tile, tone, uptime } from "./ui";
+import { Spark, gb, rate, tile, tone, uptime } from "./hub-ui";
 
 export interface Vitals {
   cpu: number;
