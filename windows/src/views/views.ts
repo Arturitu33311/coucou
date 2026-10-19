@@ -467,7 +467,7 @@ export function hasSessionTicker(task: AgentTask): boolean {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.name;
+  const label = task.id === "integration_claude" ? pillDefinition(task.id)!.name : task.name;
   const canvas = createMiniBot(task, 24);
   const pill = h(
     "div",

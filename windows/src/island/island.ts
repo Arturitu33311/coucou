@@ -969,7 +969,7 @@ export class Island {
 
     // The mouse area goes to where the island is headed, not where it is: a click on the
     // button it stepped away from must reach the button at once.
-    const rect = { x: (PANEL_W - w) / 2 + this.dodgeEnd(w), y: 0, w, h: hh };
+    const rect = { x: (this.viewportW() - w) / 2 + this.dodgeEnd(w), y: 0, w, h: hh };
     const p = this.pushedRect;
     if (Math.abs(p.x - rect.x) > 0.5 || Math.abs(p.w - rect.w) > 0.5 || Math.abs(p.h - rect.h) > 0.5) {
       this.pushedRect = rect;
@@ -981,17 +981,22 @@ export class Island {
   private islandRect(): { x: number; y: number; w: number; h: number } {
     const w = this.width.value;
     const hh = this.height.value;
-    return { x: (PANEL_W - w) / 2 + this.dodgeNow(w), y: 0, w, h: hh };
+    return { x: (this.viewportW() - w) / 2 + this.dodgeNow(w), y: 0, w, h: hh };
+  }
+
+  /** The window's real width (the webview's zoom changes it), the panel's when it is not known yet. */
+  private viewportW(): number {
+    return window.innerWidth > 0 ? window.innerWidth : PANEL_W;
   }
 
   /** The step aside is never more than the window has room for at this width. */
   private dodgeNow(w: number): number {
-    const room = (PANEL_W - w) / 2;
+    const room = (this.viewportW() - w) / 2;
     return clamp(this.dodge.value, -room, room);
   }
 
   private dodgeEnd(w: number): number {
-    const room = (PANEL_W - w) / 2;
+    const room = (this.viewportW() - w) / 2;
     return clamp(this.dodgeTarget, -room, room);
   }
 
@@ -1016,8 +1021,8 @@ export class Island {
     }
     if (State.mode !== "compact") return;
     const w = this.width.value;
-    const rest: Box = { x: (PANEL_W - w) / 2, y: 0, w, h: this.height.value };
-    this.setDodgeTarget(this.dodger.update(now, this.pointer, rest, this.zones, (PANEL_W - w) / 2));
+    const rest: Box = { x: (this.viewportW() - w) / 2, y: 0, w, h: this.height.value };
+    this.setDodgeTarget(this.dodger.update(now, this.pointer, rest, this.zones, (this.viewportW() - w) / 2));
     // The pointer resting is silence, not an event: look again when the waiting is over.
     if (this.dodgeTimer != null) window.clearTimeout(this.dodgeTimer);
     const wait = this.dodger.pending(now);

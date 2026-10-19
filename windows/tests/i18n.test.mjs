@@ -258,6 +258,7 @@ const NOT_TEXT = new Set([
   "unknown", // a CI state
   "Resend", // the service's name (the Mac's "Resend" is a button: send again)
   "Playing", // an MPRIS PlaybackStatus (the Music pill, this fork)
+  "Stop", // Claude Code's hook event (the Mac's "Stop" is a button)
 ]);
 
 test("no known user-facing English literal outside t() in the views and settings", () => {

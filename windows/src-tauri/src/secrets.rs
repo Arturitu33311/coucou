@@ -26,6 +26,8 @@ pub const KNOWN_KEYS: &[&str] = &[
     // among themselves.
     "presence-url",
     "presence-key",
+    // « OK Coucou »'s answers in an ElevenLabs voice.
+    "elevenlabs-api-key",
 ];
 
 fn entry(key: &str) -> Option<Entry> {
