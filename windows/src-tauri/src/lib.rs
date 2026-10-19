@@ -170,7 +170,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         log::line(format!("could not save settings: {err}"));
     }
     // The Music pill's switch decides whether the players are watched at all.
-    music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
+    music::sync_enabled(&app, music::reader_wanted(&settings.main_pill, &settings.active_integrations));
     notifs::sync_enabled(&app, settings.notification_peek);
     remote::sync_enabled(&app, settings.remote_enabled);
     clipboard::sync_enabled(&app, settings.clipboard_history);
@@ -186,7 +186,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         island::apply_geometry(&app, &settings.screen, collapsed);
     }
     integrations::settings_saved(&app, &settings.active_integrations);
-    spotify::sync(&app, &settings.active_integrations);
+    spotify::sync(&app, &settings.main_pill, &settings.active_integrations);
     if shortcuts_changed {
         shortcuts::apply(&app, &settings.shortcuts);
     }
@@ -606,21 +606,6 @@ fn read_sound(path: String) -> Result<String, String> {
 #[tauri::command]
 async fn calendar_events(days: u32) -> Result<Vec<calendar::Event>, String> {
     tauri::async_runtime::spawn_blocking(move || calendar::events(days.clamp(1, 31)))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Jinx's open pending tasks, read from her state file on the server (needs the server set).
-#[tauri::command]
-async fn jinx_tasks(shared: State<'_, Shared>) -> Result<Vec<calendar::Task>, String> {
-    let host = {
-        let s = shared.settings.lock().unwrap();
-        s.server_host.trim().to_string()
-    };
-    if host.is_empty() {
-        return Err("not-configured".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || sysmon::remote_cat(&host, ".hermes/state/pendientes.json").map(|t| calendar::parse_tasks(&t)))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1117,12 +1102,6 @@ async fn agents_list() -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Array(all))
 }
 
-/// The 5-hour / 7-day usage percentages, when the statusline has written them.
-#[tauri::command]
-fn rate_limits() -> Option<serde_json::Value> {
-    claude_sessions::limits()
-}
-
 #[tauri::command]
 async fn agent_messages(session_id: String, offset: u64) -> Result<claude_sessions::Messages, String> {
     if opencode::is_opencode(&session_id) {
@@ -1433,7 +1412,6 @@ pub fn run() {
             chat_reset,
             read_sound,
             calendar_events,
-            jinx_tasks,
             notes_load,
             notes_save,
             share_push,
@@ -1475,7 +1453,6 @@ pub fn run() {
             sys_sample,
             server_sample,
             agents_list,
-            rate_limits,
             agent_messages,
             agent_send,
             agent_start,
@@ -1626,10 +1603,7 @@ pub fn run() {
             pipe::start(handle.clone());
             phone_link::start_if_enabled(&handle);
             integrations::start(handle.clone());
-            music::sync_enabled(
-                &handle,
-                loaded.active_integrations.iter().any(|x| x == "integration_music"),
-            );
+            music::sync_enabled(&handle, music::reader_wanted(&loaded.main_pill, &loaded.active_integrations));
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
@@ -1644,7 +1618,7 @@ pub fn run() {
             // Bluetooth devices' and controllers' batteries, announced by UPower (no polling).
             #[cfg(target_os = "linux")]
             peripherals::start(&handle);
-            spotify::sync(&handle, &loaded.active_integrations);
+            spotify::sync(&handle, &loaded.main_pill, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             if loaded.autostart {
                 // Login items written before 0.5 start Coucou without --autostart:

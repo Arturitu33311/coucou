@@ -37,12 +37,18 @@ vigentes; aquí solo lo nuevo.
 8. **Android**: no se toma nada del original (decisión 1 anterior); se quitó otra vez su `Pills.kt` y se dejó nuestro
    `phone-link.yml`.
 
+9. **Lo que ya había hecho el agente de la laptop (18 oct) se conserva**: la música dentro de Jinx, los duplicados
+   quitados, el Hermes oculto, los pendientes por el servidor. Al juntarlo con este merge: `spotify.rs` mantiene el lector
+   propio de Spotify en Windows (allí no hay lector MPRIS genérico, así que Jinx no lo sustituye); la tarjeta de Claude Code
+   sin sesión muestra su información (uso del plan o hooks) **y** el botón «Open Visual Studio Code» de ellos
+   (`SHOW_OPEN_EDITOR = true`); el color de Jinx es el esmeralda en `hub-island.css`.
+
 ## Qué se comprobó aquí y qué no
 
 | Comprobación | Resultado |
 |---|---|
-| `npx tsc --noEmit`, `npm test` | limpio, 430/430 |
-| `cargo test --workspace` (con `SHERPA_ONNX_ARCHIVE_DIR`, ver abajo) | 653 + 37, 0 fallos |
+| `npx tsc --noEmit`, `npm test` | limpio, 445/445 |
+| `cargo test --workspace` (con `SHERPA_ONNX_ARCHIVE_DIR`, ver abajo) | 660 + 37, 0 fallos |
 | `npx vite build`, `scripts/check-contracts.sh`, Jinx (Python), panel VGA | ok |
 | **Dictar de verdad** (tecla, micrófono, Parakeet, pegar) | **no** (sin pantalla ni micrófono) |
 | **Notetaker, OK Coucou, la píldora y la ventana** en un escritorio | **no** |

@@ -38,6 +38,11 @@ pub const IDLE_LIMIT_S: u64 = 300;
 /// What the laptop is called on the presence server (it says "pc"; here it is LAPTOP).
 pub const SERVER_LAPTOP: &str = "pc";
 
+/// A phone holds Mochi AND is a live peer of the remote link (`live`: Some(true)). Pure.
+pub fn phone_gets_link(winner: &str, live: Option<bool>) -> bool {
+    is_phone(winner) && live == Some(true)
+}
+
 /// The presence server's name for a device, in our ids ("pc" is the laptop). Pure.
 pub fn from_server(name: &str) -> String {
     if name == SERVER_LAPTOP { LAPTOP.to_string() } else { name.to_string() }
@@ -139,7 +144,7 @@ struct Live {
     /// Jinx's background mood, as the presence server last said it (one of Mochi's emotes; None: calm or unknown).
     jinx_mood: Option<String>,
     /// What the page was last told.
-    sent: Option<(bool, bool, bool, Option<String>)>,
+    sent: Option<(bool, bool, bool, Option<String>, bool)>,
     /// This device is playing something (the page says so).
     music: bool,
     /// Claude Code is rate-limited here (the page says so): the phone's Mochi is tired too.
@@ -147,6 +152,8 @@ struct Live {
     /// Something just arrived here (a notification): the phone's Mochi is startled until then.
     news_until: Option<Instant>,
     active: bool,
+    /// A phone holds Mochi: it is a live peer of the remote link, so it already gets the sessions from it.
+    phone_holds: bool,
     peer_music: bool,
     peer_news: bool,
 }
@@ -191,6 +198,9 @@ impl Live {
         self.previous = Some(winner.clone());
         self.active = winner == LAPTOP;
         let alive = |p: &Peer| now.duration_since(p.at) <= Duration::from_millis(FRESH_MS);
+        // Only a phone that is a live peer of the link gets the sessions from it; one that only the presence
+        // server named does not.
+        self.phone_holds = phone_gets_link(&winner, self.peers.get(&winner).map(|p| alive(p)));
         self.peer_music = self.peers.values().any(|p| alive(p) && p.music);
         self.peer_news = self.peers.values().any(|p| alive(p) && p.news && now.duration_since(p.at) <= NEWS_WINDOW);
     }
@@ -198,7 +208,7 @@ impl Live {
     /// Settles, and returns the payload for the page if it differs from what the page was last told.
     fn recompute(&mut self) -> Option<Value> {
         self.settle();
-        let now_state = (self.active, self.peer_music, self.peer_news, self.jinx_mood.clone());
+        let now_state = (self.active, self.peer_music, self.peer_news, self.jinx_mood.clone(), self.phone_holds);
         if self.sent.as_ref() == Some(&now_state) {
             return None;
         }
@@ -207,7 +217,7 @@ impl Live {
     }
 
     fn payload(&self) -> Value {
-        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news, "jinxMood": self.jinx_mood })
+        json!({ "active": self.active, "peerMusic": self.peer_music, "peerNews": self.peer_news, "jinxMood": self.jinx_mood, "phone": self.phone_holds })
     }
 }
 
@@ -460,17 +470,31 @@ async fn server_heartbeat(idle_s: u64, screen_on: bool) -> Option<(String, Optio
     Some(read_answer(&body))
 }
 
-/// The inbox messages to show: newer than `after`, with text, from the last hour (as on the phone: older news
-/// is not news). `(id, payload for the island)`. Pure.
+/// A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure.
+pub fn with_age(text: &str, age_s: i64) -> String {
+    let hours = age_s / 3600;
+    if hours < 1 {
+        text.to_string()
+    } else if hours < 24 {
+        format!("🕓 {hours} h · {text}")
+    } else {
+        format!("🕓 {} d · {text}", hours / 24)
+    }
+}
+
+/// The inbox messages to show: newer than `after`, with text. Old ones are shown too, saying how old they are
+/// (as on the phone): they used to be dropped after an hour, and a briefing that came while nobody was there was
+/// lost. `(id, payload for the island)`. Pure.
 pub fn new_messages(body: &Value, after: i64, now_s: i64) -> Vec<(i64, Value)> {
     let mut out = Vec::new();
     for m in body.get("messages").and_then(Value::as_array).into_iter().flatten() {
         let id = m.get("id").and_then(Value::as_i64).unwrap_or(0);
         let text = m.get("text").and_then(Value::as_str).unwrap_or("").trim();
         let ts = m.get("ts").and_then(Value::as_i64).unwrap_or(now_s);
-        if id <= after || text.is_empty() || now_s - ts > 3600 {
+        if id <= after || text.is_empty() {
             continue;
         }
+        let text = with_age(text, now_s - ts);
         out.push((id, json!({
             "id": id,
             "text": text.chars().take(500).collect::<String>(),
@@ -595,6 +619,15 @@ pub fn start(app: &AppHandle) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_a_live_link_peer_counts_as_a_phone_that_gets_the_session() {
+        assert!(phone_gets_link("s22", Some(true)));
+        assert!(!phone_gets_link("s22", Some(false)), "silent for too long");
+        assert!(!phone_gets_link("s22", None), "named only by the presence server: no link");
+        assert!(!phone_gets_link("laptop", Some(true)));
+        assert!(!phone_gets_link("vga", None));
+    }
+
     fn beat(o: &Value) -> Beat {
         Beat {
             device: o["device"].as_str().unwrap().to_string(),
@@ -657,10 +690,19 @@ mod tests {
             {"id": 11, "text": "stale", "ts": 1000}
         ]});
         let got = new_messages(&body, 4, 10_000);
-        assert_eq!(got.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![5, 7]);
+        assert_eq!(got.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![5, 7, 11], "an old one is shown too, not dropped");
+        assert_eq!(got[2].1["text"], "🕓 2 h · stale");
         assert_eq!(got[0].1["source"], "jinx-chat");
         assert_eq!(got[1].1["kind"], "alert");
         assert_eq!(got[0].1["kind"], "info");
+    }
+
+    #[test]
+    fn a_late_message_says_how_late() {
+        assert_eq!(with_age("hola", 59 * 60), "hola");
+        assert_eq!(with_age("hola", -30), "hola", "a clock a little ahead");
+        assert_eq!(with_age("hola", 3 * 3600 + 10), "🕓 3 h · hola");
+        assert_eq!(with_age("hola", 49 * 3600), "🕓 2 d · hola");
     }
 
     #[test]

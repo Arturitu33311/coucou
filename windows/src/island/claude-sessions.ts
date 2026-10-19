@@ -67,7 +67,6 @@ export async function syncAgentsNow() {
 async function loop() {
   try {
     while (wanted()) {
-      if (tick % 5 === 0) await refreshLimits();
       if (tick++ % 2 === 0) await refreshList();
       await refreshThread();
       await sleep(POLL_MS);
@@ -85,14 +84,6 @@ export function pickFirstTarget() {
     const best = bestAgent(State.agents);
     State.chatTarget = best ? "agent" : "new";
     State.agentId = best?.id ?? null;
-  }
-}
-
-async function refreshLimits() {
-  const limits = (await Bridge.rateLimits()) ?? null;
-  if (JSON.stringify(limits) !== JSON.stringify(State.limits)) {
-    State.limits = limits;
-    State.notify();
   }
 }
 

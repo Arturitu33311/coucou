@@ -9,6 +9,7 @@ import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
 import { isComingSoon, pillDefinition } from "../core/pills";
+import { claudePlanRows } from "./usage";
 import { refreshHookPills } from "../island/integrations";
 import { readActivity, readPulse, readStats } from "../core/github";
 import { githubDetail, githubPulseCard } from "./github";
@@ -82,6 +83,13 @@ export function idleStatus(
   return configured ? ok(t("Connected · loading…")) : missing(t("Key not configured"));
 }
 
+/**
+ * Upstream's idle-card buttons. "Open Visual Studio Code" stays (it is next to Claude Code's own information, not
+ * instead of it); the hook agents' "Refresh" changes nothing you can see, so it is off. Kept in the code so merges stay additive.
+ */
+const SHOW_OPEN_EDITOR = true;
+const SHOW_HOOK_REFRESH = false;
+
 function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const info = State.integrations[task.id];
   const configured = info?.configured ?? false;
@@ -89,15 +97,22 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const status = idleStatus(task.id, info, State.settings.model);
 
   const actions = h("div", { class: "int-actions" });
+  // Claude Code and the hook agents with no session say something useful instead of a button: the plan's
+  // bars, or the last session, or what the hooks are doing (the status line below).
+  const extra = idleExtra(task);
   if (task.id === "integration_claude") {
-    actions.append(
-      h("button", {
-        class: "link-btn",
-        style: `color:${task.color}b3`,
-        text: t("Open Visual Studio Code"),
-        onclick: () => void Bridge.openInVSCode(task.sessionCwd ?? null),
-      }),
-    );
+    // The card says what Claude Code is doing (the plan's usage, or its hooks, below) and keeps upstream's
+    // "Open Visual Studio Code" next to it.
+    if (SHOW_OPEN_EDITOR) {
+      actions.append(
+        h("button", {
+          class: "link-btn",
+          style: `color:${task.color}b3`,
+          text: t("Open Visual Studio Code"),
+          onclick: () => void Bridge.openInVSCode(task.sessionCwd ?? null),
+        }),
+      );
+    }
   } else if (task.id === "agent_claude-desktop") {
     actions.append(
       h("button", {
@@ -129,6 +144,8 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const hookPill = def?.connect.kind === "hooks";
   if (isComingSoon(task.id) || def?.connect.kind === "none") {
     // Nothing to set up, and nothing to refresh.
+  } else if (hookPill && !SHOW_HOOK_REFRESH) {
+    // A hook pill has nothing to poll, and a refresh changes nothing you can see (upstream's button is kept, off).
   } else if (configured && (hookPill || def?.category !== "ai")) {
     actions.append(
       h("button", {
@@ -154,8 +171,30 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
       t(def?.subtitle ?? N_("Integration")),
     ),
     h("div", { class: "int-status" }, dot(status.color, 5), h("span", { text: status.label })),
+    ...(extra ? [extra] : []),
     actions,
   );
+}
+
+/** The last session of an agent as one line: its project and how long ago, when it is known. */
+export function lastSessionLine(task: AgentTask): string | null {
+  const s = task.lastSession;
+  if (!s) return null;
+  const project = s.cwd ? s.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "";
+  const since = timeAgo(s.at);
+  const ago = since === t("just now") ? since : t("{time} ago", { time: since });
+  return project ? `${project} · ${ago}` : ago;
+}
+
+/**
+ * What an idle card adds under its status. Claude Code: the plan's 5-hour and weekly bars when they are known.
+ * The hook agents (Antigravity, OpenCode…): their last session. Else nothing, and the status line (hooks) stays.
+ */
+function idleExtra(task: AgentTask): HTMLElement | null {
+  if (task.id === "integration_claude") return claudePlanRows();
+  if (pillDefinition(task.id)?.connect.kind !== "hooks") return null;
+  const line = lastSessionLine(task);
+  return line ? h("div", { class: "int-meta", text: `${t("Last session")}: ${line}` }) : null;
 }
 
 // ── Vercel ────────────────────────────────────────────────────────────────────

@@ -41,14 +41,24 @@ pub fn path() -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-/// The server whose gateway is asked first (an ssh host): `COUCOU_JINX_SERVER` ("" turns it off), else
-/// `server` when `~/.ssh/config` has that host (what the deploy scripts use). None: only this laptop's.
+/// The server whose gateway is asked first (an ssh host): `COUCOU_JINX_SERVER` ("" turns it off), else the
+/// Hub's one server setting (`server` by default), else `server` when `~/.ssh/config` has that host (what the
+/// deploy scripts use). None: only this laptop's.
 pub fn server_host() -> Option<String> {
     if let Ok(h) = std::env::var("COUCOU_JINX_SERVER") {
         return (!h.trim().is_empty()).then(|| h.trim().to_string());
     }
+    if let Some(h) = configured_host(&crate::settings::load().server_host) {
+        return Some(h);
+    }
     let config = std::fs::read_to_string(crate::platform::home_dir().join(".ssh").join("config")).unwrap_or_default();
     has_host(&config, "server").then(|| "server".to_string())
+}
+
+/// The setting as a host: trimmed, None when empty. Pure.
+pub fn configured_host(setting: &str) -> Option<String> {
+    let h = setting.trim();
+    (!h.is_empty()).then(|| h.to_string())
 }
 
 /// `Host` lines of an ssh config name `host` (one of their patterns, exactly). Pure.
@@ -431,6 +441,14 @@ mod tests {
         assert_eq!(f.ask("send", t, || Attempt::Broken("timeout".into()), || panic!("sent twice")), Err("timeout".into()));
         // A read is safe to ask here instead.
         assert_eq!(f.ask("history", t, || Attempt::Broken("timeout".into()), || Attempt::Output(LOCAL.into())), Ok(LOCAL.into()));
+    }
+
+    #[test]
+    fn one_server_setting_for_the_hub_and_the_gateway() {
+        assert_eq!(configured_host(" server "), Some("server".into()));
+        assert_eq!(configured_host("alan@100.92.0.1"), Some("alan@100.92.0.1".into()));
+        assert_eq!(configured_host("  "), None);
+        assert_eq!(crate::settings::Settings::default().server_host, "server", "the default");
     }
 
     #[test]

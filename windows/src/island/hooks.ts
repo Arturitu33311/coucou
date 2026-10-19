@@ -45,9 +45,12 @@ export function pillSessions(pillId: string): { live: number; working: number } 
 /** What Jinx is told about the agents while you are away from the PC (agent-notices.ts). */
 let notices = new AgentNotices();
 
-/** Away: another device has Mochi (or the panel: nobody in use). Here, the island itself shows it all. */
+/**
+ * Away: another device has Mochi (or the panel: nobody in use). Here, the island itself shows it all. Not when the
+ * device in use is a phone: it gets the session over the remote link already, and a notice would say it twice.
+ */
 function tellJinx(n: Notice | null) {
-  if (!n || Presence.active) return;
+  if (!n || Presence.active || Presence.phone) return;
   void Bridge.jinxNotify(n.text, n.kind);
 }
 
@@ -196,7 +199,7 @@ const TOOL_LABELS: Record<string, string> = {
   Grep: N_("Searches"),
   WebSearch: N_("Searches the web"),
   WebFetch: N_("Fetches"),
-  TodoWrite: N_("Tasks"),
+  TodoWrite: N_("Planning"),
   Task: N_("Agent"),
   LS: N_("Lists"),
   MultiEdit: N_("Edits"),
@@ -293,6 +296,7 @@ function clearSession(id: string) {
   t.steps = [];
   t.stepIndex = 0;
   delete t.stepSeq;
+  t.subagentsCount = 0;
   t.name = pillDefinition(id)?.name ?? t.name;
   t.pillBadge = null;
   t.sessionId = null;
@@ -470,6 +474,7 @@ function handleHook(island: Island, payload: HookPayload) {
     Sound.play("question");
     // Unlike a permission, a question holds the whole turn: the terminal shows
     // nothing until we answer. So it always takes the view, whoever had it.
+    if (State.focusBeforeApproval == null) State.focusBeforeApproval = State.focusId;
     State.setFocus(CLAUDE_ID);
     island.alert("question");
     window.setTimeout(() => {
@@ -479,6 +484,11 @@ function handleHook(island: Island, payload: HookPayload) {
       State.isPinned = false;
       island.dropPin();
       State.updateTask(CLAUDE_ID, "working");
+      const previous = State.focusBeforeApproval;
+      State.focusBeforeApproval = null;
+      if (previous && State.tasks.some((t) => t.id === previous)) {
+        State.setFocus(previous);
+      }
       if (State.view === "question") island.setView(State.defaultView());
       State.notify();
     }, QUESTION_CARD_MS);
@@ -570,6 +580,13 @@ function handleHook(island: Island, payload: HookPayload) {
         supersedeStop();
         State.updateTask(agentId, "question");
         State.appendStep(agentId, message);
+        if (State.focusId !== agentId) {
+          const name = isExternalAgent ? agentName(validAgent!) : "Claude Code";
+          State.noteMessage = `${name}: ${message.slice(0, 50)}`;
+          Sound.play("question");
+          island.mochi.triggerEmote("surprised", 2.0);
+          island.alert("note");
+        }
       }
       break;
     }
@@ -597,7 +614,10 @@ function handleHook(island: Island, payload: HookPayload) {
       Sound.play("finish");
       // A card waiting for an answer is never covered by another alert.
       if (focused && !State.pendingApproval) surface("finished", true);
-      else State.setPillBadge(agentId, "finished");
+      else {
+        State.setPillBadge(agentId, "finished");
+        island.mochi.triggerEmote("happy", 2.0);
+      }
       cancelStopTimer(agentId);
       stopTimers.set(
         agentId,
@@ -651,13 +671,21 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       break;
 
-    case "SubagentStart":
+    case "SubagentStart": {
+      const task = State.tasks.find((x) => x.id === agentId);
+      if (task) task.subagentsCount = (task.subagentsCount ?? 0) + 1;
       State.appendStep(agentId, t("+ subagent"));
+      State.notify();
       break;
+    }
 
-    case "SubagentStop":
+    case "SubagentStop": {
+      const task = State.tasks.find((x) => x.id === agentId);
+      if (task) task.subagentsCount = Math.max(0, (task.subagentsCount ?? 1) - 1);
       State.appendStep(agentId, t("• subagent done"));
+      State.notify();
       break;
+    }
 
     case "PermissionRequest": {
       // Claude Code raises a PermissionRequest for the AskUserQuestion tool itself
@@ -676,6 +704,11 @@ function handleHook(island: Island, payload: HookPayload) {
       // declined at once, so the agent asks in its own terminal.
       if (isExternalAgent && !APPROVAL_AGENTS.has(validAgent!)) {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
+        const name = agentName(validAgent!);
+        State.noteMessage = `${name} espera tu respuesta en su terminal`;
+        Sound.play("question");
+        island.mochi.triggerEmote("surprised", 2.2);
+        island.alert("note");
         break;
       }
 

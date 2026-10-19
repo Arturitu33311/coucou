@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_MAIN_PILL, MAX_DECLARED, PILL_CATALOG, PILL_CATEGORIES, availablePills, chooseMainPill,
   isComingSoon, isHookPill, mainPillChoices, orderPills, pillDefinition, sanitizeDeclared, sessionSubtitle,
-  toggleDeclared,
+  toggleDeclared, MUSIC_PILLS, foldedIntoJinx, jinxPresent, HIDDEN_PILLS,
 } from "../src/core/pills.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 import { installFakeDom } from "./fakedom.mjs";
@@ -27,7 +27,7 @@ test("the catalog holds the Mac's pills with the Claude Code label for Windows a
     ["agent_gemini", "Gemini CLI", "#8AB4F8", "agent", "Agent"],
     ["agent_copilot", "Copilot CLI", "#818CF8", "agent", "Agent"],
     ["agent_muse", "Muse Code", "#38BDF8", "agent", "Agent"],
-    ["agent_opencode", "OpenCode", "#4ADE80", "agent", "Agent"],
+    ["agent_opencode", "OpenCode", "#FACC15", "agent", "Agent"],
     ["agent_amp", "Amp", "#F59E0B", "agent", "Agent"],
     ["agent_hermes", "Hermes", "#C084FC", "agent", "Agent"],
     ["agent_claude-desktop", "Claude Desktop", "#D97757", "agent", "Agent"],
@@ -53,7 +53,7 @@ test("the catalog holds the Mac's pills with the Claude Code label for Windows a
     : row[0] === "integration_music" ? ["integration_music", "Music", "#FA2D48", "service", "Integration"]
     : row);
   fork.splice(fork.findIndex((row) => row[0] === "integration_music") + 1, 0,
-    ["integration_jinx", "Jinx", "#39FF14", "service", "Integration"]);
+    ["integration_jinx", "Jinx", "#10B981", "service", "Integration"]);
   assert.deepEqual(
     PILL_CATALOG.map((p) => [p.id, p.name, p.color, p.category, p.subtitle]),
     fork,
@@ -339,4 +339,52 @@ test("the Claude Code idle card keeps the agent title when the task has a projec
   assert.ok(card.textContent.includes("Claude Code"));
   assert.ok(!card.textContent.includes("my-project"));
   assert.ok(card.textContent.includes("Open Visual Studio Code"));
+});
+
+// ── The music lives in Jinx's pill (this fork) ───────────────────────────────
+
+test("with Jinx there, Music and Spotify are not drawn, offered or counted", () => {
+  const jinxMain = { mainPill: "integration_jinx", activeIntegrations: [] };
+  assert.ok(jinxPresent(jinxMain));
+  assert.ok(jinxPresent({ mainPill: "integration_claude", activeIntegrations: ["integration_jinx"] }));
+  assert.ok(!jinxPresent({ mainPill: "integration_claude", activeIntegrations: ["integration_music"] }));
+  for (const id of MUSIC_PILLS) {
+    assert.ok(foldedIntoJinx(jinxMain, id));
+    assert.equal(toggleDeclared(jinxMain, id), null, `${id} cannot be switched on beside Jinx`);
+  }
+  assert.ok(!foldedIntoJinx({ mainPill: "integration_claude", activeIntegrations: [] }, "integration_music"));
+  // The IDs stay in the catalog: they are contract values.
+  assert.ok(pillDefinition("integration_music") && pillDefinition("integration_spotify"));
+});
+
+test("Hermes' pill stays in the catalog but is never offered, declared or drawn in the bar", () => {
+  assert.ok(pillDefinition("agent_hermes"), "the ID is a contract");
+  assert.deepEqual(HIDDEN_PILLS, ["agent_hermes"]);
+  assert.equal(toggleDeclared({ mainPill: "integration_jinx", activeIntegrations: [] }, "agent_hermes"), null);
+  State.settings.mainPill = "integration_jinx";
+  State.settings.activeIntegrations = ["agent_hermes"];
+  State.tasks = [];
+  State.loadIntegrationTasks();
+  assert.ok(!State.tasks.some((t) => t.id === "agent_hermes"), "declared but not loaded");
+  // a session of Hermes still creates the task (its hook code is kept), but the bar does not list it
+  State.upsertExternalAgent("agent_hermes", "Hermes", "#C084FC");
+  assert.ok(State.tasks.some((t) => t.id === "agent_hermes"));
+  assert.ok(!State.otherTasks.some((t) => t.id === "agent_hermes"));
+});
+
+test("already declared Music/Spotify are tolerated but take no slot and load no pill", () => {
+  State.os = "linux"; // Music and Spotify are Linux pills
+  State.settings.mainPill = "integration_jinx";
+  State.settings.activeIntegrations = ["integration_music", "integration_spotify", "integration_n8n"];
+  State.tasks = [];
+  State.loadIntegrationTasks();
+  const loaded = State.tasks.map((t) => t.id);
+  assert.ok(loaded.includes("integration_jinx") && loaded.includes("integration_n8n"));
+  assert.ok(!loaded.includes("integration_music") && !loaded.includes("integration_spotify"));
+  // the declaration is kept as the user left it
+  assert.ok(State.settings.activeIntegrations.includes("integration_music"));
+  // four real slots are still free beside Jinx
+  const d = { mainPill: "integration_jinx", activeIntegrations: ["integration_music", "integration_spotify", "integration_n8n", "agent_gemini", "ai_anthropic"] };
+  assert.deepEqual(toggleDeclared(d, "integration_stripe")?.length, 6);
+  assert.equal(toggleDeclared({ ...d, activeIntegrations: [...d.activeIntegrations, "integration_stripe"] }, "integration_github"), null);
 });

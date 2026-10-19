@@ -104,6 +104,8 @@ class DesktopMochi {
   private onSnapshot(s: DesktopSnapshot) {
     this.snap = s;
     this.informed = true;
+    // Another device has Mochi: nothing is drawn or clickable here until he comes back.
+    this.canvas.style.display = s.away ? "none" : "";
     Sound.setEnabled(s.soundEnabled);
     Sound.setVolume(s.soundVolume);
     if (agentActive(s.state)) this.lastAgentActive = performance.now();
@@ -168,7 +170,7 @@ class DesktopMochi {
   // ── Frames ──────────────────────────────────────────────────────────────────
 
   private schedule() {
-    if (this.timer != null || !this.visible) return;
+    if (this.timer != null || !this.visible || this.snap.away) return;
     const wait = this.asleep ? ASLEEP_FRAME_MS : AWAKE_FRAME_MS;
     const due = Math.max(0, this.lastDraw + wait - performance.now());
     this.timer = window.setTimeout(() => {
@@ -186,7 +188,7 @@ class DesktopMochi {
   }
 
   private frame(now: number) {
-    if (!this.visible) return;
+    if (!this.visible || this.snap.away) return;
     const dt = Math.min(0.05, Math.max(0, (now - this.lastDraw) / 1000));
     this.lastDraw = now;
     this.updateSleep(now);

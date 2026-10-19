@@ -3,7 +3,7 @@
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
 import {
-  DEFAULT_MAIN_PILL, HOST_OS, availablePills, orderPills, pillDefinition, sanitizeDeclared,
+  DEFAULT_MAIN_PILL, HIDDEN_PILLS, HOST_OS, availablePills, notDrawn, orderPills, pillDefinition, sanitizeDeclared,
   toggleDeclared, type HostOs, type PillDefinition,
 } from "./pills";
 import type { CodexPlanUsage, PlanUsage } from "./plan";
@@ -39,6 +39,10 @@ export interface AgentTask {
   sessionId?: string | null;
   /** Claude's final message after Stop, one line; cleared when a new turn starts. */
   finalLine?: string | null;
+  /** Active subagents running concurrently under this agent session. */
+  subagentsCount?: number;
+  /** The session that just ended, so the idle card can say where and when (epoch ms). */
+  lastSession?: { cwd: string | null; at: number } | null;
 }
 
 export interface ApprovalInfo {
@@ -98,12 +102,6 @@ export interface ChatMessage {
   via?: string;
 }
 
-export interface LimitWindow {
-  pct: number;
-  /** Unix seconds. */
-  resetsAt: number | null;
-}
-
 /** A running agent session: Claude Code (as `claude agents` lists it) or OpenCode. */
 export interface AgentSession {
   id: string;
@@ -144,6 +142,8 @@ function taskFor(def: PillDefinition, colors: unknown, name = def.name): AgentTa
 
 export const MUSIC_ID = "integration_music";
 export const JINX_ID = "integration_jinx";
+/** How long Jinx's card stays on her reply before the player may take it back. */
+export const JINX_REPLY_HOLD_MS = 120_000;
 
 /** What the player reports (see music.rs). */
 export interface MusicTrack {
@@ -328,7 +328,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dodgeWindows: true,
   finishSound: "finish",
   finishSoundFile: "",
-  serverHost: "",
+  serverHost: "server",
   serverServices: "hermes-gateway,ollama,docker,tailscaled,smbd",
   jinxShare: true,
   jinxBackend: "auto",
@@ -467,8 +467,6 @@ class AppState {
   agentFilePath: string | null = null;
   /** Is there an Anthropic API key (Mochi's own chat)? null until asked. */
   mochiApi: boolean | null = null;
-  /** Claude Code's usage limits (percent used), when known. */
-  limits: { five: LimitWindow | null; seven: LimitWindow | null; ts: number } | null = null;
   /**
    * The user clicked inside the Hub's panel: the island takes the keyboard (for ← → and 1–9) until
    * the pointer leaves, the view changes or the island closes. Never taken on hover.
@@ -489,6 +487,8 @@ class AppState {
   jinxFilePath: string | null = null;
   /** A Jinx run is under way (from sending until its last event). */
   jinxBusy = false;
+  /** When Jinx's last reply landed (ms): her card keeps the floor for a while after it. */
+  jinxReplyAt = 0;
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
   /** What the Music pill is showing; null when no player has a track. */
@@ -570,8 +570,14 @@ class AppState {
     return musicPlaying(Spotify.state, sanitizeDeclared(this.settings, this.os).activeIntegrations);
   }
 
+  /** Any player is playing (generic MPRIS, or Spotify's own pill): Mochi dances to it, whichever player it is. */
+  get musicPlaying(): boolean {
+    return this.music?.status === "Playing" || this.spotifyPlaying;
+  }
+
   get otherTasks(): AgentTask[] {
-    return this.tasks.filter((t) => t.id !== this.focusId);
+    // A hidden pill (Hermes: Jinx is its face) is kept but never drawn in the bar.
+    return this.tasks.filter((t) => t.id !== this.focusId && !HIDDEN_PILLS.includes(t.id));
   }
 
   setFocus(id: string) {
@@ -690,7 +696,8 @@ class AppState {
     this.settings.mainPill = d.mainPill;
     this.settings.activeIntegrations = d.activeIntegrations;
     for (const def of availablePills(this.os)) {
-      const shouldLoad = def.id === d.mainPill || d.activeIntegrations.includes(def.id);
+      // With Jinx there, Music/Spotify are tolerated in the declaration but not drawn (the music lives in her).
+      const shouldLoad = def.id === d.mainPill || (d.activeIntegrations.includes(def.id) && !notDrawn(d, def.id));
       const idx = this.tasks.findIndex((t) => t.id === def.id);
       if (shouldLoad && idx < 0) this.tasks.push(taskFor(def, this.settings.pillColors));
       const busy = idx >= 0 && (this.tasks[idx].state !== "idle" || this.tasks[idx].steps.length > 0);
@@ -715,6 +722,7 @@ class AppState {
     if (idx < 0) return;
     if (this.isKept(id)) {
       const t = this.tasks[idx];
+      if (t.sessionCwd || t.steps.length > 0) t.lastSession = { cwd: t.sessionCwd ?? null, at: Date.now() };
       t.state = "idle";
       t.steps = [];
       t.stepIndex = 0;
@@ -797,6 +805,18 @@ class AppState {
    */
   musicHome(): boolean {
     return this.tasks.some((t) => t.id === MUSIC_ID || t.id === JINX_ID);
+  }
+
+  /**
+   * Jinx's card gives the floor to the player (this fork): something is playing and she is neither working,
+   * nor asking for approval, nor fresh from a reply (under JINX_REPLY_HOLD_MS ago).
+   */
+  musicLeadsJinx(now = Date.now()): boolean {
+    if (this.music?.status !== "Playing") return false;
+    const jinx = this.tasks.find((t) => t.id === JINX_ID);
+    if (!jinx || jinx.state !== "idle" || this.jinxBusy) return false;
+    if (this.pendingApproval?.pillId === JINX_ID || this.pendingQuestion) return false;
+    return now - this.jinxReplyAt >= JINX_REPLY_HOLD_MS;
   }
 
   /** What the pill shows now: a recording, a reminder, a bit of news, or the Pomodoro running. */

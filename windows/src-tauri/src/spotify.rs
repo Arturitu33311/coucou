@@ -495,8 +495,22 @@ pub fn spotify_installed() -> bool {
 
 /// Starts the listener when the pill is declared, stops it when it is not.
 /// Called at launch and after every settings save.
-pub fn sync(app: &AppHandle, active_integrations: &[String]) {
-    let on = active_integrations.iter().any(|id| id == PILL_ID);
+/// Spotify's own reader runs only when its pill is declared and Jinx is not there: with Jinx, Spotify comes in
+/// through the generic MPRIS reader (music.rs) and is shown inside her card. That reader is Linux's: on Windows
+/// Spotify's own reader (the system media controls) is the only one, so Jinx does not stand in for it there.
+pub fn reader_wanted(main_pill: &str, active_integrations: &[String]) -> bool {
+    let declared = active_integrations.iter().any(|id| id == PILL_ID);
+    #[cfg(target_os = "linux")]
+    return declared && !crate::music::jinx_present(main_pill, active_integrations);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = main_pill;
+        declared
+    }
+}
+
+pub fn sync(app: &AppHandle, main_pill: &str, active_integrations: &[String]) {
+    let on = reader_wanted(main_pill, active_integrations);
     #[cfg(target_os = "linux")]
     linux::sync(app, on);
     #[cfg(windows)]
@@ -1889,6 +1903,15 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spotifys_own_reader_steps_aside_when_jinx_carries_the_music() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(reader_wanted("integration_claude", &ids(&["integration_spotify"])));
+        assert!(!reader_wanted("integration_jinx", &ids(&["integration_spotify"])), "Jinx main: the generic reader has it");
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_spotify", "integration_jinx"])));
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_music"])));
+    }
 
     fn s(v: &str) -> Value {
         Value::Str(v.into())

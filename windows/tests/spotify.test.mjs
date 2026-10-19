@@ -285,6 +285,24 @@ test("the playing card: title, artist · album, times, and the controls", () => 
   assert.ok(card.el.textContent.includes("Advertisement"));
 });
 
+test("Mochi dances with Jinx's card in front, and to any player, not only a declared Spotify", () => {
+  const base = { music: true, state: "idle", mode: "expanded", view: "overview" };
+  assert.equal(islandDances({ ...base, focusId: "integration_jinx" }), true);
+  assert.equal(islandDances({ ...base, focusId: "integration_music" }), true);
+  assert.equal(islandDances({ ...base, focusId: SPOTIFY_ID }), true);
+  assert.equal(islandDances({ ...base, focusId: "integration_github" }), false);
+  assert.equal(islandDances({ ...base, focusId: "integration_jinx", view: "chat" }), false);
+  assert.equal(islandDances({ ...base, focusId: "integration_jinx", state: "error" }), false, "an error wins");
+  // State.musicPlaying: the generic MPRIS reader counts, with no Spotify pill declared
+  State.settings = { ...DEFAULT_SETTINGS, activeIntegrations: [] };
+  Spotify.state = IDLE_SPOTIFY;
+  State.music = { title: "x", artists: [], status: "Playing" };
+  assert.equal(State.musicPlaying, true);
+  State.music = { title: "x", artists: [], status: "Paused" };
+  assert.equal(State.musicPlaying, false);
+  State.music = null;
+});
+
 test("the pill shows play/pause and next on hover, only with a track", () => {
   const task = spotifyTask();
   const pill = buildSpotifyPill(task, () => {});

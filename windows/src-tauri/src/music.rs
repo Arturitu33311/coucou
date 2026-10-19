@@ -774,6 +774,18 @@ mod mpris {
     }
 }
 
+/// Jinx is "present" when she is the main pill or one of the declared ones. The music lives inside her
+/// then (her card, the minimised island's strip), so Music and Spotify are not drawn as pills of their own.
+pub fn jinx_present(main_pill: &str, active: &[String]) -> bool {
+    main_pill == "integration_jinx" || active.iter().any(|x| x == "integration_jinx")
+}
+
+/// Whether the MPRIS reader runs: Jinx carries the music, or the Music pill is declared.
+/// (Before, only the Music pill switched it on, so with Jinx alone `State.music` stayed null.)
+pub fn reader_wanted(main_pill: &str, active: &[String]) -> bool {
+    jinx_present(main_pill, active) || active.iter().any(|x| x == "integration_music")
+}
+
 /// Starts or stops watching the players, following the Music pill's switch.
 #[cfg(target_os = "linux")]
 pub fn sync_enabled(app: &AppHandle, on: bool) {
@@ -805,6 +817,22 @@ pub async fn music_control(action: String, value_ms: Option<i64>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_reader_turns_on_with_only_jinx() {
+        // main pill Jinx, nothing declared: this used to leave the reader off
+        assert!(reader_wanted("integration_jinx", &[]));
+        // Jinx declared next to another main pill
+        assert!(reader_wanted("integration_claude", &ids(&["integration_jinx"])));
+        // the Music pill alone still works
+        assert!(reader_wanted("integration_claude", &ids(&["integration_music"])));
+        // neither: stays off
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_github"])));
+    }
 
     #[test]
     fn lrc_lines_are_timed_in_milliseconds_and_sorted() {

@@ -563,6 +563,11 @@ export class Island {
     void Bridge.focusWindow(false);
     State.updateTask("integration_claude", "working");
     State.setPillBadge("integration_claude", null);
+    const previous = State.focusBeforeApproval;
+    State.focusBeforeApproval = null;
+    if (previous && State.tasks.some((t) => t.id === previous)) {
+      State.setFocus(previous);
+    }
     this.setView(State.defaultView());
   }
 
@@ -1528,7 +1533,7 @@ export class Island {
     const showOutfit = State.mode !== "expanded" || !focus?.isIntegration || focus.id === State.mainPillId || inWardrobe;
     const outfit = State.wardrobePreview ?? pickOutfit(State.settings.mochiOutfit, {
       sleeping: State.effectiveState === "sleeping",
-      musicPlaying: State.music?.status === "Playing" || State.spotifyPlaying,
+      musicPlaying: State.musicPlaying,
       focusing: pomo.phase === "focus" && pomo.running,
       eyesBusy: !calm || this.engine.eyeOverride != null || this.engine.permanentEmote != null,
       date: new Date(),
@@ -1537,7 +1542,7 @@ export class Island {
     // Dances while music plays: always in the compact island, expanded only on
     // the music pill's card (BotCanvasView, macOS). Asked every frame.
     this.engine.setDancing(islandDances({
-      music: State.spotifyPlaying,
+      music: State.musicPlaying,
       state: State.effectiveState,
       mode: State.mode,
       view: State.view,
@@ -1633,7 +1638,8 @@ export class Island {
     const musicOnScreen =
       (State.mode === "compact" && State.musicStrip() && State.pillKind() === null) ||
       (State.mode === "expanded" &&
-        (State.view === "music" || (State.view === "overview" && State.focusId === "integration_music")));
+        (State.view === "music" ||
+          (State.view === "overview" && (State.focusId === "integration_music" || (State.focusId === JINX_ID && State.musicHome())))));
     setBarsWanted(
       State.settings.musicVisualizer === "realtime" &&
         State.music?.status === "Playing" &&
@@ -1673,7 +1679,7 @@ export class Island {
         this.miniGrid.dataset.key = key;
         this.miniGrid.replaceChildren();
         for (const t of others) {
-          this.miniGrid.append(createMiniBot(t, 13));
+          this.miniGrid.append(createMiniBot(t, 13, t.id === JINX_ID ? () => State.musicHome() && State.musicPlaying : undefined));
         }
         pruneMiniBots();
       }

@@ -4,7 +4,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { JINX_ID, State, type ChatMessage } from "../core/state";
+import { JINX_ID, JINX_REPLY_HOLD_MS, State, type ChatMessage } from "../core/state";
 import { threadMessages } from "../core/jinx-thread";
 import { replyEmote } from "../core/jinx-mood";
 import type { Island } from "./island";
@@ -154,12 +154,16 @@ export function jinxSendFailed(message: string) {
 function say(content: string): ChatMessage {
   const m: ChatMessage = { id: nextId++, role: "assistant", content };
   State.jinxHistory.push(m);
+  State.jinxReplyAt = Date.now();
   return m;
 }
 
 function finish(island: Island, badge: "finished" | "error") {
   streaming = null;
   State.jinxBusy = false;
+  State.jinxReplyAt = Date.now();
+  // Once her reply has aged out, the card may hand the floor back to the player.
+  window.setTimeout(() => State.notify(), JINX_REPLY_HOLD_MS + 500);
   State.updateTask(JINX_ID, badge === "finished" ? "finished" : "error");
   if (State.focusId !== JINX_ID || State.mode !== "expanded") State.setPillBadge(JINX_ID, badge);
   window.setTimeout(() => {

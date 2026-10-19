@@ -64,9 +64,10 @@ pub struct Settings {
     /// The audio file used when `finish_sound` is "file".
     #[serde(default)]
     pub finish_sound_file: String,
-    /// The Hub's Server tab reads this machine over ssh ("" = none): an alias from ~/.ssh/config
-    /// or user@host, with key authentication.
-    #[serde(default)]
+    /// THE server: the Hub's Server tab, the pendientes and Jinx's gateway all reach this machine over ssh
+    /// ("" = none): an alias from ~/.ssh/config or user@host, with key authentication. One value for all of
+    /// them (`COUCOU_JINX_SERVER` still overrides the gateway's); `server` by default.
+    #[serde(default = "default_server_host")]
     pub server_host: String,
     /// The systemd services the Server tab shows, comma separated.
     #[serde(default = "default_server_services")]
@@ -212,6 +213,10 @@ fn default_school_folder() -> String {
     "Por clasificar".into()
 }
 
+fn default_server_host() -> String {
+    "server".into()
+}
+
 fn default_server_services() -> String {
     "hermes-gateway,ollama,docker,tailscaled,smbd".into()
 }
@@ -280,7 +285,7 @@ impl Default for Settings {
             dodge_windows: true,
             finish_sound: default_finish_sound(),
             finish_sound_file: String::new(),
-            server_host: String::new(),
+            server_host: default_server_host(),
             server_services: default_server_services(),
             jinx_share: true,
             jinx_backend: default_jinx_backend(),

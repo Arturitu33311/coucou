@@ -179,7 +179,7 @@
 .cb-foot { flex: 0 0 auto; }
 .cb .sh-list > .hub-btn { align-self: flex-start; }
 .tk-jinx { opacity: 0.55; }
-.tk-jinx.on { opacity: 1; border-color: rgba(57,255,20,0.55); color: #39FF14; }
+.tk-jinx.on { opacity: 1; border-color: rgba(16,185,129,0.55); color: #10B981; }
 
 /* ── Motion & feedback (additive) ───────────────────────────────────────── */
 .hub-body > * { transform-origin: 50% 0; }

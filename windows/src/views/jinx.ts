@@ -15,7 +15,7 @@ const STATE_LABEL: Record<string, string> = {
 
 export function buildJinxCard(actions: ViewActions): ViewHost {
   const state = h("span", { class: "jx-state" });
-  const head = h("div", { class: "jx-head" }, dot("#39FF14", 7), h("span", { text: "Jinx" }), state);
+  const head = h("div", { class: "jx-head" }, dot("#10B981", 7), h("span", { text: "Jinx" }), state);
   const reply = h("div", { class: "jx-reply" });
   const talk = h("button", { class: "btn primary", onclick: () => actions.talkToJinx() }, h("span", { text: "Talk to Jinx" }));
   const stop = h("button", { class: "btn secondary", onclick: () => actions.stopJinx() }, h("span", { text: "Stop" }));
@@ -52,6 +52,25 @@ export function buildJinxCard(actions: ViewActions): ViewHost {
       }
       // Two lines of her reply leave no room for the song: one, while it plays.
       reply.classList.toggle("short", !!m);
+    },
+  };
+}
+
+/**
+ * Jinx's card while the player has the floor (State.musicLeadsJinx): a minimal header of hers — her dot, her
+ * name, her state and the Talk button — over the player's own compact face, which is built elsewhere and mounted
+ * here as it is. Tapping the music opens the full player (the compact face already does).
+ */
+export function buildJinxMusicFace(actions: ViewActions, player: ViewHost): ViewHost {
+  const state = h("span", { class: "jx-state" });
+  const talk = h("button", { class: "btn primary jx-mini-talk", onclick: () => actions.talkToJinx() }, h("span", { text: "Talk" }));
+  const head = h("div", { class: "jx-head jx-head-mini" }, dot("#10B981", 7), h("span", { text: "Jinx" }), state, talk);
+  const el = h("div", { class: "jx-music-face" }, head, player.el);
+  return {
+    el,
+    sync() {
+      const task = State.tasks.find((t) => t.id === JINX_ID);
+      state.textContent = task ? STATE_LABEL[task.state] ?? "" : "";
     },
   };
 }

@@ -15,6 +15,7 @@ import {
   activeModel, pickModel, providerDef, visibleProviders, withModel, type ProviderDef,
 } from "../core/providers";
 import { Sound } from "../core/sound";
+import type { PlanWindow } from "../core/plan";
 import { JINX_ID, BACKEND_MOCHI, State, type ChatMessage } from "../core/state";
 import { jinxSendFailed, jinxStarted, loadJinxThread } from "../island/jinx";
 import { modeLabel } from "../core/jinx-thread";
@@ -95,17 +96,20 @@ const STATE_TEXT: Record<string, string> = {
   done: "done — waiting for your next message",
 };
 
-/** "5h 9% · 7d 59%": a window that has already reset since it was written shows a dash. */
+/**
+ * "5h 9% · 7d 59%", from the plan usage the app already has (State.planUsage: Claude Code's status line through
+ * coucou-hook --statusline). A window that has already reset since it was written shows a dash.
+ */
 function limitsText(): { text: string; title: string; level: string } {
-  const l = State.limits;
-  if (!l) return { text: "", title: "", level: "" };
-  const now = Date.now() / 1000;
-  const part = (label: string, w: typeof l.five) => {
+  const l = State.planUsage;
+  if (!l || (!l.fiveHour && !l.sevenDay)) return { text: "", title: "", level: "" };
+  const now = Date.now();
+  const part = (label: string, w: PlanWindow | undefined) => {
     if (!w) return null;
-    const stale = w.resetsAt != null && w.resetsAt < now;
-    return { label, pct: stale ? null : w.pct, resets: w.resetsAt };
+    const stale = w.resetsAt <= now;
+    return { label, pct: stale ? null : Math.round(w.usedPct), resets: Math.floor(w.resetsAt / 1000) as number | null };
   };
-  const parts = [part("5h", l.five), part("7d", l.seven)].filter((p) => p !== null);
+  const parts = [part("5h", l.fiveHour), part("7d", l.sevenDay)].filter((p) => p !== null);
   const worst = Math.max(0, ...parts.map((p) => p.pct ?? 0));
   const when = (t: number | null) => (t ? new Date(t * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "");
   return {

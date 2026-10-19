@@ -90,7 +90,7 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
   { id: "agent_muse", name: "Muse Code", color: "#38BDF8", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
   // A plugin that starts the relay, written from Settings → Agents (agents.rs).
-  { id: "agent_opencode", name: "OpenCode", color: "#4ADE80", category: "agent",
+  { id: "agent_opencode", name: "OpenCode", color: "#FACC15", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
   { id: "agent_amp", name: "Amp", color: "#F59E0B", category: "agent",
     subtitle: N_("Agent"), source: "agent", support: "yes", connect: hooks },
@@ -134,7 +134,7 @@ export const PILL_CATALOG: readonly PillDefinition[] = [
   { id: "integration_music", name: "Music", color: "#FA2D48", category: "service",
     subtitle: N_("Integration"), source: "n8n", support: "linux", connect: none },
   // Jinx (the Hermes agent, this fork) as a character: chat, replies and permission requests.
-  { id: "integration_jinx", name: "Jinx", color: "#39FF14", category: "service",
+  { id: "integration_jinx", name: "Jinx", color: "#10B981", category: "service",
     subtitle: N_("Integration"), source: "n8n", support: "yes", connect: none },
   // Spotify through MPRIS on Linux and the system media controls on Windows
   // (src-tauri/src/spotify.rs).
@@ -148,6 +148,30 @@ export const JINX_PILL = "integration_jinx";
 
 /** The always-on pill unless the user picks another (a workspace tool, or Jinx). */
 export const DEFAULT_MAIN_PILL = "integration_claude";
+
+/** The pills whose job Jinx's card takes over when she is present (this fork): what plays shows inside her. */
+export const MUSIC_PILLS = ["integration_music", "integration_spotify"];
+
+/** Jinx is present when she is the main pill or a declared one. */
+export function jinxPresent(d: Declared): boolean {
+  return d.mainPill === JINX_PILL || (d.activeIntegrations ?? []).includes(JINX_PILL);
+}
+
+/** True for a pill that is neither drawn nor offered because Jinx carries the music (it stays tolerated if declared). */
+export function foldedIntoJinx(d: Declared, id: string): boolean {
+  return MUSIC_PILLS.includes(id) && jinxPresent(d);
+}
+
+/**
+ * Pills that stay in the catalog (their IDs and the code behind them are contracts) but are not drawn, offered or
+ * counted: Jinx is the only face of Hermes in this fork.
+ */
+export const HIDDEN_PILLS = ["agent_hermes"];
+
+/** True for a pill the bar and Settings leave out: hidden for good, or folded into Jinx (Music, Spotify). */
+export function notDrawn(d: Declared, id: string): boolean {
+  return HIDDEN_PILLS.includes(id) || foldedIntoJinx(d, id);
+}
 
 /** How many declared pills may sit next to the main one. */
 export const MAX_DECLARED = 4;
@@ -228,8 +252,11 @@ export function sanitizeDeclared(d: Declared, os: HostOs = HOST_OS): Declared {
 export function toggleDeclared(d: Declared, id: string, os: HostOs = HOST_OS): string[] | null {
   if (id === d.mainPill) return null;
   if (!availablePills(os).some((p) => p.id === id)) return null;
+  if (notDrawn(d, id)) return null;
   if (d.activeIntegrations.includes(id)) return d.activeIntegrations.filter((x) => x !== id);
-  if (d.activeIntegrations.length >= MAX_DECLARED) return null;
+  // A Music/Spotify pill declared before Jinx came is tolerated but takes no slot.
+  const used = d.activeIntegrations.filter((x) => !notDrawn(d, x)).length;
+  if (used >= MAX_DECLARED) return null;
   return [...d.activeIntegrations, id];
 }
 
