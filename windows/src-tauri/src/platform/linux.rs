@@ -331,6 +331,22 @@ pub fn pointer_in_window(win: &WebviewWindow) -> Option<(f64, f64)> {
 /// How many window buttons the desktop puts on the left and on the right of a title bar
 /// (`button-layout`, e.g. `appmenu:minimize,maximize,close`: none, then three).
 fn button_sides() -> (usize, usize) {
+    // Asked four times a second by the dodge: the setting is read again every few seconds, not every time.
+    thread_local! {
+        static CACHE: std::cell::Cell<Option<(std::time::Instant, (usize, usize))>> = const { std::cell::Cell::new(None) };
+    }
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+    if let Some((at, sides)) = CACHE.with(|c| c.get()) {
+        if at.elapsed() < FRESH {
+            return sides;
+        }
+    }
+    let sides = read_button_sides();
+    CACHE.with(|c| c.set(Some((std::time::Instant::now(), sides))));
+    sides
+}
+
+fn read_button_sides() -> (usize, usize) {
     use gtk::gio;
     use gtk::gio::prelude::SettingsExt;
     let schema = "org.gnome.desktop.wm.preferences";
@@ -385,32 +401,152 @@ fn shadow_extents(w: &gtk::gdk::Window) -> (i32, i32, i32, i32) {
     (values[0].max(0), values[1].max(0), values[2].max(0), values[3].max(0))
 }
 
+/// What the window manager says about one top-level window: everything the island needs to know to decide
+/// whether the buttons of its title bar are really there to be clicked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WinInfo {
+    /// What is seen of it (its frame without the invisible shadow), in root coordinates.
+    pub visible: (i32, i32, i32, i32),
+    /// A window with a title bar of its own (`_NET_WM_WINDOW_TYPE` NORMAL or DIALOG, or none set).
+    pub normal: bool,
+    /// The process behind it (`_NET_WM_PID`).
+    pub pid: Option<u32>,
+    /// The workspace it is on (`_NET_WM_DESKTOP`; `ALL_DESKTOPS` for every one).
+    pub desktop: Option<u32>,
+    /// Iconified, full screen, or otherwise not on screen.
+    pub hidden: bool,
+}
+
+/// `_NET_WM_DESKTOP` of a window that is on every workspace.
+pub const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
+
+/// Is a window with these `_NET_WM_WINDOW_TYPE` names one that has a title bar? No type set is an ordinary window.
+pub fn has_titlebar(types: &[String]) -> bool {
+    types.is_empty()
+        || types
+            .iter()
+            .any(|t| matches!(t.as_str(), "_NET_WM_WINDOW_TYPE_NORMAL" | "_NET_WM_WINDOW_TYPE_DIALOG"))
+}
+
+/// Does `inner` lie entirely inside `outer`?
+fn within_rect(inner: [i32; 4], outer: (i32, i32, i32, i32)) -> bool {
+    inner[0] >= outer.0
+        && inner[1] >= outer.1
+        && inner[0] + inner[2] <= outer.0 + outer.2
+        && inner[1] + inner[3] <= outer.1 + outer.3
+}
+
+/// The button areas, in root coordinates, that can be clicked: those of the windows on this workspace that
+/// are up against the top of the screen and not covered by a window above them. `stack` is bottom-most first
+/// (as `window_stack` gives it); `own_pid` is Coucou itself, whose own windows (the pill, the Coucou window,
+/// Mochi on the desktop) are not someone's title bar. Pure, so it can be tested.
+pub fn clickable_button_areas(
+    stack: &[WinInfo],
+    current_desktop: Option<u32>,
+    own_pid: u32,
+    left: usize,
+    right: usize,
+) -> Vec<[i32; 4]> {
+    let on_this_desktop = |w: &WinInfo| match (w.desktop, current_desktop) {
+        (Some(d), Some(c)) => d == ALL_DESKTOPS || d == c,
+        _ => true, // not told: shown rather than lost
+    };
+    let counts = |w: &WinInfo| w.normal && !w.hidden && w.pid != Some(own_pid) && on_this_desktop(w);
+    let mut covering: Vec<(i32, i32, i32, i32)> = Vec::new();
+    let mut out = Vec::new();
+    // From the top down: what is already collected hides what lies under it.
+    for w in stack.iter().rev().filter(|w| counts(w)) {
+        for a in button_areas(w.visible, left, right) {
+            if !covering.iter().any(|c| within_rect(a, *c)) {
+                out.push(a);
+            }
+        }
+        covering.push(w.visible);
+    }
+    out
+}
+
+/// The workspace in use (`_NET_CURRENT_DESKTOP` of the root window), if the window manager says.
+fn current_desktop(screen: &gtk::gdk::Screen) -> Option<u32> {
+    cardinal(&screen.root_window()?, "_NET_CURRENT_DESKTOP")
+}
+
+/// A one-number property of a window (`CARDINAL`).
+fn cardinal(w: &gtk::gdk::Window, name: &str) -> Option<u32> {
+    let atom = gtk::gdk::Atom::intern(name);
+    let cardinal = gtk::gdk::Atom::intern("CARDINAL");
+    let (_, _, data) = gtk::gdk::property_get(w, &atom, &cardinal, 0, 8, 0)?;
+    match data.len() {
+        8 => Some(u64::from_ne_bytes(data[..8].try_into().ok()?) as u32),
+        4 => Some(u32::from_ne_bytes(data[..4].try_into().ok()?)),
+        _ => None,
+    }
+}
+
+/// The names in the window's `_NET_WM_WINDOW_TYPE`. GDK hands an `ATOM` property back already as GdkAtoms.
+fn window_types(w: &gtk::gdk::Window) -> Vec<String> {
+    let atom = gtk::gdk::Atom::intern("_NET_WM_WINDOW_TYPE");
+    let kind = gtk::gdk::Atom::intern("ATOM");
+    let Some((_, _, data)) = gtk::gdk::property_get(w, &atom, &kind, 0, 64, 0) else { return Vec::new() };
+    let word = std::mem::size_of::<usize>();
+    let known = [
+        "_NET_WM_WINDOW_TYPE_NORMAL",
+        "_NET_WM_WINDOW_TYPE_DIALOG",
+        "_NET_WM_WINDOW_TYPE_DOCK",
+        "_NET_WM_WINDOW_TYPE_DESKTOP",
+        "_NET_WM_WINDOW_TYPE_UTILITY",
+        "_NET_WM_WINDOW_TYPE_TOOLBAR",
+        "_NET_WM_WINDOW_TYPE_MENU",
+        "_NET_WM_WINDOW_TYPE_SPLASH",
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        "_NET_WM_WINDOW_TYPE_TOOLTIP",
+        "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+        "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+        "_NET_WM_WINDOW_TYPE_COMBO",
+        "_NET_WM_WINDOW_TYPE_DND",
+    ];
+    let named: Vec<(usize, &str)> = known.iter().map(|n| (gtk::gdk::Atom::intern(n).value(), *n)).collect();
+    data.chunks_exact(word)
+        .map(|c| usize::from_ne_bytes(c.try_into().unwrap_or([0; std::mem::size_of::<usize>()])))
+        .map(|v| named.iter().find(|(a, _)| *a == v).map_or_else(|| "other".to_string(), |(_, n)| (*n).to_string()))
+        .collect()
+}
+
+/// Every top-level window on screen as the window manager describes it, bottom-most first.
+fn window_infos(screen: &gtk::gdk::Screen, own: Option<&gtk::gdk::Window>) -> Vec<WinInfo> {
+    use gtk::gdk::WindowState;
+    screen
+        .window_stack()
+        .into_iter()
+        .filter(|w| own.map_or(true, |o| w != o))
+        .map(|w| {
+            let f = w.frame_extents();
+            let (sl, sr, st, sb) = shadow_extents(&w);
+            WinInfo {
+                visible: (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb),
+                normal: has_titlebar(&window_types(&w)),
+                pid: cardinal(&w, "_NET_WM_PID"),
+                desktop: cardinal(&w, "_NET_WM_DESKTOP"),
+                hidden: !w.is_visible() || w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN),
+            }
+        })
+        .collect()
+}
+
 /// The button areas of every window up against the top of the screen, in the coordinates of
 /// a window at `(ox, oy)` of size `(own_w, own_h)`; only those that reach into it.
 fn collect_zones(own: Option<&gtk::gdk::Window>, ox: i32, oy: i32, own_w: i32, own_h: i32) -> Vec<[f64; 4]> {
-    use gtk::gdk::WindowState;
     let Some(screen) = gtk::gdk::Screen::default() else { return Vec::new() };
     let (left, right) = button_sides();
-    let mut zones = Vec::new();
-    for w in screen.window_stack() {
-        if own.is_some_and(|o| &w == o) || !w.is_visible() {
-            continue;
-        }
-        if w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN) {
-            continue;
-        }
-        let f = w.frame_extents();
-        let (sl, sr, st, sb) = shadow_extents(&w);
-        // What is seen of the window: its frame without the shadow.
-        let visible = (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb);
-        for a in button_areas(visible, left, right) {
+    let stack = window_infos(&screen, own);
+    clickable_button_areas(&stack, current_desktop(&screen), std::process::id(), left, right)
+        .into_iter()
+        .filter_map(|a| {
             let (zx, zy) = (a[0] - ox, a[1] - oy);
-            if zx + a[2] > 0 && zx < own_w && zy + a[3] > 0 && zy < own_h {
-                zones.push([f64::from(zx), f64::from(zy), f64::from(a[2]), f64::from(a[3])]);
-            }
-        }
-    }
-    zones
+            (zx + a[2] > 0 && zx < own_w && zy + a[3] > 0 && zy < own_h)
+                .then(|| [f64::from(zx), f64::from(zy), f64::from(a[2]), f64::from(a[3])])
+        })
+        .collect()
 }
 
 /// Where the buttons of the windows up against the top of the screen are, in the island
@@ -998,8 +1134,77 @@ mod zone_tests {
     #[ignore]
     fn real_session_probe() {
         gtk::init().expect("gtk");
+        let screen = gtk::gdk::Screen::default().expect("screen");
+        println!("button layout (left, right): {:?}; current workspace: {:?}", button_sides(), current_desktop(&screen));
+        for w in window_infos(&screen, None) {
+            println!("{w:?} -> areas {:?}", button_areas(w.visible, button_sides().0, button_sides().1));
+        }
         let zones = collect_zones(None, 460, 0, 1000, 320);
-        println!("button areas reaching a 1000x320 window at x=460: {zones:?}");
+        println!("button areas that can be clicked and reach a 1000x320 window at x=460: {zones:?}");
+    }
+
+    fn win(visible: (i32, i32, i32, i32)) -> WinInfo {
+        WinInfo { visible, normal: true, pid: Some(100), desktop: Some(0), hidden: false }
+    }
+
+    #[test]
+    fn a_window_hidden_behind_another_has_no_buttons_to_reach() {
+        // A tiled window under a maximized browser: its buttons are there but nobody can click them.
+        let tiled = win((0, 0, 960, 1080));
+        let maximized = win((0, 0, 1920, 1080));
+        let areas = clickable_button_areas(&[tiled.clone(), maximized.clone()], Some(0), 1, 0, 3);
+        assert_eq!(areas, vec![[1920 - 3 * BUTTON_W, 0, 3 * BUTTON_W, TITLEBAR_H]], "only the maximized window's");
+        // The other way round (the tiled one on top, over a smaller one) its own buttons are there.
+        let areas = clickable_button_areas(&[maximized, tiled], Some(0), 1, 0, 3);
+        assert_eq!(areas.len(), 2, "the tiled one's, and the maximized one's at the far end it does not cover");
+        assert!(areas.contains(&[960 - 3 * BUTTON_W, 0, 3 * BUTTON_W, TITLEBAR_H]));
+    }
+
+    #[test]
+    fn a_window_beside_another_keeps_its_buttons() {
+        let left = win((0, 0, 960, 1080));
+        let right = win((960, 0, 960, 1080));
+        assert_eq!(clickable_button_areas(&[left, right], Some(0), 1, 0, 3).len(), 2);
+    }
+
+    #[test]
+    fn windows_that_are_not_there_or_not_ordinary_or_ours_do_not_count() {
+        let base = win((0, 0, 960, 1080));
+        let counted = |w: WinInfo| clickable_button_areas(&[w], Some(0), 1, 0, 3).len();
+        assert_eq!(counted(base.clone()), 1);
+        assert_eq!(counted(WinInfo { hidden: true, ..base.clone() }), 0, "minimised or full screen");
+        assert_eq!(counted(WinInfo { normal: false, ..base.clone() }), 0, "a dock, the desktop icons, a popup");
+        assert_eq!(counted(WinInfo { pid: Some(1), ..base.clone() }), 0, "Coucou's own windows (the pill, the Coucou window)");
+        assert_eq!(counted(WinInfo { desktop: Some(2), ..base.clone() }), 0, "on another workspace");
+        assert_eq!(counted(WinInfo { desktop: Some(ALL_DESKTOPS), ..base.clone() }), 1, "on every workspace");
+        assert_eq!(counted(WinInfo { desktop: None, ..base.clone() }), 1, "not told: shown rather than lost");
+        assert_eq!(clickable_button_areas(&[base], None, 1, 0, 3).len(), 1, "workspace unknown: shown");
+    }
+
+    #[test]
+    fn a_hidden_or_foreign_window_does_not_hide_what_is_under_it() {
+        // A minimised, a dock and another workspace's window lie "above" in the list but cover nothing.
+        let under = win((0, 0, 960, 1080));
+        let big = (0, 0, 1920, 1080);
+        let covers_nothing = [
+            WinInfo { hidden: true, ..win(big) },
+            WinInfo { normal: false, ..win(big) },
+            WinInfo { desktop: Some(3), ..win(big) },
+        ];
+        for over in covers_nothing {
+            assert_eq!(clickable_button_areas(&[under.clone(), over], Some(0), 1, 0, 3).len(), 1);
+        }
+    }
+
+    #[test]
+    fn only_windows_with_a_title_bar_have_buttons() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(has_titlebar(&[]), "no type set is an ordinary window");
+        assert!(has_titlebar(&names(&["_NET_WM_WINDOW_TYPE_NORMAL"])));
+        assert!(has_titlebar(&names(&["_NET_WM_WINDOW_TYPE_DIALOG", "_NET_WM_WINDOW_TYPE_NORMAL"])));
+        for other in ["_NET_WM_WINDOW_TYPE_DOCK", "_NET_WM_WINDOW_TYPE_DESKTOP", "_NET_WM_WINDOW_TYPE_NOTIFICATION", "other"] {
+            assert!(!has_titlebar(&names(&[other])), "{other}");
+        }
     }
 
     #[test]

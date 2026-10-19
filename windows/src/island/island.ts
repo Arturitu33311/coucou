@@ -1028,6 +1028,7 @@ export class Island {
     const w = this.width.value;
     const rest: Box = { x: (this.viewportW() - w) / 2, y: 0, w, h: this.height.value };
     this.setDodgeTarget(this.dodger.update(now, this.pointer, rest, this.zones, (this.viewportW() - w) / 2));
+    if (this.dodger.takeNoRoom()) void Bridge.log(`dodge: no room to step aside (island ${Math.round(w)} px, window ${Math.round(this.viewportW())} px)`);
     // The pointer resting is silence, not an event: look again when the waiting is over.
     if (this.dodgeTimer != null) window.clearTimeout(this.dodgeTimer);
     const wait = this.dodger.pending(now);
