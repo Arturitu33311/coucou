@@ -1,0 +1,328 @@
+[
+ {
+  "action": "state",
+  "args": {
+   "x": 1
+  },
+  "ok": true,
+  "clean": {}
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "next",
+   "evil": 1
+  },
+  "ok": true,
+  "clean": {
+   "action": "next"
+  }
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "play_pause"
+  },
+  "ok": true,
+  "clean": {
+   "action": "play_pause"
+  }
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "set_volume",
+   "volume": 140
+  },
+  "ok": true,
+  "clean": {
+   "action": "set_volume",
+   "volume": 100.0
+  }
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "set_volume",
+   "volume": -3
+  },
+  "ok": true,
+  "clean": {
+   "action": "set_volume",
+   "volume": 0.0
+  }
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "set_volume",
+   "volume": "loud"
+  },
+  "ok": false
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "set_volume",
+   "volume": true
+  },
+  "ok": false
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "set_volume"
+  },
+  "ok": false
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "search",
+   "query": "  café  del mar "
+  },
+  "ok": true,
+  "clean": {
+   "action": "search",
+   "query": "café del mar"
+  }
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "search",
+   "query": "   "
+  },
+  "ok": false
+ },
+ {
+  "action": "music",
+  "args": {
+   "action": "format"
+  },
+  "ok": false
+ },
+ {
+  "action": "music",
+  "args": {},
+  "ok": false
+ },
+ {
+  "action": "pills",
+  "args": {},
+  "ok": true,
+  "clean": {
+   "action": "list"
+  }
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "list"
+  },
+  "ok": true,
+  "clean": {
+   "action": "list"
+  }
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "add",
+   "names": "GitHub"
+  },
+  "ok": true,
+  "clean": {
+   "action": "add",
+   "names": [
+    "GitHub"
+   ]
+  }
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "add",
+   "names": [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e"
+   ]
+  },
+  "ok": true,
+  "clean": {
+   "action": "add",
+   "names": [
+    "a",
+    "b",
+    "c",
+    "d"
+   ]
+  }
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "set_main",
+   "names": [
+    "Jinx",
+    "Music"
+   ]
+  },
+  "ok": true,
+  "clean": {
+   "action": "set_main",
+   "names": [
+    "Jinx"
+   ]
+  }
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "add",
+   "names": []
+  },
+  "ok": false
+ },
+ {
+  "action": "pills",
+  "args": {
+   "action": "nuke",
+   "names": [
+    "x"
+   ]
+  },
+  "ok": false
+ },
+ {
+  "action": "mochi",
+  "args": {
+   "emote": "love"
+  },
+  "ok": true,
+  "clean": {
+   "emote": "love",
+   "seconds": 3.0
+  }
+ },
+ {
+  "action": "mochi",
+  "args": {
+   "emote": "love",
+   "seconds": 99
+  },
+  "ok": true,
+  "clean": {
+   "emote": "love",
+   "seconds": 8.0
+  }
+ },
+ {
+  "action": "mochi",
+  "args": {
+   "emote": "love",
+   "seconds": 0
+  },
+  "ok": true,
+  "clean": {
+   "emote": "love",
+   "seconds": 1.0
+  }
+ },
+ {
+  "action": "mochi",
+  "args": {
+   "emote": "dance"
+  },
+  "ok": false
+ },
+ {
+  "action": "hub",
+  "args": {
+   "tool": "tasks"
+  },
+  "ok": true,
+  "clean": {
+   "tool": "tasks"
+  }
+ },
+ {
+  "action": "hub",
+  "args": {
+   "tool": "../../etc"
+  },
+  "ok": false
+ },
+ {
+  "action": "open_app",
+  "args": {
+   "name": "  Firefox  ",
+   "path": "/bin/sh",
+   "args": [
+    "--evil"
+   ]
+  },
+  "ok": true,
+  "clean": {
+   "name": "Firefox"
+  }
+ },
+ {
+  "action": "open_app",
+  "args": {},
+  "ok": false
+ },
+ {
+  "action": "open_app",
+  "args": {
+   "name": "   "
+  },
+  "ok": false
+ },
+ {
+  "action": "close_app",
+  "args": {
+   "name": "Spotify"
+  },
+  "ok": true,
+  "clean": {
+   "name": "Spotify"
+  }
+ },
+ {
+  "action": "close_app",
+  "args": {
+   "name": 7
+  },
+  "ok": false
+ },
+ {
+  "action": "approve",
+  "args": {
+   "id": 1
+  },
+  "ok": false
+ },
+ {
+  "action": "shell",
+  "args": {
+   "cmd": "rm -rf /"
+  },
+  "ok": false
+ },
+ {
+  "action": "prepare_email",
+  "args": {
+   "recipient": "a@b.c"
+  },
+  "ok": false
+ },
+ {
+  "action": "",
+  "args": {},
+  "ok": false
+ }
+]

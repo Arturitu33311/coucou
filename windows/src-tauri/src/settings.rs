@@ -58,6 +58,12 @@ pub struct Settings {
     /// The island steps aside when the pointer goes for the buttons of a window behind it.
     #[serde(default = "default_true")]
     pub dodge_windows: bool,
+    /// Jinx may control the island from the server (music, pills, Mochi, the Hub, apps): island_cmd.rs.
+    #[serde(default = "default_true")]
+    pub jinx_island: bool,
+    /// The apps Jinx may ask to close, by name, separated by commas. Closing is never open-ended: any other app is refused.
+    #[serde(default = "default_jinx_close_apps")]
+    pub jinx_close_apps: String,
     /// The sound for "an agent finished": one of the built-in names, "none", or "file".
     #[serde(default = "default_finish_sound")]
     pub finish_sound: String,
@@ -217,6 +223,10 @@ fn default_server_host() -> String {
     "server".into()
 }
 
+fn default_jinx_close_apps() -> String {
+    "Spotify, VLC, Rhythmbox, Celluloid, Totem, Document Viewer, Image Viewer, Calculator, Files, Text Editor".into()
+}
+
 fn default_server_services() -> String {
     "hermes-gateway,ollama,docker,tailscaled,smbd".into()
 }
@@ -283,6 +293,8 @@ impl Default for Settings {
             hover_open_delay: default_hover_delay(),
             island_offset_x: 0,
             dodge_windows: true,
+            jinx_island: true,
+            jinx_close_apps: default_jinx_close_apps(),
             finish_sound: default_finish_sound(),
             finish_sound_file: String::new(),
             server_host: default_server_host(),
@@ -596,6 +608,8 @@ mod tests {
   "hoverOpenDelay": 1.5,
   "islandOffsetX": -120,
   "dodgeWindows": false,
+  "jinxIsland": false,
+  "jinxCloseApps": "Spotify, Notes",
   "finishSound": "file",
   "finishSoundFile": "/home/me/done.ogg",
   "serverHost": "jinx",
@@ -1129,6 +1143,8 @@ mod tests {
                 "hoverOpenDelay",
                 "islandOffsetX",
                 "dodgeWindows",
+                "jinxIsland",
+                "jinxCloseApps",
                 "finishSound",
                 "finishSoundFile",
                 "serverHost",

@@ -16,6 +16,11 @@ Endpoints (127.0.0.1:8897 + IP tailnet, clave X-Mochi-Key salvo localhost):
        -> {ok, id, active_device, watched}   watched=false: nadie mirando, avisar también por Telegram
   GET  /api/mochi/inbox?since_id=N  -> {messages, active_device}
   POST /api/mochi/ack {"id","by"}
+  POST /api/island/command {"action","args"}   (Jinx → la isla del PC; solo lo de island_commands.py)
+       -> {ok, id}  |  409 pc_offline  |  429 demasiadas  |  400 con el motivo
+  GET  /api/island/poll?device=pc&wait=N       (el PC pregunta por órdenes; espera hasta N s, máx. 25)
+  POST /api/island/result {"id","ok","message","data"}   (el PC dice cómo le fue)
+  GET  /api/island/result?id=N&wait=N          (quien pidió espera el resultado)
   GET  /health
 """
 from __future__ import annotations
@@ -23,7 +28,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
+from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -35,6 +42,10 @@ try:
     from jinx_baseline import load_recent_events, mood_now, parse_emotion_state
 except ImportError:  # sin el módulo el servidor sigue: simplemente no hay ánimo de fondo
     load_recent_events = mood_now = parse_emotion_state = None
+try:
+    import island_commands
+except ImportError:  # sin el módulo no se aceptan órdenes para la isla; todo lo demás sigue
+    island_commands = None
 
 BASE = Path(__file__).parent
 STATE_PATH = BASE / "mochi_presence_state.json"
@@ -66,6 +77,15 @@ MOODS = {"Idle", "Happy", "Sleepy", "Alert", "Listening", "Celebrating",
          "Flustered"}
 KINDS = {"info", "warn", "alert"}
 
+# Órdenes de Jinx para la isla del PC. En memoria: si el servidor se reinicia se pierden, y está bien (caducan solas).
+ISLAND_DEVICE = "pc"      # lo único que puede ejecutarlas
+ISLAND_TTL = 90           # s: una orden que el PC no recogió en este tiempo caduca
+ISLAND_RATE = 30          # órdenes por minuto, de todas
+ISLAND_MAX_WAIT = 25      # s: lo más que espera una petición larga
+ISLAND_KEEP = 100         # resultados guardados
+island = {"next_id": 1, "queue": [], "results": {}, "stamps": [], "pc_polled": 0.0}
+island_cv = threading.Condition()
+
 state = {
     "presence": {},      # device -> {idle_seconds, screen_on, ts}
     "inbox": [],         # [{id, text, mood, kind, source, ts, acked_by}]
@@ -90,6 +110,89 @@ def save():
             ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
+
+def pc_alive(now: float) -> bool:
+    """El PC late (con la pantalla como esté) o está esperando órdenes: hay a quién pedirle cosas."""
+    p = state["presence"].get(ISLAND_DEVICE)
+    beating = bool(p) and now - p["ts"] < HEARTBEAT_TIMEOUT
+    return beating or now - island["pc_polled"] < ISLAND_MAX_WAIT + 15
+
+
+def island_submit(action, args, now):
+    """Encola una orden. (código HTTP, cuerpo). Todo se valida aquí; el PC lo valida otra vez."""
+    if island_commands is None:
+        return 503, {"error": "este servidor no tiene island_commands.py"}
+    ok, clean = island_commands.validate(action, args)
+    if not ok:
+        return 400, {"error": clean}
+    with island_cv:
+        if not pc_alive(now):
+            return 409, {"error": "pc_offline", "message": "el PC no está conectado ahora mismo"}
+        island["stamps"] = [t for t in island["stamps"] if now - t < 60]
+        if len(island["stamps"]) >= ISLAND_RATE:
+            return 429, {"error": "demasiadas órdenes por minuto"}
+        island["stamps"].append(now)
+        cmd = {"id": island["next_id"], "action": action, "args": clean, "ts": now, "sent": False}
+        island["next_id"] += 1
+        island["queue"].append(cmd)
+        island_cv.notify_all()
+    return 200, {"ok": True, "id": cmd["id"]}
+
+
+def _island_expire(now):
+    """Las órdenes que el PC no recogió a tiempo caducan, y quien espera su resultado lo sabe. Con el candado."""
+    for cmd in [c for c in island["queue"] if not c["sent"] and now - c["ts"] > ISLAND_TTL]:
+        island["queue"].remove(cmd)
+        island["results"][cmd["id"]] = {"ok": False, "message": "caducó: el PC no la recogió", "ts": now}
+    for old in sorted(island["results"])[:-ISLAND_KEEP]:
+        island["results"].pop(old, None)
+    island["queue"] = [c for c in island["queue"] if now - c["ts"] < ISLAND_TTL * 4]
+
+
+def island_poll(wait, clock=time.time):
+    """Las órdenes nuevas para el PC; espera hasta `wait` s a que llegue alguna. Las marca entregadas."""
+    wait = max(0.0, min(float(wait), ISLAND_MAX_WAIT))
+    end = clock() + wait
+    with island_cv:
+        while True:
+            now = clock()
+            island["pc_polled"] = now
+            _island_expire(now)
+            fresh = [c for c in island["queue"] if not c["sent"]]
+            if fresh or now >= end:
+                for c in fresh:
+                    c["sent"] = True
+                return [{"id": c["id"], "action": c["action"], "args": c["args"]} for c in fresh]
+            island_cv.wait(timeout=min(1.0, end - now))
+
+
+def island_result_post(cid, ok, message, data, now):
+    with island_cv:
+        known = any(c["id"] == cid for c in island["queue"])
+        if not known and cid not in island["results"]:
+            return False
+        island["results"][cid] = {"ok": bool(ok), "message": str(message or "")[:500], "ts": now}
+        if isinstance(data, (dict, list)) and len(json.dumps(data)) <= 12000:
+            island["results"][cid]["data"] = data
+        island["queue"] = [c for c in island["queue"] if c["id"] != cid]
+        island_cv.notify_all()
+    return True
+
+
+def island_result_wait(cid, wait, clock=time.time):
+    """El resultado de una orden; espera hasta `wait` s. None si aún no hay."""
+    wait = max(0.0, min(float(wait), ISLAND_MAX_WAIT))
+    end = clock() + wait
+    with island_cv:
+        while True:
+            now = clock()
+            _island_expire(now)
+            if cid in island["results"]:
+                return island["results"][cid]
+            if now >= end:
+                return None
+            island_cv.wait(timeout=min(1.0, end - now))
 
 
 def hour_of(now: float) -> int:
@@ -233,6 +336,24 @@ class Handler(BaseHTTPRequestHandler):
                 "active_device": active_device(now),
                 "ts": int(now),
             })
+        if self.path.startswith("/api/island/"):
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            try:
+                wait = float((q.get("wait") or ["0"])[0])
+            except ValueError:
+                wait = 0.0
+            if u.path == "/api/island/poll":
+                if (q.get("device") or [ISLAND_DEVICE])[0] != ISLAND_DEVICE:
+                    return self._send(400, {"error": "device debe ser pc"})
+                return self._send(200, {"ok": True, "commands": island_poll(wait)})
+            if u.path == "/api/island/result":
+                try:
+                    cid = int((q.get("id") or ["0"])[0])
+                except ValueError:
+                    return self._send(400, {"error": "id inválido"})
+                r = island_result_wait(cid, wait)
+                return self._send(200, {"ok": True, "done": r is not None, "result": r})
         return self._send(404, {"error": "not found"})
 
     def do_OPTIONS(self):
@@ -312,6 +433,19 @@ class Handler(BaseHTTPRequestHandler):
                     save()
                     return self._send(200, {"ok": True})
             return self._send(404, {"error": "id desconocido"})
+        if self.path == "/api/island/command":
+            b = self._body()
+            if not isinstance(b, dict):
+                return self._send(400, {"error": "json requerido"})
+            code, body = island_submit(b.get("action"), b.get("args"), now)
+            return self._send(code, body)
+        if self.path == "/api/island/result":
+            b = self._body(limit=16384)
+            if not isinstance(b, dict) or not isinstance(b.get("id"), int):
+                return self._send(400, {"error": "id requerido"})
+            if not island_result_post(b["id"], b.get("ok"), b.get("message"), b.get("data"), now):
+                return self._send(404, {"error": "id desconocido"})
+            return self._send(200, {"ok": True})
         return self._send(404, {"error": "not found"})
 
     def log_message(self, fmt, *args):

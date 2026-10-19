@@ -11,6 +11,9 @@ import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerJinxHandlers } from "./island/jinx";
+import { registerIslandCommands } from "./island/island-cmd";
+import { selectTool } from "./hub/hub";
+import { TOOLS } from "./hub/tools";
 import { registerPomodoro } from "./hub/pomodoro";
 import { registerTasks, openCount, dueCount } from "./hub/tasks";
 import { registerDictation } from "./hub/dictation";
@@ -213,6 +216,7 @@ async function main() {
   registerIntegrationHandlers(island);
   registerMusicHandlers(island);
   registerJinxHandlers(island);
+  registerIslandCommands(island, { ids: () => TOOLS.map((t) => t.id), select: selectTool });
   registerPomodoro(island);
   registerTasks(island);
   registerDictation(island);

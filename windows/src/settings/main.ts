@@ -1193,6 +1193,27 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
         "Nothing else on the server is touched." })),
+    h("div", { class: "row" }, h("label", { text: "Jinx runs the island" }),
+      toggle(settings.jinxIsland !== false, (v) => { settings.jinxIsland = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Jinx can, when you ask her in the chat: play or pause the music, show or hide pills, make Mochi react, open a " +
+        "Hub tool, open an app and close the ones listed below. She cannot approve permissions, send mail or change " +
+        "settings. It needs the server's presence service (jinx/jinx-assist/deploy-island.sh)." })),
+    h("div", { class: "row" }, h("label", { text: "Apps Jinx may close" }),
+      (() => {
+        const apps = h("input", {
+          type: "text", placeholder: "Spotify, VLC, Files", spellcheck: "false",
+          value: settings.jinxCloseApps ?? "", style: "flex:1 1 auto;min-width:0",
+        }) as HTMLInputElement;
+        apps.addEventListener("change", () => {
+          settings.jinxCloseApps = apps.value.trim();
+          void save();
+        });
+        return apps;
+      })(),
+      h("span", { class: "hint", text:
+        "Names of installed apps, separated by commas. She asks the app to close its window (it asks to save what is " +
+        "unsaved); any app not listed here is refused. Needs wmctrl (sudo apt install wmctrl)." })),
     h("div", { class: "row" }, h("label", { text: "Notifications" }),
       toggle(settings.notificationPeek === true, (v) => { settings.notificationPeek = v; void save(); }),
       h("span", { class: "hint", text:

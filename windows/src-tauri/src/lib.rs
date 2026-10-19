@@ -30,6 +30,7 @@ mod log;
 mod music;
 mod net;
 mod hub_notes;
+mod island_cmd;
 mod notes;
 mod notifs;
 mod openai_compat;
@@ -1612,6 +1613,8 @@ pub fn run() {
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);
+            // Jinx's orders for the island (music, pills, Mochi, the Hub, apps), from the server's queue.
+            island_cmd::start(&handle);
             // Battery, mains power and internet, announced by the system itself (no polling).
             #[cfg(target_os = "linux")]
             sysstate::start(&handle);

@@ -105,6 +105,10 @@ function info(): string {
     claudePlan: plan(State.planUsage),
     codexPlan: plan(State.codexPlanUsage),
     spotify: s.running && s.track ? { playing: s.playing, title: s.track.title, artist: s.track.artist } : null,
+    // Whatever player is running (this fork: the MPRIS reader that Jinx's pill carries), not only Spotify.
+    nowPlaying: State.music
+      ? { playing: State.music.status === "Playing", title: State.music.title, artists: State.music.artists, player: State.music.player }
+      : null,
     services: serviceCards().map((c) => ({ service: c.title, headline: c.headline, about: c.reason, items: c.items })),
   });
 }

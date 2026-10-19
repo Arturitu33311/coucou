@@ -105,6 +105,29 @@ waits 500 s and the phone and PC 520 s.
 
 The fingerprint is checked on the phone only: the server trusts the phone's ssh key, as it does for everything else.
 
+### Jinx runs the island (the server's order queue)
+
+Jinx (Hermes) lives on the server and cannot reach the PC, so the presence server keeps her orders in a queue and the
+PC asks for them (a long request the server answers the moment an order arrives; nothing is pushed in, the laptop may be
+off). One closed list of what she may ask, **checked three times** (her tool, the server, the PC) because what she reads
+is not to be trusted:
+
+| | where |
+|---|---|
+| The list and its rules (Python) | `jinx/jinx-assist/island_commands.py` |
+| The same rules (Rust) | `windows/src-tauri/src/island_cmd.rs`; both held to `island-vectors.json` (`scripts/check-contracts.sh`) |
+| The queue: `POST /api/island/command`, `GET /api/island/poll`, `POST`/`GET /api/island/result` | `jinx/vga-panel/server/mochi_presence.py` (in memory; an order the PC does not take in 90 s expires; 30 a minute) |
+| Her tool and its skill | `jinx/jinx-assist/jinx_island.py`, `island/SKILL.md` → `~/.hermes/skills/devops/coucou-island/` |
+| The actions | « OK Coucou »'s `voice::run_tool` (music, pills, open_app): one layer, two ways in; Mochi's mood and the Hub on the page (`island/island-cmd.ts`) |
+
+Actions: `state` (what the island shows, now playing included), `music` (play/pause, next, previous, volume, search),
+`pills` (list, add, remove, set main), `mochi` (a mood for 1–8 s), `hub` (open a tool), `open_app`, `close_app`.
+Never in the list: approving or denying an agent's permission, sending mail, settings, keys, addresses, files, commands.
+`close_app` asks the window to close (`wmctrl -ic`: the app asks to save) and only for the apps in Settings → Jinx and
+Hub → *Apps Jinx may close* (whole names; Coucou itself never). Settings → *Jinx runs the island* turns all of it off.
+Deploy from the laptop: `jinx/jinx-assist/deploy-island.sh` (the tool, and the presence server with the queue).
+The PC needs `wmctrl` to close apps (`sudo apt install wmctrl`). Only the PC executes orders; the phones do not.
+
 ### Which device has Mochi (presence contract)
 
 One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.

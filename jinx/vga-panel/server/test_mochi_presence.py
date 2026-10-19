@@ -119,6 +119,104 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(len(out["messages"]), 1)
 
 
+class IslandTest(unittest.TestCase):
+    """Las órdenes de Jinx para la isla del PC: se encolan, el PC las recoge y contesta, quien las pidió ve el resultado."""
+
+    def setUp(self):
+        self.m = load()
+        self.now = time.time()
+        self.m.state["presence"]["pc"] = {"idle_seconds": 1, "screen_on": True, "ts": self.now}
+
+    def test_an_order_waits_for_the_pc_which_takes_it_once_and_answers(self):
+        code, body = self.m.island_submit("music", {"action": "next", "x": 1}, self.now)
+        self.assertEqual((code, body["ok"]), (200, True))
+        cid = body["id"]
+        got = self.m.island_poll(0)
+        self.assertEqual(got, [{"id": cid, "action": "music", "args": {"action": "next"}}])
+        self.assertEqual(self.m.island_poll(0), [], "delivered once")
+        self.assertIsNone(self.m.island_result_wait(cid, 0))
+        self.assertTrue(self.m.island_result_post(cid, True, "done", {"a": 1}, self.now))
+        r = self.m.island_result_wait(cid, 0)
+        self.assertEqual((r["ok"], r["message"], r["data"]), (True, "done", {"a": 1}))
+        self.assertFalse(self.m.island_result_post(9999, True, "x", None, self.now), "an id that was never given")
+
+    def test_what_is_not_on_the_list_is_refused_before_it_is_queued(self):
+        for action, args in (("approve", {}), ("music", {"action": "format"}), ("hub", {"tool": "x"}), ("open_app", {})):
+            code, body = self.m.island_submit(action, args, self.now)
+            self.assertEqual(code, 400, action)
+            self.assertIn("error", body)
+        self.assertEqual(self.m.island_poll(0), [])
+
+    def test_with_the_pc_off_nothing_is_queued_and_the_caller_knows(self):
+        self.m.state["presence"].clear()
+        code, body = self.m.island_submit("state", {}, self.now)
+        self.assertEqual((code, body["error"]), (409, "pc_offline"))
+
+    def test_a_pc_that_is_waiting_for_orders_counts_as_there_even_without_a_heartbeat(self):
+        self.m.state["presence"].clear()
+        self.m.island["pc_polled"] = self.now
+        self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 200)
+
+    def test_too_many_orders_a_minute_are_refused(self):
+        for _ in range(self.m.ISLAND_RATE):
+            self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 200)
+        self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 429)
+        self.m.state["presence"]["pc"]["ts"] = self.now + 61   # the PC kept beating
+        self.assertEqual(self.m.island_submit("state", {}, self.now + 61)[0], 200, "a minute later")
+
+    def test_an_order_the_pc_never_took_expires_and_the_caller_is_told(self):
+        _, body = self.m.island_submit("state", {}, self.now)
+        later = self.now + self.m.ISLAND_TTL + 1
+        r = self.m.island_result_wait(body["id"], 0, clock=lambda: later)
+        self.assertFalse(r["ok"])
+        self.assertIn("caducó", r["message"])
+        self.assertEqual(self.m.island_poll(0, clock=lambda: later), [])
+
+    def test_a_long_poll_wakes_when_an_order_arrives(self):
+        out = {}
+
+        def poll():
+            t = time.time()
+            out["got"] = self.m.island_poll(5)
+            out["took"] = time.time() - t
+
+        th = threading.Thread(target=poll)
+        th.start()
+        time.sleep(0.3)
+        self.m.island_submit("mochi", {"emote": "happy"}, time.time())
+        th.join(6)
+        self.assertEqual(out["got"][0]["action"], "mochi")
+        self.assertLess(out["took"], 2.5)
+
+    def test_over_http(self):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), self.m.Handler)
+        port = srv.server_address[1]
+        self.m.PORT = port
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+
+        def call(method, path, body=None):
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), method=method,
+                                         data=json.dumps(body).encode() if body is not None else None,
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+
+        self.assertEqual(call("POST", "/api/island/command", {"action": "shell", "args": {}})[0], 400)
+        code, sent = call("POST", "/api/island/command", {"action": "hub", "args": {"tool": "tasks"}})
+        self.assertEqual(code, 200)
+        _, polled = call("GET", "/api/island/poll?device=pc&wait=1")
+        self.assertEqual(polled["commands"][0]["args"], {"tool": "tasks"})
+        self.assertEqual(call("GET", "/api/island/poll?device=s22")[0], 400)
+        call("POST", "/api/island/result", {"id": sent["id"], "ok": True, "message": "abierto"})
+        _, res = call("GET", "/api/island/result?id=%d&wait=1" % sent["id"])
+        self.assertEqual((res["done"], res["result"]["message"]), (True, "abierto"))
+        self.assertEqual(call("POST", "/api/island/result", {"id": 424242, "ok": True})[0], 404)
+
+
 class HostAndCorsTest(unittest.TestCase):
     def setUp(self):
         self.m = load()
