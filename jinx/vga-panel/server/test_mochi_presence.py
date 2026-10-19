@@ -172,6 +172,23 @@ class IslandTest(unittest.TestCase):
         self.assertIn("caducó", r["message"])
         self.assertEqual(self.m.island_poll(0, clock=lambda: later), [])
 
+    def test_after_a_restart_new_orders_do_not_reuse_the_ids_the_pc_already_did(self):
+        before = self.m.island_submit("state", {}, self.now)[1]["id"]
+        time.sleep(0.01)
+        restarted = load()   # the service restarted: the queue is empty again
+        restarted.state["presence"]["pc"] = {"idle_seconds": 1, "screen_on": True, "ts": time.time()}
+        after = restarted.island_submit("state", {}, time.time())[1]["id"]
+        self.assertGreater(after, before)
+
+    def test_a_result_too_big_to_keep_says_so_instead_of_vanishing(self):
+        cid = self.m.island_submit("state", {}, self.now)[1]["id"]
+        self.m.island_poll(0)
+        self.m.island_result_post(cid, True, "", {"x": "y" * 20000}, self.now)
+        r = self.m.island_result_wait(cid, 0)
+        self.assertTrue(r["ok"])
+        self.assertNotIn("data", r)
+        self.assertIn("demasiado grandes", r["message"])
+
     def test_a_long_poll_wakes_when_an_order_arrives(self):
         out = {}
 

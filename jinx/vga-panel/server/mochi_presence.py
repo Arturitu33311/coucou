@@ -83,7 +83,8 @@ ISLAND_TTL = 90           # s: una orden que el PC no recogió en este tiempo ca
 ISLAND_RATE = 30          # órdenes por minuto, de todas
 ISLAND_MAX_WAIT = 25      # s: lo más que espera una petición larga
 ISLAND_KEEP = 100         # resultados guardados
-island = {"next_id": 1, "queue": [], "results": {}, "stamps": [], "pc_polled": 0.0}
+# Los ids no se repiten entre reinicios (el PC recuerda los que ya hizo): se parte de la hora en milisegundos.
+island = {"next_id": int(time.time() * 1000), "queue": [], "results": {}, "stamps": [], "pc_polled": 0.0}
 island_cv = threading.Condition()
 
 state = {
@@ -173,8 +174,11 @@ def island_result_post(cid, ok, message, data, now):
         if not known and cid not in island["results"]:
             return False
         island["results"][cid] = {"ok": bool(ok), "message": str(message or "")[:500], "ts": now}
-        if isinstance(data, (dict, list)) and len(json.dumps(data)) <= 12000:
-            island["results"][cid]["data"] = data
+        if isinstance(data, (dict, list)):
+            if len(json.dumps(data)) <= 12000:
+                island["results"][cid]["data"] = data
+            else:  # nunca en silencio: quien pidió debe saber que faltan datos
+                island["results"][cid]["message"] = (island["results"][cid]["message"] + " [datos demasiado grandes: omitidos]").strip()
         island["queue"] = [c for c in island["queue"] if c["id"] != cid]
         island_cv.notify_all()
     return True

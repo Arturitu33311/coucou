@@ -24,6 +24,10 @@ ssh -o BatchMode=yes "$host" "chmod 0755 '$skill/jinx_island.py'"
 # 2. El servidor de presencia con la cola de órdenes (reinicia su unidad).
 bash "$here/../vga-panel/deploy.sh"
 
+# Hermes detecta los SKILL.md solos (firma de archivos): no hace falta reindexar. Si Jinx no ve el skill, en su chat
+# se recarga con /reload-skills (o se reinicia el gateway de Hermes). Aquí solo se comprueba que el archivo está.
+ssh -o BatchMode=yes "$host" "head -3 '$skill/SKILL.md'" | sed 's/^/   skill: /'
+
 echo "== comprobación: una orden sin PC conectado debe decirlo, no colgarse =="
 ssh -o BatchMode=yes "$host" "python3 '$skill/jinx_island.py' state || true"
 echo "ok: herramienta de la isla en $host:$skill (respaldos .bak-$stamp)"

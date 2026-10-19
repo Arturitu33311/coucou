@@ -159,8 +159,14 @@ pub fn windows_of(wmctrl_lx: &str, names: &[String]) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesktopApp {
     pub label: String,
+    /// The `.desktop` file's name without the extension: what `gtk-launch` takes.
+    pub id: String,
     /// The names its windows may carry as their class: StartupWMClass, the file's id and its parts, the program.
     pub classes: Vec<String>,
+    /// `Terminal=true`: it runs in a terminal (a script's launcher, usually).
+    pub terminal: bool,
+    /// The program `Exec=` starts, as written.
+    pub program: Option<String>,
 }
 
 /// What a `.desktop` file says, or None when it is hidden or has no name. `id` is the file name without `.desktop`.
@@ -168,6 +174,7 @@ pub fn parse_desktop(id: &str, body: &str) -> Option<DesktopApp> {
     let mut name = None;
     let mut wm_class = None;
     let mut exec = None;
+    let mut terminal = false;
     let mut in_entry = false;
     for line in body.lines() {
         let line = line.trim();
@@ -186,6 +193,9 @@ pub fn parse_desktop(id: &str, body: &str) -> Option<DesktopApp> {
         }
         if let Some(v) = line.strip_prefix("StartupWMClass=") {
             wm_class = Some(v.trim().to_string());
+        }
+        if line.eq_ignore_ascii_case("Terminal=true") {
+            terminal = true;
         }
         if exec.is_none() {
             exec = line.strip_prefix("Exec=").map(str::trim).map(String::from);
@@ -210,19 +220,58 @@ pub fn parse_desktop(id: &str, body: &str) -> Option<DesktopApp> {
             add(part.to_string());
         }
     }
+    let program = exec.as_deref().and_then(|e| e.split_whitespace().next()).map(String::from);
     // The program in `Exec=`, unless it only launches another (flatpak, env, sh…): closing "flatpak" is not closing it.
-    if let Some(program) = exec.as_deref().and_then(|e| e.split_whitespace().next()) {
+    if let Some(program) = program.as_deref() {
         let base = program.rsplit('/').next().unwrap_or(program);
         if !["flatpak", "env", "sh", "bash", "snap", "gtk-launch", "xdg-open", "python", "python3", "java"].contains(&base) {
             add(base.to_string());
         }
     }
-    Some(DesktopApp { label, classes })
+    Some(DesktopApp { label, id: id.to_string(), classes, terminal, program })
 }
 
-/// The installed app whose name is `wanted` (normalised): exact name first, then the start, then anywhere in it.
+/// Interpreters and shells: a launcher that starts one of these runs a script, not an app.
+const INTERPRETERS: [&str; 12] = ["sh", "bash", "zsh", "fish", "dash", "env", "python", "python3", "perl", "ruby", "node", "gtk-launch"];
+
+/// Why Jinx may not open this launcher, or None. Opening is for apps, not for scripts: a user's launcher for a deploy or a
+/// backup (a terminal entry, a shell or interpreter, a file that starts with `#!`) is refused, whoever asks.
+/// `script` says whether the program is a script file.
+pub fn open_blocker(app: &DesktopApp, script: bool) -> Option<&'static str> {
+    if app.terminal {
+        return Some("it runs in a terminal");
+    }
+    let base = app.program.as_deref().map(|p| p.rsplit('/').next().unwrap_or(p).to_lowercase());
+    if base.as_deref().is_some_and(|b| INTERPRETERS.contains(&b)) {
+        return Some("it starts a shell or an interpreter");
+    }
+    if script {
+        return Some("it starts a script");
+    }
+    None
+}
+
+/// Is the program a script (a file that starts with `#!`)? A bare name is looked up in PATH.
 #[cfg(target_os = "linux")]
-fn find_desktop(wanted: &str) -> Option<DesktopApp> {
+fn is_script(program: &str) -> bool {
+    use std::io::Read;
+    let path = if program.contains('/') {
+        std::path::PathBuf::from(program)
+    } else {
+        let Some(dirs) = std::env::var_os("PATH") else { return false };
+        match std::env::split_paths(&dirs).map(|d| d.join(program)).find(|p| p.is_file()) {
+            Some(p) => p,
+            None => return false,
+        }
+    };
+    let mut head = [0u8; 2];
+    std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut head)).is_ok() && &head == b"#!"
+}
+
+/// The installed app whose name is `wanted` (normalised): exact name first, then the start, then (when `max_score` is 2)
+/// anywhere in it. Opening takes at most the start of the name; closing is already limited to the listed apps.
+#[cfg(target_os = "linux")]
+fn find_desktop(wanted: &str, max_score: usize) -> Option<DesktopApp> {
     let home = crate::platform::home_dir();
     let dirs = [
         std::path::PathBuf::from("/usr/share/applications"),
@@ -244,6 +293,9 @@ fn find_desktop(wanted: &str) -> Option<DesktopApp> {
             let Some(app) = parse_desktop(&id, &body) else { continue };
             let n = norm(&app.label);
             let score = if n == wanted { 0 } else if n.starts_with(wanted) { 1 } else if n.contains(wanted) { 2 } else { continue };
+            if score > max_score {
+                continue;
+            }
             if best.as_ref().is_none_or(|(s, _)| score < *s) {
                 best = Some((score, app));
             }
@@ -256,7 +308,7 @@ fn find_desktop(wanted: &str) -> Option<DesktopApp> {
 #[cfg(target_os = "linux")]
 fn close_app(name: &str, allowed: &str) -> (bool, String) {
     let wanted = norm(name);
-    let Some(app) = find_desktop(&wanted) else { return (false, format!("No app named {name} on this computer.")) };
+    let Some(app) = find_desktop(&wanted, 2) else { return (false, format!("No app named {name} on this computer.")) };
     if !close_allowed(&app.label, allowed) {
         return (false, format!("{} is not in the list of apps Jinx may close (Settings → Jinx and Hub).", app.label));
     }
@@ -281,6 +333,84 @@ fn close_app(_name: &str, _allowed: &str) -> (bool, String) {
     (false, "Closing apps is only supported on Linux for now.".into())
 }
 
+/// Opens an installed app by (the start of) its name, never a script: for what Jinx asks, narrower than « OK Coucou »'s
+/// own `open_app` (which the user speaks himself).
+#[cfg(target_os = "linux")]
+fn open_app(app: &AppHandle, name: &str) -> (bool, String) {
+    let Some(found) = find_desktop(&norm(name), 1) else { return (false, format!("No app named {name} on this computer.")) };
+    let script = found.program.as_deref().is_some_and(is_script);
+    if let Some(why) = open_blocker(&found, script) {
+        return (false, format!("{} is not opened from here: {why}.", found.label));
+    }
+    let _ = app;
+    match std::process::Command::new("gtk-launch").arg(&found.id).spawn() {
+        Ok(_) => (true, format!("{} opened", found.label)),
+        Err(_) => (false, "gtk-launch is not available, so apps cannot be opened.".into()),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_app(app: &AppHandle, name: &str) -> (bool, String) {
+    let (message, done) = crate::voice::run_tool(app, "open_app", &json!({ "name": name }));
+    (done, message)
+}
+
+/// Play/pause, next, previous and the volume, on whatever player is running (the MPRIS reader that Jinx's pill
+/// carries): a browser tab, VLC, Spotify. Only when there is none does it try Spotify's own control. Search is Spotify's.
+fn control_music(app: &AppHandle, args: &Value) -> (bool, String) {
+    let op = args["action"].as_str().unwrap_or("");
+    let (action, value) = match op {
+        "play_pause" => ("playpause", None),
+        "next" => ("next", None),
+        "previous" => ("previous", None),
+        "set_volume" => ("volume", Some((args["volume"].as_f64().unwrap_or(50.0).clamp(0.0, 100.0) * 10.0).round() as i64)),
+        _ => {
+            let (message, done) = crate::voice::run_tool(app, "music", args);
+            return (done, message);
+        }
+    };
+    match tauri::async_runtime::block_on(crate::music::music_control(action.into(), value)) {
+        Ok(()) => (true, "done".into()),
+        Err(_) => {
+            let (message, done) = crate::voice::run_tool(app, "music", args);
+            if done { (true, message) } else { (false, "No player is running, so there is nothing to control.".into()) }
+        }
+    }
+}
+
+/// What `info()` gives « OK Coucou », cut down for Jinx: names and one-line headlines, never the items behind them, and
+/// small enough to travel (the server keeps at most ~12 KB of an answer).
+pub fn compact_state(state: &Value) -> Value {
+    let cut = |v: &Value, n: usize| -> Value { json!(v.as_str().unwrap_or("").chars().take(n).collect::<String>()) };
+    let sessions: Vec<Value> = state["sessions"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .take(10)
+                .map(|s| json!({ "pill": cut(&s["pill"], 40), "state": cut(&s["state"], 20), "doing": cut(&s["doing"], 80) }))
+                .collect()
+        })
+        .unwrap_or_default();
+    let services: Vec<Value> = state["services"]
+        .as_array()
+        .map(|a| a.iter().take(8).map(|c| json!({ "service": cut(&c["service"], 40), "headline": cut(&c["headline"], 120) })).collect())
+        .unwrap_or_default();
+    let mut out = json!({
+        "pills": state["pills"],
+        "sessions": sessions,
+        "claudePlan": state["claudePlan"],
+        "codexPlan": state["codexPlan"],
+        "nowPlaying": state["nowPlaying"],
+        "spotify": state["spotify"],
+        "services": services,
+    });
+    if out.to_string().len() > 8000 {
+        out["services"] = json!([]);
+        out["truncated"] = json!(true);
+    }
+    out
+}
+
 /// What the island is told to do on its page (Mochi's mood, a Hub tool): src/island/island-cmd.ts.
 fn tell_island(app: &AppHandle, payload: Value) {
     let _ = app.emit_to(WINDOW_LABEL, "island-cmd", payload);
@@ -301,13 +431,13 @@ pub fn execute(app: &AppHandle, action: &str, args: &Value) -> (bool, String, Op
     match action {
         "state" => match crate::voice::ask_island(app, "info", json!({})) {
             Some(raw) => match serde_json::from_str::<Value>(&raw) {
-                Ok(v) => (true, String::new(), Some(v)),
+                Ok(v) => (true, String::new(), Some(compact_state(&v))),
                 Err(_) => (false, "the island answered something unreadable".into(), None),
             },
             None => (false, "the island did not answer".into(), None),
         },
         "music" => {
-            let (message, done) = crate::voice::run_tool(app, "music", args);
+            let (done, message) = control_music(app, args);
             (done, message, None)
         }
         "pills" => {
@@ -319,7 +449,7 @@ pub fn execute(app: &AppHandle, action: &str, args: &Value) -> (bool, String, Op
             }
         }
         "open_app" => {
-            let (message, done) = crate::voice::run_tool(app, "open_app", args);
+            let (done, message) = open_app(app, args["name"].as_str().unwrap_or(""));
             (done, message, None)
         }
         "close_app" => {
@@ -419,12 +549,17 @@ pub fn start(app: &AppHandle) {
                 } else {
                     json!({ "id": id, "ok": false, "message": "too many orders in a minute" })
                 };
-                let _ = client
+                let posted = client
                     .post(format!("{base}/api/island/result"))
                     .header("X-Mochi-Key", &key)
                     .json(&answer)
                     .send()
                     .await;
+                match posted {
+                    Ok(r) if r.status().is_success() => {}
+                    Ok(r) => log::line(format!("jinx island: the server refused the result ({})", r.status())),
+                    Err(_) => log::line("jinx island: the result could not be sent".to_string()),
+                }
             }
         }
     });
@@ -497,7 +632,51 @@ mod tests {
         assert!(!app.classes.contains(&"client".to_string()), "nothing generic");
 
         assert!(parse_desktop("x", "[Desktop Entry]\nName=Hidden\nNoDisplay=true\n").is_none());
+        let term = parse_desktop("deploy", "[Desktop Entry]\nName=Deploy\nExec=/home/u/bin/deploy.sh\nTerminal=true\n").unwrap();
+        assert!(term.terminal);
+        assert_eq!(term.program.as_deref(), Some("/home/u/bin/deploy.sh"));
+        assert_eq!(term.id, "deploy");
         assert!(parse_desktop("x", "[Desktop Entry]\nExec=foo\n").is_none(), "no name");
+    }
+
+    #[test]
+    fn jinx_opens_apps_not_scripts() {
+        let app = |body: &str| parse_desktop("x", body).unwrap();
+        assert_eq!(open_blocker(&app("[Desktop Entry]\nName=Spotify\nExec=spotify %U\n"), false), None);
+        assert!(open_blocker(&app("[Desktop Entry]\nName=Deploy\nExec=/opt/deploy\nTerminal=true\n"), false).is_some(), "a terminal entry");
+        for shell in ["bash -c deploy", "/bin/sh run.sh", "env FOO=1 app", "python3 backup.py", "/usr/bin/perl x.pl"] {
+            let body = format!("[Desktop Entry]\nName=X\nExec={shell}\n");
+            assert!(open_blocker(&app(&body), false).is_some(), "{shell}");
+        }
+        assert!(open_blocker(&app("[Desktop Entry]\nName=Backup\nExec=/home/u/bin/backup\n"), true).is_some(), "a #! script");
+    }
+
+    #[test]
+    fn what_the_state_sends_jinx_is_short_and_has_no_items() {
+        let big = "x".repeat(500);
+        let state = json!({
+            "pills": { "main": "Jinx", "shown": ["GitHub"], "maxBesidesMain": 4, "available": ["Jinx", "GitHub"] },
+            "sessions": (0..30).map(|i| json!({ "pill": format!("agent {i}"), "state": "working", "doing": big })).collect::<Vec<_>>(),
+            "claudePlan": { "fiveHourPercent": 12, "weekPercent": 40 },
+            "nowPlaying": { "playing": true, "title": "Song", "artists": ["A"], "player": "firefox" },
+            "services": (0..20).map(|i| json!({ "service": format!("S{i}"), "headline": big, "about": big, "items": [big.clone(), big.clone()] })).collect::<Vec<_>>(),
+        });
+        let out = compact_state(&state);
+        assert_eq!(out["sessions"].as_array().unwrap().len(), 10);
+        assert_eq!(out["sessions"][0]["doing"].as_str().unwrap().len(), 80);
+        assert_eq!(out["services"].as_array().unwrap().len(), 8);
+        assert!(out["services"][0].get("items").is_none() && out["services"][0].get("about").is_none());
+        assert_eq!(out["nowPlaying"]["player"], "firefox");
+        assert_eq!(out["claudePlan"]["weekPercent"], 40);
+        assert!(out.to_string().len() < 8000, "{}", out.to_string().len());
+    }
+
+    #[test]
+    fn a_state_that_is_still_too_big_loses_its_services_and_says_so() {
+        let huge: Vec<String> = (0..400).map(|i| format!("pill-{i}-{}", "y".repeat(40))).collect();
+        let out = compact_state(&json!({ "pills": { "available": huge }, "services": [{ "service": "S", "headline": "h" }] }));
+        assert_eq!(out["truncated"], true);
+        assert_eq!(out["services"].as_array().unwrap().len(), 0);
     }
 
     #[test]

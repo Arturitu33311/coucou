@@ -120,8 +120,10 @@ is not to be trusted:
 | Her tool and its skill | `jinx/jinx-assist/jinx_island.py`, `island/SKILL.md` → `~/.hermes/skills/devops/coucou-island/` |
 | The actions | « OK Coucou »'s `voice::run_tool` (music, pills, open_app): one layer, two ways in; Mochi's mood and the Hub on the page (`island/island-cmd.ts`) |
 
-Actions: `state` (what the island shows, now playing included), `music` (play/pause, next, previous, volume, search),
-`pills` (list, add, remove, set main), `mochi` (a mood for 1–8 s), `hub` (open a tool), `open_app`, `close_app`.
+Actions: `state` (what the island shows, now playing included, cut down: no items), `music` (play/pause, next, previous,
+volume on whatever player runs — the MPRIS one Jinx's pill carries; search is Spotify's),
+`pills` (list, add, remove, set main), `mochi` (a mood for 1–8 s), `hub` (open a tool), `open_app` (by the start of the
+name, and never a terminal entry, a shell, an interpreter or a `#!` script), `close_app`.
 Never in the list: approving or denying an agent's permission, sending mail, settings, keys, addresses, files, commands.
 `close_app` asks the window to close (`wmctrl -ic`: the app asks to save) and only for the apps in Settings → Jinx and
 Hub → *Apps Jinx may close* (whole names; Coucou itself never). Settings → *Jinx runs the island* turns all of it off.

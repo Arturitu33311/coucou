@@ -20,7 +20,8 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import island_commands  # noqa: E402
 
-BASE = os.environ.get("JINX_PRESENCE_URL", "http://127.0.0.1:8897").rstrip("/")
+# (JINX_PRESENCE_URL ya es otra cosa: la dirección completa de los mensajes, en jinx_chat.py)
+BASE = os.environ.get("JINX_ISLAND_URL", "http://127.0.0.1:8897").rstrip("/")
 KEY_PATH = os.path.expanduser("~/.config/mochi-presence/key")
 # La isla contesta en menos de 6 s (pregunta a la página y espera); la espera larga cubre un PC lento.
 RESULT_WAIT = 20
