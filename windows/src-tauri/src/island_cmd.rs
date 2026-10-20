@@ -509,11 +509,17 @@ pub fn start(app: &AppHandle) {
         let mut done: VecDeque<i64> = VecDeque::new();
         let mut stamps: VecDeque<Instant> = VecDeque::new();
         let mut backoff = 5u64;
+        let mut said_unset = false;
         loop {
             let (Some(url), Some(key)) = (secrets::get("presence-url"), secrets::get("presence-key")) else {
+                if !said_unset {
+                    said_unset = true;
+                    log::line("jinx island: no presence-url/presence-key in the keyring: Jinx's orders are not being asked for".to_string());
+                }
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             };
+            said_unset = false;
             let base = url.trim_end_matches('/').to_string();
             let polled = client
                 .get(format!("{base}/api/island/poll?device=pc&wait=25"))
