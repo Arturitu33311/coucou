@@ -334,7 +334,21 @@ fn create_window(app: &AppHandle, _mode: DesktopMode) -> Option<WebviewWindow> {
     }
     let built = builder.build();
     match built {
-        Ok(win) => Some(win),
+        Ok(win) => {
+            // A normal window is tiled by Pop Shell (it reserved a 948x528 slot for him and would not let
+            // him go) and placed by mutter where it likes. The island avoids both by being a notification
+            // window, so he is too.
+            #[cfg(target_os = "linux")]
+            if _mode == DesktopMode::Window {
+                use gtk::prelude::GtkWindowExt;
+                if let Ok(gw) = win.gtk_window() {
+                    gw.set_type_hint(gtk::gdk::WindowTypeHint::Notification);
+                    gw.set_skip_pager_hint(true);
+                    gw.set_skip_taskbar_hint(true);
+                }
+            }
+            Some(win)
+        }
         Err(err) => {
             crate::log::line(format!("desktop Mochi window failed: {err}"));
             None
