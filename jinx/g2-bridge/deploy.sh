@@ -18,7 +18,7 @@ python3 -m unittest discover -s "$here/../jinx-assist" -p 'test_g2*.py' >/dev/nu
 bash "$here/../vga-panel/deploy.sh"
 
 ssh -o BatchMode=yes "$host" "mkdir -p $dest ~/.config/systemd/user"
-for f in g2_bridge.py g2_stt.py; do
+for f in g2_bridge.py g2_stt.py g2_lite.py; do
   ssh -o BatchMode=yes "$host" "[ -e $dest/$f ] && cp -p $dest/$f $dest/$f.bak-$stamp || true"
   scp -q "$here/$f" "$host:g2-bridge/$f"
 done
@@ -33,4 +33,6 @@ Falta (una vez, a mano):
      (la dirección que sale, p. ej. https://server.tu-red.ts.net:8443, es JINX_G2_ORIGIN al empaquetar la app)
   2. La llave:               ssh $host 'cat ~/.config/jinx-g2/key'   (se escribe en el teléfono, nunca en el repo)
   3. Voz:                    pip install faster-whisper en el servidor, o JINX_G2_STT_CMD en la unidad.
+  4. Jinx rápida: la llave del modelo sale de la bóveda (OPENROUTER_API_KEY); el modelo es JINX_G2_MODEL. Para Home
+     Assistant: una «llave de acceso de larga duración» en ~/.config/jinx-g2/ha_token (0600) y JINX_HA_URL si no es :8123.
 MSG

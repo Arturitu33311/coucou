@@ -2,9 +2,10 @@
 """g2_bridge — las gafas Even G2 hablan con Jinx. Servicio del servidor, solo en loopback (Tailscale Serve le pone HTTPS).
 
   GET  /health                         sin llave
-  POST /api/g2/ask      {text, cid?}   -> {id, status: done|pending, text?, mode?}   (espera hasta ASK_WAIT)
+  POST /api/g2/ask      {text, cid?, mode?} -> {id, status: done|pending, text?, mode?}   (espera hasta ASK_WAIT)
+        mode "lite" (por defecto): Jinx rápida, modelo pequeño + Home Assistant (g2_lite.py); "full": la Jinx de Hermes
   GET  /api/g2/answer?id=&wait=        -> lo mismo, para una pregunta que quedó pendiente
-  POST /api/g2/voice    PCM crudo      -> {heard, id, status, ...}  (16 kHz mono s16le, g2_stt)
+  POST /api/g2/voice[?mode=] PCM crudo -> {heard, id, status, ...}  (16 kHz mono s16le, g2_stt)
   GET  /api/g2/notices?since=&wait=    -> {notices: [{id,text,kind,source,ts}]}  (los avisos del servidor de presencia)
   POST /v1/chat/completions, GET /v1/models   compatible con OpenAI, para "Agent Configuration" de Even AI
 
@@ -29,6 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import g2_lite  # noqa: E402
 import g2_stt  # noqa: E402
 
 HOME = os.path.expanduser("~")
@@ -49,6 +51,7 @@ NOTICE_WAIT_MAX = 25
 NOTICE_CAP = 20
 NOTICE_MAX_AGE = 30 * 60  # segundos
 HIDDEN_NOTICE_SOURCES = ("jinx-chat",)  # las respuestas a otras conversaciones no son avisos para las gafas
+DEFAULT_MODE = os.environ.get("JINX_G2_DEFAULT_MODE", "lite") if os.environ.get("JINX_G2_DEFAULT_MODE", "lite") in ("lite", "full") else "lite"
 STILL_THINKING = "Sigo pensándolo; te lo mando a la isla o a Telegram cuando esté."
 
 
@@ -81,8 +84,10 @@ def final_event(events):
 class Jobs:
     """Una pregunta a Jinx en un hilo aparte, por cid. Idempotente por cid; guarda si alguien recogió la respuesta."""
 
-    def __init__(self, gateway, now=time.time, spawn=None):
+    def __init__(self, gateway, now=time.time, spawn=None, lite=None):
         self.gateway = gateway
+        self.lite = lite          # g2_lite.Lite o None (sin modelo rápido: todo va a la Jinx completa)
+        self.lite_lock = threading.Lock()
         self.now = now
         self.lock = threading.Lock()
         self.cv = threading.Condition(self.lock)
@@ -93,17 +98,34 @@ class Jobs:
     def _thread(fn):
         threading.Thread(target=fn, daemon=True).start()
 
-    def submit(self, text, cid=None):
+    def submit(self, text, cid=None, mode="full", deliver_now=False):
         cid = cid if isinstance(cid, str) and 0 < len(cid) <= 64 and cid.replace("-", "").replace("_", "").isalnum() \
             else "g2" + secrets.token_hex(6)
         with self.lock:
             if cid in self.jobs:
                 return cid
             self.jobs[cid] = {"status": "pending", "ts": self.now(), "collected": False, "swept": False}
-        self.spawn(lambda: self._run(cid, text))
+        self.spawn(lambda: self._run(cid, text, mode, deliver_now))
         return cid
 
-    def _run(self, cid, text):
+    def hand_off(self, text):
+        """Lo que la Jinx rápida no puede hacer: la completa lo hace y responde donde Alan esté (isla o Telegram)."""
+        cid = self.submit(text, None, "full", deliver_now=True)
+        return "Pasado a Jinx (%s): contesta en la isla o en Telegram." % cid
+
+    def _run(self, cid, text, mode="full", deliver_now=False):
+        if mode == "lite" and self.lite is not None:
+            try:
+                with self.lite_lock:
+                    reply = self.lite.reply(text)
+                with self.cv:
+                    # Sin línea en el hilo compartido: no hay nada que repartir si nadie la recoge.
+                    self.jobs[cid].update(status="done", text=reply, mode="lite", mood=None, collected=True,
+                                          ts=self.now())
+                    self.cv.notify_all()
+                return
+            except Exception:  # noqa: BLE001 - el modelo rápido falló: la Jinx completa contesta (más lenta)
+                pass
         try:
             ev = final_event(self.gateway({"op": "send", "text": text, "cid": cid, "src": "g2"}))
         except Exception as e:  # noqa: BLE001 - gateway sin arrancar, tiempo agotado...
@@ -113,9 +135,16 @@ class Jobs:
             j["ts"] = self.now()
             if ev and ev.get("ev") == "done":
                 j.update(status="done", text=str(ev.get("text", "")), mode=ev.get("mode"), mood=ev.get("mood"))
+                if deliver_now:
+                    j["collected"] = True  # nadie va a venir a por ella: se reparte ahora mismo
             else:
                 j.update(status="error", error=str((ev or {}).get("error") or "Jinx no contestó"))
             self.cv.notify_all()
+        if deliver_now and ev and ev.get("ev") == "done":
+            try:
+                self.gateway({"op": "deliver", "cid": cid})
+            except Exception:  # noqa: BLE001 - el hilo la conserva; no se pierde
+                pass
 
     def wait(self, cid, seconds):
         """El estado de la pregunta; espera hasta `seconds` a que acabe. None si no existe."""
@@ -299,8 +328,8 @@ def make_handler(app):
                 d = None
             return d if isinstance(d, dict) else None
 
-        def _ask_reply(self, text, cid, wait, limit=REPLY_MAX):
-            cid = app.jobs.submit(text, cid)
+        def _ask_reply(self, text, cid, wait, limit=REPLY_MAX, mode=None):
+            cid = app.jobs.submit(text, cid, mode if mode in ("lite", "full") else DEFAULT_MODE)
             j = app.jobs.wait(cid, wait)
             if j and j["status"] == "done":
                 app.jobs.collect(cid)
@@ -347,7 +376,7 @@ def make_handler(app):
                 text = clean_text((d or {}).get("text"))
                 if not text:
                     return self._send(400, {"error": "falta text"})
-                return self._send(200, self._ask_reply(text, d.get("cid"), ASK_WAIT))
+                return self._send(200, self._ask_reply(text, d.get("cid"), ASK_WAIT, mode=d.get("mode")))
             if u.path == "/api/g2/voice":
                 pcm = self._body(g2_stt.MAX_BYTES + 1024)
                 if pcm is None:
@@ -360,7 +389,7 @@ def make_handler(app):
                     return self._send(503, {"error": str(e)})
                 if not heard:
                     return self._send(200, {"heard": "", "status": "empty"})
-                out = self._ask_reply(clean_text(heard), None, ASK_WAIT)
+                out = self._ask_reply(clean_text(heard), None, ASK_WAIT, mode=(parse_qs(u.query).get("mode") or [""])[0])
                 out["heard"] = heard
                 return self._send(200, out)
             if u.path == "/v1/chat/completions":
@@ -401,9 +430,56 @@ def _openai(content, stream):
                  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
 
 
+def server_secret(names, run=subprocess.run):
+    """Un secreto de la bóveda del servidor (`hermes-secrets get`), o "". Nunca se imprime."""
+    cmd = os.environ.get("JINX_SECRETS_CMD", "/home/alan/.hermes/hermes-agent/venv/bin/hermes-secrets")
+    for n in names:
+        try:
+            p = run([cmd, "get", n], capture_output=True, text=True, timeout=10)
+        except Exception:  # noqa: BLE001
+            continue
+        if getattr(p, "returncode", 1) == 0 and (p.stdout or "").strip():
+            return p.stdout.strip().splitlines()[-1].strip()
+    return ""
+
+
+def build_lite(jobs_ref):
+    """La Jinx rápida con la configuración del servidor. None si no hay llave de modelo (todo va a la completa)."""
+    cache = {}
+
+    def key():
+        if "or" not in cache:
+            cache["or"] = os.environ.get("JINX_OR_KEY", "") or server_secret(("OPENROUTER_API_KEY",))
+        return cache["or"]
+
+    def ha_token():
+        if "ha" not in cache:
+            tok = os.environ.get("JINX_HA_TOKEN", "")
+            if not tok:
+                try:
+                    with open(g2_lite.HA_TOKEN_PATH, encoding="utf-8") as f:
+                        tok = f.read().strip()
+                except OSError:
+                    tok = server_secret(("HASS_TOKEN", "HOMEASSISTANT_TOKEN", "HA_TOKEN"))
+            cache["ha"] = tok
+        return cache["ha"]
+
+    persona = g2_lite.PERSONA
+    try:
+        with open(g2_lite.PERSONA_PATH, encoding="utf-8") as f:
+            persona = f.read().strip() or persona
+    except OSError:
+        pass
+    llm = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LLM_URL", "https://openrouter.ai/api/v1/chat/completions"),
+                                  os.environ.get("JINX_G2_MODEL", "deepseek/deepseek-v4-flash"), key)
+    ha = g2_lite.HomeAssistant(os.environ.get("JINX_HA_URL", "http://127.0.0.1:8123"), ha_token)
+    return g2_lite.Lite(llm, ha, lambda text: jobs_ref[0].hand_off(text), persona)
+
+
 def serve(port=PORT):
     key = make_key()
-    jobs = Jobs(gateway_call)
+    ref = [None]
+    jobs = ref[0] = Jobs(gateway_call, lite=build_lite(ref))
 
     def sweeper():
         while True:
@@ -411,7 +487,7 @@ def serve(port=PORT):
             jobs.sweep()
     threading.Thread(target=sweeper, daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", port), make_handler(App(jobs, key)))
-    print("jinx g2-bridge en 127.0.0.1:%d (llave: %s)" % (port, KEY_PATH), flush=True)
+    print("jinx g2-bridge en 127.0.0.1:%d (llave: %s; modo por defecto: %s)" % (port, KEY_PATH, DEFAULT_MODE), flush=True)
     srv.serve_forever()
 
 

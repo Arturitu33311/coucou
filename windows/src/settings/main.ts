@@ -1229,7 +1229,8 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Show what the server is busy with (downloads, a backup that is late) in the island's pill and Today. It runs a fixed " +
         "script over ssh every 30 s while something runs and every 5 min otherwise (never while paused or without a server). " +
-        "What it looks at is listed in ~/.config/coucou/activities.json on the server; see windows/README.md." })),
+        "What it looks at is listed in ~/.config/coucou/activities.json on the server; see windows/README.md. It also lists " +
+        "the Claude Code agents running on the server (marked « · server », read-only: answer or stop them there)." })),
     h("div", { class: "row" }, h("label", { text: "Clipboard history" }),
       toggle(settings.clipboardHistory === true, (v) => { settings.clipboardHistory = v; void save(); }),
       h("span", { class: "hint", text:

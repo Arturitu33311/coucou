@@ -175,6 +175,28 @@ vectors are untouched), they only add to whoever has the island.
   cannot be reached from there. Check where its requests come from before enabling it, and do **not** open Tailscale
   Funnel by default: that would put an agent that can run commands on the public internet behind a single key.
 
+### Fast Jinx on the glasses, and the server's Claude Code agents
+
+**Fast Jinx** (`jinx/g2-bridge/g2_lite.py`, the glasses' default mode): the full Jinx (Hermes) loads her whole persona and memory
+and can take tens of seconds, which is wrong for a voice on your face. Fast mode is a small model with a ~150-word persona,
+no long memory (the last 4 exchanges, forgotten after 10 minutes) and four tools: look up a Home Assistant device, read its
+state, act on it, and **hand the request to the full Jinx** (`pasar_a_jinx`: she answers on the island or Telegram, and Telegram
+gets the question with it). It writes nothing to the shared thread. If the fast model fails, the full Jinx answers instead.
+Model: `JINX_G2_MODEL` on OpenRouter with the vault's key (default `deepseek/deepseek-v4-flash`, the one the backup already
+uses; a Haiku-class model is the obvious one to try for tool calls and tone). `mode: "full"` on `/ask` or `?mode=full` on
+`/voice` forces Hermes; `JINX_G2_DEFAULT_MODE=full` flips the default. The Even AI endpoint (`/v1/chat/completions`) uses it too.
+
+Home Assistant is reached with a long-lived token (`~/.config/jinx-g2/ha_token`, 0600, or the vault) at `JINX_HA_URL`
+(`http://127.0.0.1:8123`). What a voice may ask is a closed policy, **checked in code, not in the prompt**: lights, switches,
+input booleans, fans, scenes, media players and climate (16–30 °C), one entity at a time, with bounded data. **Never**: locks,
+alarm panels, covers (garage, doors), automations, scripts, restarts. They can be *read* ("is the door locked?").
+
+**The server's Claude Code agents** (`windows/src-tauri/src/remote_agents.rs` + `remote_agents.py`): with *Server activity* on,
+the PC runs a fixed script over the shared ssh connection (`claude agents --json`, and the session transcript read from an
+offset), and the agents appear in the island's list marked « · server » (ids `srv:…`), with their messages and state. It is
+**read-only**: sending to or stopping one returns an error, and a permission request on the server is not forwarded to the
+island's approve card (that would need the server's hook to reach the PC; not built).
+
 ### Which device has Mochi (presence contract)
 
 One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.

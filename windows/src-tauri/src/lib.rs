@@ -8,6 +8,7 @@ mod calendar;
 mod chat;
 mod claude;
 mod claude_sessions;
+mod remote_agents;
 mod clipboard;
 mod codex_plan;
 mod config_file;
@@ -1081,14 +1082,22 @@ async fn jinx_test(shared: State<'_, Shared>) -> Result<String, String> {
 // ── Claude Code and OpenCode sessions (see agents.rs, opencode.rs) ────────────
 
 #[tauri::command]
-async fn agents_list() -> Result<serde_json::Value, String> {
+async fn agents_list(shared: State<'_, Shared>) -> Result<serde_json::Value, String> {
+    let server = server_agents_host(&shared);
     // Both CLIs are asked at once: each can take a second, and the chat polls
     // every couple of seconds. One missing is fine; none at all is an error.
     let claude = tauri::async_runtime::spawn_blocking(claude_sessions::list);
     let open = tauri::async_runtime::spawn_blocking(opencode::list);
+    let remote = server.map(|h| tauri::async_runtime::spawn_blocking(move || remote_agents::list(&h)));
     let (claude, open) = (claude.await, open.await);
     let mut all: Vec<serde_json::Value> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    // The server's own agents (read-only). An unreachable server is not an error of the list: the rest shows.
+    if let Some(r) = remote {
+        if let Ok(Ok(v)) = r.await {
+            all.extend(v.as_array().cloned().unwrap_or_default());
+        }
+    }
     match claude.map_err(|e| e.to_string())? {
         Ok(v) => all.extend(v.as_array().cloned().unwrap_or_default()),
         Err(e) => errors.push(e),
@@ -1103,8 +1112,21 @@ async fn agents_list() -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Array(all))
 }
 
+/// The server to look for Claude Code agents on: only with "Server activity" on and a server set.
+fn server_agents_host(shared: &Shared) -> Option<String> {
+    let s = shared.settings.lock().unwrap();
+    let host = s.server_host.trim().to_string();
+    (s.activities_on && !host.is_empty()).then_some(host)
+}
+
 #[tauri::command]
-async fn agent_messages(session_id: String, offset: u64) -> Result<claude_sessions::Messages, String> {
+async fn agent_messages(shared: State<'_, Shared>, session_id: String, offset: u64) -> Result<claude_sessions::Messages, String> {
+    if remote_agents::is_remote(&session_id) {
+        let host = server_agents_host(&shared).ok_or("Server agents are off")?;
+        return tauri::async_runtime::spawn_blocking(move || remote_agents::messages(&host, &session_id, offset))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     if opencode::is_opencode(&session_id) {
         return tauri::async_runtime::spawn_blocking(move || opencode::messages(&session_id, offset))
             .await
@@ -1117,6 +1139,9 @@ async fn agent_messages(session_id: String, offset: u64) -> Result<claude_sessio
 
 #[tauri::command]
 async fn agent_send(id: String, text: String) -> Result<(), String> {
+    if remote_agents::is_remote(&id) {
+        return Err(remote_agents::READ_ONLY.into());
+    }
     if opencode::is_opencode(&id) {
         return tauri::async_runtime::spawn_blocking(move || opencode::send(&id, &text))
             .await
@@ -1137,6 +1162,9 @@ async fn agent_start(cwd: String, prompt: String, backend: String) -> Result<Str
 
 #[tauri::command]
 async fn agent_stop(id: String) -> Result<(), String> {
+    if remote_agents::is_remote(&id) {
+        return Err(remote_agents::READ_ONLY.into());
+    }
     if opencode::is_opencode(&id) {
         return Err("OpenCode sessions run to the end on their own — they cannot be stopped from here".into());
     }

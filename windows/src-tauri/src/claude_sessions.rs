@@ -74,7 +74,12 @@ pub fn list() -> Result<Value, String> {
     if !out.status.success() {
         return Err("`claude agents` failed".into());
     }
-    let all: Vec<Value> = serde_json::from_slice(&out.stdout).map_err(|e| format!("unreadable agent list: {e}"))?;
+    parse_list(&out.stdout)
+}
+
+/// `claude agents --json` as the island's list (also used for the server's agents, remote_agents.rs).
+pub(crate) fn parse_list(raw: &[u8]) -> Result<Value, String> {
+    let all: Vec<Value> = serde_json::from_slice(raw).map_err(|e| format!("unreadable agent list: {e}"))?;
     Ok(Value::Array(
         all.into_iter()
             .map(|a| {
@@ -219,8 +224,13 @@ fn messages_from(projects: &Path, session_id: &str, offset: u64) -> Result<Messa
     file.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
     file.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+    Ok(messages_from_raw(start, initial, &raw))
+}
+
+/// The messages in `raw`, which was read from byte `start` (`initial`: the first read of this session).
+pub(crate) fn messages_from_raw(start: u64, initial: bool, raw: &[u8]) -> Messages {
     let Some(last_nl) = raw.iter().rposition(|b| *b == b'\n') else {
-        return Ok(Messages { offset: start, messages: Vec::new() });
+        return Messages { offset: start, messages: Vec::new() };
     };
     let consumed = &raw[..=last_nl];
     let text = String::from_utf8_lossy(consumed);
@@ -232,7 +242,7 @@ fn messages_from(projects: &Path, session_id: &str, offset: u64) -> Result<Messa
     if initial && messages.len() > FIRST_MESSAGES {
         messages.drain(..messages.len() - FIRST_MESSAGES);
     }
-    Ok(Messages { offset: start + consumed.len() as u64, messages })
+    Messages { offset: start + consumed.len() as u64, messages }
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────

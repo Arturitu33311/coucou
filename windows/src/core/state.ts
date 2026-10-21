@@ -114,6 +114,8 @@ export interface AgentSession {
   state: string;
   sessionId: string;
   waitingFor?: string | null;
+  /** "server" for a Claude Code agent running on the home server (read-only here); absent for local ones. */
+  where?: string;
 }
 
 export type PromptContext =
