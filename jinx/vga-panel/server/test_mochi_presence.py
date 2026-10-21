@@ -119,6 +119,16 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(len(out["messages"]), 1)
 
 
+    def test_all_flag_also_returns_acked_messages_and_never_acks(self):
+        _, a = self.post("/api/mochi/message", {"text": "uno", "kind": "info", "source": "test"})
+        self.post("/api/mochi/ack", {"id": a["id"], "by": "pc"})
+        self.assertEqual(self.get("/api/mochi/inbox?since_id=0")["messages"], [])
+        both = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"]
+        self.assertEqual([m["text"] for m in both], ["uno"])
+        self.assertEqual(self.get("/api/mochi/inbox?all=1&since_id=0")["messages"][0]["acked_by"], "pc")
+        self.assertEqual(self.get("/api/mochi/inbox?since_id=0")["messages"], [])  # reading with all=1 changed nothing
+
+
 class IslandTest(unittest.TestCase):
     """Las órdenes de Jinx para la isla del PC: se encolan, el PC las recoge y contesta, quien las pidió ve el resultado."""
 

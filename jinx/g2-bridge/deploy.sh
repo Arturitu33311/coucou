@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # jinx/g2-bridge/deploy.sh — pone el puente de las gafas Even G2 en el SERVIDOR (loopback :8898) y le da HTTPS con
 # Tailscale Serve. Lo corre una persona desde el portátil; desde la nube no hay acceso al servidor.
-#   ./deploy.sh            copia, arranca y comprueba
+#   ./deploy.sh            copia, arranca y comprueba (también pone al día el servidor de presencia)
+# Orden: primero los teléfonos (install-phone.sh) y el PC, luego el gateway, luego esto.
 # El gateway (jinx_chat.py) también debe estar al día: el origen "g2" y la op "deliver" son nuevos →
 #   bash ../jinx-assist/deploy-gateway-server.sh
 set -euo pipefail
@@ -12,6 +13,9 @@ stamp="$(date +%Y%m%d-%H%M%S)"
 
 python3 -m unittest discover -s "$here" -p 'test_*.py' >/dev/null
 python3 -m unittest discover -s "$here/../jinx-assist" -p 'test_g2*.py' >/dev/null
+
+# El servidor de presencia con `inbox?all=1` (los avisos que otro dispositivo ya aceptó también llegan a las gafas).
+bash "$here/../vga-panel/deploy.sh"
 
 ssh -o BatchMode=yes "$host" "mkdir -p $dest ~/.config/systemd/user"
 for f in g2_bridge.py g2_stt.py; do

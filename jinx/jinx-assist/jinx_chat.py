@@ -289,8 +289,9 @@ def _redeliver(req, deps):
     line = deps.thread.answer_for(cid)
     if not line:
         return _err("no hay respuesta para ese cid")
-    ids = ["%s:jinx" % cid]
-    deps.thread.mark_mirrored(set(ids), False)  # vuelve a estar pendiente de espejar
+    # La pregunta de las gafas también vuelve a pendiente: si llega a Telegram se ve con su respuesta, no suelta.
+    ids = ["%s:g2" % cid, "%s:jinx" % cid]
+    deps.thread.mark_mirrored(set(ids), False)
     return {"ev": "delivered", "mirrored": _deliver(deps, ids, line, line.get("mood"))}
 
 

@@ -1,7 +1,7 @@
 import { createApp } from "./app.ts";
 import { createClient, describe } from "./client.ts";
 import { loadSettings, saveSettings, type Settings } from "./config.ts";
-import { EV, type RawEvent } from "./events.ts";
+import { decode, EV, type RawEvent } from "./events.ts";
 import { connect } from "./sdk.ts";
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
@@ -30,7 +30,7 @@ function launch(settings: Settings) {
 // Events from the glasses go to whichever app is running; before settings exist there is only "double-tap exits".
 bridge.onEvenHubEvent((event) => {
   if (app) void app.onEvent(event as RawEvent);
-  else if ((event as RawEvent).sysEvent?.eventType === EV.DOUBLE_CLICK) glasses.exit();
+  else if (decode(event as RawEvent).some((i) => i.t === "double")) glasses.exit(); // the store's rule, on every screen
 });
 
 // Taking the glasses off pauses everything (no microphone, no notice polling), like leaving the app.

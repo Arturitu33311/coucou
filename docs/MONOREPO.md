@@ -152,18 +152,28 @@ vectors are untouched), they only add to whoever has the island.
 - **A held answer is never lost.** The gateway does not deliver a `g2` answer to the island or Telegram: the glasses
   collect it. If nobody collects it in 180 s (the glasses came off), the bridge asks `deliver` and it goes the normal way
   (the active device's island, else Telegram).
-- Notices: `GET /api/g2/notices` long-polls the presence inbox **without acknowledging** (a plain read); Jinx's chat replies
-  (`source: jinx-chat`) are left out. The glasses show agent and system notices on the home screen.
+- Notices: `GET /api/g2/notices` long-polls the presence inbox **without acknowledging** (`GET /api/mochi/inbox?…&all=1`:
+  `all=1` also returns what the PC or a phone already accepted, which they do at once; without it the glasses would
+  mostly miss notices while another device is active). Jinx's chat replies (`source: jinx-chat`) and anything older than
+  30 min are left out. The glasses show the notices on the home screen. This needs the presence server redeployed.
+- **Deploy order**: the phones (`android/scripts/install-phone.sh`) and the PC first — an old phone build would treat a
+  `g2` line as its own unanswered one and send it again — then the gateway, then the presence server and the bridge.
+  Held answers live only in the bridge's memory: restarting it between the answer and its collection loses that
+  answer from the glasses (it stays in the thread).
 - Controls: hold the side to talk, release to send; tap pages through an answer or a notice and goes back; **double-tap
   always exits** (the store's rule). Taking the glasses off pauses the microphone and the polling.
 - The address and the key are typed once on the phone (the app's companion page) and kept in the Even app's storage;
   the manifest (`glasses/app.json`, generated, not committed) whitelists the bridge's exact origin:
   `JINX_G2_ORIGIN=https://… npm run pack` → `jinx.ehpk`. The key lives in `~/.config/jinx-g2/key` (0600) on the server.
 - Verified without hardware: unit tests, `tsc`, `vite build`, `evenhub pack`, and the **simulator** (boots, seeded
-  settings, notices arrive through the real bridge and render). **Not verified: the microphone and long-press on real
+  settings; notices through the real bridge render — against a stand-in presence server, so the `all=1` fix is covered
+  by unit tests only). **Not verified: the microphone and long-press on real
   glasses, voice transcription, the reply time, and whether notices pop up while the app is not in the foreground.**
 - Verify: `python3 -m unittest discover -s jinx/g2-bridge`, `python3 jinx/jinx-assist/test_g2_held.py`,
   `cd glasses && npm test && npm run typecheck && npm run build`.
+- Even AI's *Agent Configuration* may call the endpoint from Even's cloud and not from the phone; a tailnet-only Serve
+  cannot be reached from there. Check where its requests come from before enabling it, and do **not** open Tailscale
+  Funnel by default: that would put an agent that can run commands on the public internet behind a single key.
 
 ### Which device has Mochi (presence contract)
 

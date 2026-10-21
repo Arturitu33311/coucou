@@ -47,6 +47,7 @@ OPENAI_MAX = 700
 TEXT_MAX = 2000
 NOTICE_WAIT_MAX = 25
 NOTICE_CAP = 20
+NOTICE_MAX_AGE = 30 * 60  # segundos
 HIDDEN_NOTICE_SOURCES = ("jinx-chat",)  # las respuestas a otras conversaciones no son avisos para las gafas
 STILL_THINKING = "Sigo pensándolo; te lo mando a la isla o a Telegram cuando esté."
 
@@ -182,12 +183,17 @@ def presence_get(path, opener=urllib.request.urlopen, key_path=PRESENCE_KEY_PATH
         return json.loads(r.read() or b"{}")
 
 
-def notices_since(since, fetch=presence_get, hidden=HIDDEN_NOTICE_SOURCES):
-    """Los avisos nuevos del servidor de presencia, sin marcarlos leídos (GET del inbox, nunca ack)."""
-    data = fetch("/api/mochi/inbox?since_id=%d" % since)
+def notices_since(since, fetch=presence_get, hidden=HIDDEN_NOTICE_SOURCES, now=time.time, max_age=NOTICE_MAX_AGE):
+    """Los avisos nuevos del servidor de presencia, sin marcarlos leídos (GET del inbox, nunca ack). `all=1`: también
+    los que el PC o un teléfono ya aceptaron (si no, casi siempre llegarían tarde: quien tiene la isla los acepta al
+    instante). Los de hace más de `max_age` segundos no se enseñan (un primer arranque no recibe todo el historial)."""
+    data = fetch("/api/mochi/inbox?since_id=%d&all=1" % since)
     out = []
     for m in data.get("messages", []):
         if not isinstance(m, dict) or not isinstance(m.get("id"), int) or m.get("source") in hidden:
+            continue
+        ts = m.get("ts")
+        if isinstance(ts, (int, float)) and now() - ts > max_age:
             continue
         out.append({"id": m["id"], "text": str(m.get("text", ""))[:400], "kind": str(m.get("kind") or "info"),
                     "source": str(m.get("source") or ""), "ts": m.get("ts")})

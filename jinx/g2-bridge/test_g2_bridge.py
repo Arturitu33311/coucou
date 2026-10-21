@@ -242,12 +242,19 @@ class VoiceAndNoticesTest(unittest.TestCase):
         def fetch(path):
             calls.append(path)
             return {"messages": [
-                {"id": 4, "text": "Claude Code terminó", "kind": "info", "source": "agentes", "ts": 1},
-                {"id": 5, "text": "respuesta a otra", "kind": "info", "source": "jinx-chat", "ts": 2},
+                {"id": 4, "text": "Claude Code terminó", "kind": "info", "source": "agentes", "ts": 1000},
+                {"id": 5, "text": "respuesta a otra", "kind": "info", "source": "jinx-chat", "ts": 1000},
                 {"id": "x", "text": "roto"}]}
-        found = b.notices_since(3, fetch)
+        found = b.notices_since(3, fetch, now=lambda: 1010)
         self.assertEqual([n["id"] for n in found], [4])
-        self.assertEqual(calls, ["/api/mochi/inbox?since_id=3"])  # solo GET del inbox
+        # solo GET del inbox, y con all=1: los que otro dispositivo ya aceptó también cuentan
+        self.assertEqual(calls, ["/api/mochi/inbox?since_id=3&all=1"])
+
+    def test_old_notices_are_not_shown(self):
+        fetch = lambda path: {"messages": [{"id": 1, "text": "viejo", "ts": 100}, {"id": 2, "text": "nuevo", "ts": 5000},
+                                          {"id": 3, "text": "sin hora"}]}
+        found = b.notices_since(0, fetch, now=lambda: 5100)
+        self.assertEqual([n["id"] for n in found], [2, 3])
 
     def test_notices_endpoint(self):
         s = Server(FakeGateway(), notices=lambda since: [{"id": since + 1, "text": "hola"}])

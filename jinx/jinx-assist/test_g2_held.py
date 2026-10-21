@@ -53,7 +53,7 @@ class G2Test(unittest.TestCase):
         self.ask()
         ev = list(handle({"op": "deliver", "cid": "c1"}, self.deps))
         self.assertEqual(ev[0]["ev"], "delivered")
-        self.assertEqual(self.mirror.sent, ["Hola, soy Jinx."])
+        self.assertEqual(self.mirror.sent, ["hola", "Hola, soy Jinx."])  # the question goes with its answer
 
     def test_deliver_needs_a_known_cid(self):
         self.assertEqual(list(handle({"op": "deliver"}, self.deps))[0]["ev"], "error")

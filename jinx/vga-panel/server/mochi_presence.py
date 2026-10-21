@@ -14,7 +14,7 @@ Endpoints (127.0.0.1:8897 + IP tailnet, clave X-Mochi-Key salvo localhost):
   GET  /api/presence/state
   POST /api/mochi/message {"text","mood"|null,"kind","source"}  (texto <=500)
        -> {ok, id, active_device, watched}   watched=false: nadie mirando, avisar también por Telegram
-  GET  /api/mochi/inbox?since_id=N  -> {messages, active_device}
+  GET  /api/mochi/inbox?since_id=N[&all=1]  -> {messages, active_device}  (all=1 incluye las ya aceptadas)
   POST /api/mochi/ack {"id","by"}
   POST /api/island/command {"action","args"}   (Jinx → la isla del PC; solo lo de island_commands.py)
        -> {ok, id}  |  409 pc_offline  |  429 demasiadas  |  400 con el motivo
@@ -333,8 +333,11 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
             now = time.time()
+            # `all=1`: también las ya aceptadas por un dispositivo (solo lectura, nunca marca nada). Lo usa el puente
+            # de las gafas, que ve los avisos ADEMÁS de quien tenga la isla; sin esto casi siempre llegaría tarde.
+            every = "all=1" in self.path.split("?", 1)[-1].split("&")
             msgs = [m for m in state["inbox"]
-                    if not m.get("acked_by") and m["id"] > since][-INBOX_CAP:]
+                    if (every or not m.get("acked_by")) and m["id"] > since][-INBOX_CAP:]
             return self._send(200, {
                 "messages": msgs,
                 "active_device": active_device(now),
