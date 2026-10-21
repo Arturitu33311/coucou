@@ -5,6 +5,7 @@ import com.agupta07505.smartisland.coucou.assist.ThreadStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -44,6 +45,8 @@ class ThreadStoreTest {
     @Test fun eachSourceHasItsLabelAndItsTelegramPrefix() {
         assertEquals("PC", line("a", 1.0, src = "pc").sourceLabel)
         assertEquals("Telegram", line("a", 1.0, src = "tg").sourceLabel)
+        assertEquals("Gafas", line("a", 1.0, src = "g2").sourceLabel)
+        assertTrue(line("a", 1.0, src = "g2").fromElsewhere) // never a phone's to answer
         assertNull(line("a", 1.0, src = "s22").sourceLabel)
         assertEquals("", line("a", 1.0, src = "pc").mirrorPrefix)
         assertEquals("", line("a", 1.0, src = "s21").mirrorPrefix)

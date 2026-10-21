@@ -6,7 +6,7 @@ import type { ChatMessage } from "./state";
 export interface ThreadLine {
   id: string;
   ts: number;
-  /** tg | s21 | s22 | pc | jinx */
+  /** tg | s21 | s22 | pc | g2 | jinx */
   src: string;
   text: string;
 }
@@ -19,6 +19,7 @@ export function sourceLabel(src: string): string | undefined {
     case "s21": return "S21";
     case "s22": return "S22";
     case "pc": return "PC";
+    case "g2": return "Gafas";
     default: return src.toUpperCase();
   }
 }

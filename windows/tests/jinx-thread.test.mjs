@@ -26,6 +26,7 @@ test("each line says where it was written; Jinx's are hers", () => {
     [10, "user", "Telegram"], [11, "assistant", undefined], [12, "user", "S21"], [13, "user", "PC"],
   ]);
   assert.equal(sourceLabel("s22"), "S22");
+  assert.equal(sourceLabel("g2"), "Gafas");
   assert.equal(modeLabel("hermes"), "Jinx (Hermes)");
   assert.equal(modeLabel("local"), "Jinx de respaldo · local");
   assert.equal(modeLabel(null), "");

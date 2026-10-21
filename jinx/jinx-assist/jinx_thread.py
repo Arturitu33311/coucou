@@ -2,7 +2,7 @@
 
 Una línea JSON por mensaje en <base>/thread.jsonl:
   {"id","ts","src","text","cid","mirrored"}  (+ "mood" opcional en las líneas de Jinx)
-src: tg | s21 | s22 | pc | jinx.  id = "<cid>:<src>" si hay cid, si no un uuid.
+src: tg | s21 | s22 | pc | g2 | jinx.  id = "<cid>:<src>" si hay cid, si no un uuid.
 "mood" es uno de EMOTES (los emotes de Mochi) o no está: nunca se guarda null ni un nombre desconocido.
 Todas las operaciones toman un flock exclusivo y reescriben de forma atómica.
 """
@@ -153,13 +153,13 @@ class Thread:
     def unmirrored(self):
         return [d for d in self.read() if not d["mirrored"]]
 
-    def mark_mirrored(self, ids):
+    def mark_mirrored(self, ids, value=True):
         with self._locked():
             lines = self._read()
             changed = False
             for d in lines:
-                if d["id"] in ids and not d["mirrored"]:
-                    d["mirrored"] = True
+                if d["id"] in ids and d["mirrored"] != value:
+                    d["mirrored"] = value
                     changed = True
             if changed:
                 self._write(lines)

@@ -28,8 +28,11 @@ from jinx_thread import EMOTES, Thread, valid_mood  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
-# Quien puede escribir por el gateway: los dos teléfonos y Coucou del PC (local, sin ssh).
-SRCS = ("s21", "s22", "pc")
+# Quien puede escribir por el gateway: los dos teléfonos, Coucou del PC (local, sin ssh) y las gafas Even G2.
+SRCS = ("s21", "s22", "pc", "g2")
+# Las gafas recogen la respuesta ellas mismas (puente jinx/g2-bridge): el gateway no la reparte; si nadie la
+# recoge, el puente pide `deliver` y va a la isla o a Telegram como cualquier otra.
+HELD_SRCS = ("g2",)
 # Cómo se ve cada origen al espejarlo en Telegram.
 # En Telegram los mensajes van tal cual, sin marca de quién ni de dónde. La única marca es ⚠️: Jinx no contestó
 # con Hermes sino con un respaldo (OpenRouter, un modelo local).
@@ -278,6 +281,19 @@ def _deliver(deps, ids, line, mood=None):
     return _settle_mirror(deps, ids)
 
 
+def _redeliver(req, deps):
+    """La respuesta de un cid que las gafas no recogieron: se reparte como cualquier otra (isla o Telegram)."""
+    cid = req.get("cid")
+    if not isinstance(cid, str) or not cid:
+        return _err("deliver necesita cid")
+    line = deps.thread.answer_for(cid)
+    if not line:
+        return _err("no hay respuesta para ese cid")
+    ids = ["%s:jinx" % cid]
+    deps.thread.mark_mirrored(set(ids), False)  # vuelve a estar pendiente de espejar
+    return {"ev": "delivered", "mirrored": _deliver(deps, ids, line, line.get("mood"))}
+
+
 def _pull_hermes(deps):
     """Mezcla en el hilo lo hablado en la sesión de Telegram de Hermes (lo que no está ya). Nunca falla."""
     if deps.hermes is None:
@@ -318,7 +334,9 @@ def _send(req, deps):
         cached = deps.thread.answer_for(cid)
         if cached:
             yield {"ev": "ack"}
-            done = {"ev": "done", "mode": "cached", "text": cached["text"], "mirrored": _settle_mirror(deps, ids)}
+            held = src in HELD_SRCS
+            done = {"ev": "done", "mode": "cached", "text": cached["text"],
+                    "mirrored": True if held else _settle_mirror(deps, ids)}
             if valid_mood(cached.get("mood")):
                 done["mood"] = cached["mood"]
             yield done
@@ -334,7 +352,11 @@ def _send(req, deps):
         out, mood = split_mood((out or "").strip())
         out = (out or "").strip() or "(sin respuesta)"
         line = deps.thread.append("jinx", out, cid=cid, mood=mood, via=mode)
-        done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _deliver(deps, ids, line, mood)}
+        if src in HELD_SRCS:
+            deps.thread.mark_mirrored(set(ids))  # las gafas la recogen; si no, `deliver` la reparte
+            done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": True, "held": True}
+        else:
+            done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _deliver(deps, ids, line, mood)}
         if mood:
             done["mood"] = mood  # solo si la respuesta traía una etiqueta válida; nunca el ánimo de fondo
         yield done
@@ -377,6 +399,8 @@ def handle(req, deps):
         yield {"ev": "merged", "added": len(added),
                "items": deps.thread.since({h for h in have if isinstance(h, str)}),
                "mirrored_ids": mirrored_ids}
+    elif op == "deliver":
+        yield _redeliver(req, deps)
     elif op == "mood":
         yield _mood_event(deps)
     elif op == "notify":

@@ -25,13 +25,14 @@ data class ChatLine(
 ) {
     val fromJinx: Boolean get() = src == "jinx"
 
-    /** Written on Telegram or on the PC: never a phone's to answer, and labelled in the panel. */
-    val fromElsewhere: Boolean get() = src == "tg" || src == "pc"
+    /** Written on Telegram, the PC or the G2 glasses: never a phone's to answer, and labelled in the panel. */
+    val fromElsewhere: Boolean get() = src == "tg" || src == "pc" || src == "g2"
 
     /** What the panel says under a line written elsewhere; null for this conversation's own lines. */
     val sourceLabel: String? get() = when (src) {
         "tg" -> "Telegram"
         "pc" -> "PC"
+        "g2" -> "Gafas"
         else -> null
     }
 
