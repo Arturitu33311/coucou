@@ -16,6 +16,7 @@ interface Animated {
   draw(dt: number, t: number): void;
   /** Pages are built before they are put in the window: dropped only once gone. */
   shown?: boolean;
+  frames?: number;
   born?: number;
 }
 
@@ -23,6 +24,9 @@ const live = new Set<Animated>();
 let frame: number | null = null;
 let last = performance.now();
 const start = performance.now();
+// Linux draws the page in software (no GPU compositing, every frame repaints the window through cairo):
+// the ambient animation keeps a core at 100 % there, so each canvas is drawn twice and then left still.
+const STILL = /Linux/.test(navigator.userAgent);
 
 function loop(now: number) {
   frame = null;
@@ -37,6 +41,7 @@ function loop(now: number) {
     }
     a.shown = true;
     a.draw(dt, t);
+    if (STILL && (a.frames = (a.frames ?? 0) + 1) >= 2) live.delete(a);
   }
   if (live.size > 0 && document.visibilityState === "visible") frame = requestAnimationFrame(loop);
 }

@@ -1277,6 +1277,8 @@ fn create_settings_window(app: &AppHandle) {
         .min_inner_size(820.0, 560.0)
         .resizable(true)
         .visible(false)
+        // GNOME/Plank list a normal window as a running app (there is no Coucou launcher to match it to).
+        .skip_taskbar(cfg!(target_os = "linux"))
         .center()
         .build()
     {

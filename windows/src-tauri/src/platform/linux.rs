@@ -512,23 +512,35 @@ fn window_types(w: &gtk::gdk::Window) -> Vec<String> {
         .collect()
 }
 
+extern "C" {
+    // GDK's own X error trap (in libgdk-3): errors raised between push and pop are returned, not fatal.
+    fn gdk_error_trap_push();
+    fn gdk_error_trap_pop() -> std::os::raw::c_int;
+}
+
 /// Every top-level window on screen as the window manager describes it, bottom-most first.
+/// A window can be closed between the list and the questions we ask it; X then answers BadWindow, which GDK
+/// treats as fatal unless it is trapped. That one window is left out instead (it killed the island).
 fn window_infos(screen: &gtk::gdk::Screen, own: Option<&gtk::gdk::Window>) -> Vec<WinInfo> {
     use gtk::gdk::WindowState;
     screen
         .window_stack()
         .into_iter()
         .filter(|w| own.map_or(true, |o| w != o))
-        .map(|w| {
+        .filter_map(|w| {
+            // SAFETY: push/pop are balanced around this window's queries, on the main thread.
+            unsafe { gdk_error_trap_push() };
             let f = w.frame_extents();
             let (sl, sr, st, sb) = shadow_extents(&w);
-            WinInfo {
+            let info = WinInfo {
                 visible: (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb),
                 normal: has_titlebar(&window_types(&w)),
                 pid: cardinal(&w, "_NET_WM_PID"),
                 desktop: cardinal(&w, "_NET_WM_DESKTOP"),
                 hidden: !w.is_visible() || w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN),
-            }
+            };
+            let failed = unsafe { gdk_error_trap_pop() } != 0;
+            (!failed).then_some(info)
         })
         .collect()
 }
