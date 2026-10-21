@@ -6,7 +6,8 @@
 | `windows/` | Desktop app for Windows and Linux (Tauri + Rust + TypeScript) | MIT |
 | `relay/` | Relay (upstream) | MIT |
 | `android/` | Android app: the island and Coucou on the phone. Derived from SmartIsland | **GPL-3.0** (`android/LICENSE`) |
-| `jinx/` | Jinx's side: laptop assistant (`jinx-assist/`), the VGA panel on the server (`vga-panel/`) | MIT |
+| `jinx/` | Jinx's side: laptop assistant (`jinx-assist/`), the VGA panel on the server (`vga-panel/`), the G2 glasses' bridge (`g2-bridge/`) | MIT |
+| `glasses/` | Jinx on the Even Realities G2 glasses (an Even Hub app: Vite + TypeScript) | MIT |
 | `scripts/check-contracts.sh` | Fails if the PC's and the phone's shared test vectors differ | — |
 
 `android/` keeps the SmartIsland history and licence. It no longer follows or contributes to the SmartIsland upstream.
@@ -21,6 +22,7 @@ homelab dashboard's edited files). `docs/history/` keeps the working notes of th
 - Android: `cd android && JAVA_HOME=<jdk21> ./gradlew :app:assembleDebug` (needs `android/local.properties` with `sdk.dir`,
   which is machine-specific and ignored by git).
 - Jinx tooling: `jinx/jinx-assist/install.sh` (laptop side), `jinx/jinx-assist/deploy-server.sh`, `jinx/vga-panel/deploy.sh`.
+- Glasses: `cd glasses && npm ci && npm test && npm run typecheck` (the simulator: `npm run dev` + `npm run simulate`).
 - Before sending anything: `bash scripts/check-contracts.sh`.
 
 ## Shared contracts
@@ -129,6 +131,39 @@ Never in the list: approving or denying an agent's permission, sending mail, set
 Hub → *Apps Jinx may close* (whole names; Coucou itself never). Settings → *Jinx runs the island* turns all of it off.
 Deploy from the laptop: `jinx/jinx-assist/deploy-island.sh` (the tool, and the presence server with the queue).
 The PC needs `wmctrl` to close apps (`sudo apt install wmctrl`). Only the PC executes orders; the phones do not.
+
+### Jinx on the Even G2 glasses
+
+The G2 has a 576×288 green HUD, microphones and touch pads, no camera and no speaker; it needs the Even phone app, and
+a third-party app is a web page that runs inside that app (Even Hub SDK). So Jinx reaches the glasses through two new
+pieces, and the glasses are a **secondary surface**: they are not a presence device (`DEVICES`, the arbiter and its
+vectors are untouched), they only add to whoever has the island.
+
+| | where |
+|---|---|
+| The bridge (server, loopback `:8898`, HTTPS from Tailscale Serve) | `jinx/g2-bridge/g2_bridge.py`, voice in `g2_stt.py`, unit `hermes-jinx-g2.service`, `deploy.sh` |
+| The glasses app | `glasses/` (`state.ts` the screens, `events.ts` the touch events, `client.ts` the bridge, `app.ts` the glue) |
+| Gateway side | `jinx_chat.py`: source `g2` (held answer) and op `deliver` |
+
+- Asking: `POST /api/g2/ask {text}` (and `POST /api/g2/voice`, raw PCM 16 kHz mono) go through the gateway's `send` with
+  `src: "g2"`, so the shared thread has the glasses' lines like the phones' (labelled « Gafas »; a phone never answers
+  them). The OpenAI-compatible `POST /v1/chat/completions` is there for Even AI's *Agent Configuration* (developer-gated
+  in the Even app; it answers within 25 s or says it is still thinking).
+- **A held answer is never lost.** The gateway does not deliver a `g2` answer to the island or Telegram: the glasses
+  collect it. If nobody collects it in 180 s (the glasses came off), the bridge asks `deliver` and it goes the normal way
+  (the active device's island, else Telegram).
+- Notices: `GET /api/g2/notices` long-polls the presence inbox **without acknowledging** (a plain read); Jinx's chat replies
+  (`source: jinx-chat`) are left out. The glasses show agent and system notices on the home screen.
+- Controls: hold the side to talk, release to send; tap pages through an answer or a notice and goes back; **double-tap
+  always exits** (the store's rule). Taking the glasses off pauses the microphone and the polling.
+- The address and the key are typed once on the phone (the app's companion page) and kept in the Even app's storage;
+  the manifest (`glasses/app.json`, generated, not committed) whitelists the bridge's exact origin:
+  `JINX_G2_ORIGIN=https://… npm run pack` → `jinx.ehpk`. The key lives in `~/.config/jinx-g2/key` (0600) on the server.
+- Verified without hardware: unit tests, `tsc`, `vite build`, `evenhub pack`, and the **simulator** (boots, seeded
+  settings, notices arrive through the real bridge and render). **Not verified: the microphone and long-press on real
+  glasses, voice transcription, the reply time, and whether notices pop up while the app is not in the foreground.**
+- Verify: `python3 -m unittest discover -s jinx/g2-bridge`, `python3 jinx/jinx-assist/test_g2_held.py`,
+  `cd glasses && npm test && npm run typecheck && npm run build`.
 
 ### Which device has Mochi (presence contract)
 

@@ -16,13 +16,13 @@ This is Alan's fork. Work from the branch **`unify/monorepo`** (not `main`: `mai
 build). Branch from it and merge back into it; never start from `main` or from an old branch, that is how work got stranded.
 
 - `windows/` desktop (Tauri) · `NotchBuddy/` macOS · `relay/` · `android/` the phone app (SmartIsland-derived, **GPL-3.0**,
-  its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`).
+  its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`) · `glasses/` Jinx on the Even G2 glasses (with `jinx/g2-bridge/`).
 - Layout, shared contracts and how to pull Louis's upstream: `docs/MONOREPO.md`. Read it before touching `android/` or `windows/`.
 - The PC and the phone share two JSON vectors (`merge-vectors.json`, `presence-vectors.json`). Change both sides, then run
   `bash scripts/check-contracts.sh`.
 - Verify before saying "done": desktop `cd windows && npx tsc --noEmit`; hook `cd windows/hook && cargo test`;
   Android `cd android && ./gradlew :app:compileDebugKotlin` (needs `local.properties`); Jinx panel
-  `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`.
+  `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`; glasses `cd glasses && npm test && npm run typecheck`, bridge `python3 -m unittest discover -s jinx/g2-bridge`.
 - Install the Android app on a phone **only** with `android/scripts/install-phone.sh [ip:port]`, never a plain
   `adb install`: without Play Store as the installer, banking apps (Nu) refuse to open beside the island
   (`android/docs/BANK-APPS.md`). Never `adb uninstall` (it loses the Keystore key and the phone link).
