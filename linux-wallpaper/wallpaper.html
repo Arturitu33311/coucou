@@ -350,7 +350,7 @@ let spinA = 0, spinT = 0;
 let cardHit = null;
 const ctl = { at: -1e9, dir: 0 };
 
-/* the controls: click the cover to play / pause, scroll over the card for the next / previous track (down = next) */
+/* the controls: click the cover to play / pause, scroll over the card for the next / previous track (up = next) */
 function control(action) {
   ctl.at = performance.now(); ctl.dir = action === 'next' ? -1 : action === 'previous' ? 1 : 0;
   if (DEMO) return;
@@ -370,7 +370,8 @@ cv.addEventListener('wheel', e => {
   const n = performance.now();
   if (n - wheelAt > 250) wheelAcc = 0;                          // a new gesture
   wheelAt = n; wheelAcc += e.deltaY;
-  if (Math.abs(wheelAcc) >= 40 && n - ctl.at > 500) { control(wheelAcc > 0 ? 'next' : 'previous'); wheelAcc = 0; }
+  // the same direction as the desktop island (windows/src/views/music.ts): wheel up = next, wheel down = previous
+  if (Math.abs(wheelAcc) >= 40 && n - ctl.at > 500) { control(wheelAcc < 0 ? 'next' : 'previous'); wheelAcc = 0; }
 }, { passive: false });
 let carTint = null, carRefl = null, carTintKey = '', carBox = null, carShine = null, carShineX = null;
 function ensureCarTint(cwid) {
