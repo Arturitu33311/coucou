@@ -40,7 +40,8 @@ object LockCoverWallpaper {
     /** [key] changes with the track; [cover] may be null (nothing to show). */
     fun onPlayback(context: Context, cover: Bitmap?, playing: Boolean, key: String) {
         val app = context.applicationContext
-        if (!app.lockCover) return
+        CoverBus.publish(cover, playing, key)
+        if (!app.lockCover || liveActive(app)) return
         if (!playing) {
             scheduleRestore(app)
             return
@@ -48,9 +49,10 @@ object LockCoverWallpaper {
         cancelRestore()
         if (cover == null || cover.isRecycled || cover.width < 64) return
         val now = System.currentTimeMillis()
-        if (key == lastKey || busy || now - lastAt < MIN_GAP_MS) return
+        val id = key + "#" + CoverBus.signature(cover)
+        if (id == lastKey || busy || now - lastAt < MIN_GAP_MS) return
         busy = true
-        lastKey = key
+        lastKey = id
         lastAt = now
         val copy = cover.copy(Bitmap.Config.ARGB_8888, false) ?: run { busy = false; return }
         thread(name = "lock-cover") {
@@ -68,11 +70,19 @@ object LockCoverWallpaper {
         }
     }
 
+    /** The animated cover wallpaper owns the lock screen: setting a still image would replace it. */
+    private fun liveActive(app: Context): Boolean = runCatching {
+        android.os.Build.VERSION.SDK_INT >= 34 &&
+            WallpaperManager.getInstance(app).getWallpaperInfo(WallpaperManager.FLAG_LOCK)?.serviceName ==
+            CoverLiveWallpaperService::class.java.name
+    }.getOrDefault(false)
+
     /** Put back what was there. Called by the timer, and when the user turns the switch off. */
     fun restore(context: Context) {
         val app = context.applicationContext
         cancelRestore()
         lastKey = null
+        if (liveActive(app)) return
         thread(name = "lock-cover-restore") {
             try {
                 val wm = WallpaperManager.getInstance(app)

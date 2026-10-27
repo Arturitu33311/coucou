@@ -316,9 +316,15 @@ class SmartIslandNotificationListenerService : NotificationListenerService() {
         }
     }
 
+    private var coverWatcher: com.agupta07505.smartisland.coucou.CoverSessionWatcher? = null
+
     override fun onListenerConnected() {
         super.onListenerConnected()
         isSystemConnected = true
+        coverWatcher?.stop()
+        coverWatcher = com.agupta07505.smartisland.coucou.CoverSessionWatcher(
+            this, android.content.ComponentName(this, SmartIslandNotificationListenerService::class.java),
+        ).also { it.start() }
         runCatchingLogged(TAG, "onListenerConnected callback failed") {
             android.util.Log.d(TAG, "onListenerConnected")
             serviceScope.launch {
@@ -362,6 +368,8 @@ class SmartIslandNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         isSystemConnected = false
+        coverWatcher?.stop()
+        coverWatcher = null
         super.onListenerDisconnected()
         runCatchingLogged(TAG, "Notification-listener self-rebind failed") {
             requestRebind(
@@ -549,12 +557,6 @@ class SmartIslandNotificationListenerService : NotificationListenerService() {
             ?: extras.getCharSequence(Notification.EXTRA_INFO_TEXT)?.toString()
             ?: notification.tickerText?.toString()
             ?: (if (mode == IslandMode.Stopwatch) "Running" else if (mode == IslandMode.Timer) "Running" else "")
-
-        if (mediaInfo != null) {
-            com.agupta07505.smartisland.coucou.LockCoverWallpaper.onPlayback(
-                this, mediaInfo.artwork, mediaInfo.isPlaying, "${sbn.packageName}|$notifTitle|$notifText",
-            )
-        }
 
         notificationRepository.postNotification(
             IslandNotification(
