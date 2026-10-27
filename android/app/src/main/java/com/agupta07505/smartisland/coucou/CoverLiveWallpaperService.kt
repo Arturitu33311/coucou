@@ -340,6 +340,124 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 )
             }
             c.drawRect(0f, h * 0.45f, w.toFloat(), h.toFloat(), vignette)
+
+            // the clock (top left, where the widget was) and what is playing (above the dock)
+            ensureHomeClock()
+            val ex = w * 0.07f - HOME_PAD + px * 0.6f
+            val ey = h * 0.062f + py * 0.6f
+            homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 10f, ey - tiltY * 7f + 6f, bmp) }
+            homeClockFill?.let { c.drawBitmap(it, ex, ey, bmp) }
+            drawNowPlaying(c, dt, px)
+        }
+
+        // ---- home clock and now playing ----------------------------------------------------------------------------
+
+        private var homeClockMin = -1L
+        private var homeClockW = 0
+        private var homeClockA = 0
+        private var homeClockFill: Bitmap? = null
+        private var homeClockEcho: Bitmap? = null
+
+        /** "h:mm" in the lock screen's style (outline, dissolving fill, echo), in the colour of the lights; rebuilt once a minute. */
+        private fun ensureHomeClock() {
+            val min = System.currentTimeMillis() / 60_000L
+            if (min == homeClockMin && w == homeClockW && lightA == homeClockA) return
+            homeClockMin = min; homeClockW = w; homeClockA = lightA
+            val time = timeFmt.format(java.util.Date())
+            if (refW == 0f) {
+                clockPaint.getTextBounds("00:00", 0, 5, timeBounds)
+                refW = timeBounds.width().toFloat(); refH = timeBounds.height().toFloat()
+            }
+            val fit = w * 0.50f / refW
+            textPath.reset()
+            clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
+            textPath.transform(pathMatrix.apply { setScale(fit, fit * 1.35f) })
+            mergedPath.reset()
+            if (!mergedPath.op(textPath, textPath, Path.Op.UNION)) { mergedPath.reset(); mergedPath.addPath(textPath) }
+            mergedPath.computeBounds(pathBounds, true)
+            val tint = tintColor()
+            val bw = kotlin.math.ceil(pathBounds.width() + 2 * HOME_PAD).toInt().coerceAtLeast(1)
+            val bh = kotlin.math.ceil(pathBounds.height() + 2 * HOME_PAD).toInt().coerceAtLeast(1)
+            homeClockFill?.recycle(); homeClockEcho?.recycle()
+            val fillBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            val echoBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            clockFill.shader = LinearGradient(
+                0f, pathBounds.top, 0f, pathBounds.bottom,
+                intArrayOf(withAlpha(ColorUtils.blendARGB(tint, Color.WHITE, 0.7f), 225), withAlpha(tint, 130), withAlpha(tint, 30)),
+                floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP,
+            )
+            clockStroke.color = tint
+            Canvas(fillBmp).apply {
+                translate(HOME_PAD - pathBounds.left, HOME_PAD - pathBounds.top)
+                drawPath(mergedPath, clockFill)
+                clockStroke.alpha = 235; clockStroke.strokeWidth = 2.6f
+                drawPath(mergedPath, clockStroke)
+            }
+            Canvas(echoBmp).apply {
+                translate(HOME_PAD - pathBounds.left, HOME_PAD - pathBounds.top)
+                clockStroke.alpha = 80; clockStroke.strokeWidth = 1.8f
+                drawPath(mergedPath, clockStroke)
+            }
+            homeClockFill = fillBmp; homeClockEcho = echoBmp
+        }
+
+        /** The glow's colour, brightened, for text and lines that should belong to it. */
+        private fun tintColor(): Int = if (lightA == 0) Color.rgb(94, 234, 212) else ColorUtils.blendARGB(saturate(lightA), Color.WHITE, 0.25f)
+
+        private val npPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setShadowLayer(8f, 0f, 2f, Color.argb(170, 0, 0, 0))
+        }
+        private var npMix = 0f
+        private var npKey = ""
+        private var npW = 0
+        private var npTitle: StaticLayout? = null
+        private var npArtist: StaticLayout? = null
+        private var npLyricFor: List<Lyrics.Line>? = null
+        private var npLyricIdx = -2
+        private var npLyric: StaticLayout? = null
+
+        private fun oneLine(text: String, size: Float, width: Int): StaticLayout {
+            npPaint.textSize = size
+            return StaticLayout.Builder.obtain(text, 0, text.length, npPaint, width)
+                .setMaxLines(1).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        }
+
+        /** Title, artist and the line being sung, small, above the dock; fades in while music plays and out when it stops. */
+        private fun drawNowPlaying(c: Canvas, dt: Float, px: Float) {
+            val now = CoverBus.current()
+            npMix += ((if (now.playing) 1f else 0f) - npMix) * minOf(1f, dt * 2.5f)
+            if (npMix < 0.02f) return
+            val width = (w * 0.86f).toInt()
+            if (now.key != npKey || width != npW) {
+                npKey = now.key; npW = width
+                val parts = now.key.split("|", limit = 3)
+                npTitle = parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.046f, width) }
+                npArtist = parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.034f, width) }
+                npLyricFor = null
+            }
+            val ly = Lyrics.lines
+            val idx = if (ly.isEmpty()) -1 else Lyrics.indexAt(ly, Lyrics.positionMs())
+            if (ly !== npLyricFor || idx != npLyricIdx) {
+                npLyricFor = ly; npLyricIdx = idx
+                npLyric = ly.getOrNull(idx)?.text?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.040f, width) }
+            }
+            val gap = w * 0.012f
+            val parts = listOfNotNull(npTitle, npArtist, npLyric)
+            if (parts.isEmpty()) return
+            val total = parts.sumOf { it.height } + gap * (parts.size - 1) + (if (npLyric != null && parts.size > 1) gap else 0f)
+            var y = h * 0.785f - total
+            val a = (255 * npMix)
+            val tint = tintColor()
+            c.save()
+            c.translate(w * 0.07f + px * 0.3f, 0f)
+            for (l in parts) {
+                npPaint.color = when (l) { npTitle -> Color.WHITE; npArtist -> Color.argb(255, 200, 210, 208); else -> tint }
+                npPaint.alpha = (a * (if (l === npArtist) 0.62f else 1f)).toInt()
+                c.save(); c.translate(0f, y); l.draw(c); c.restore()
+                y += l.height + gap + (if (l === npArtist) gap else 0f)
+            }
+            c.restore()
         }
 
         private fun paint2(c: Canvas, t: Float) {
@@ -700,6 +818,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
     private companion object {
         const val CUT_TOP = 600
         const val CLOCK_BASE_Y = 730f
+        const val HOME_PAD = 10f
     }
 }
 
