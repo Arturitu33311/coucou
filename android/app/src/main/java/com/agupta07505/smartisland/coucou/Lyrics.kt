@@ -33,6 +33,7 @@ object Lyrics {
         private set
 
     @Volatile private var trackKey = ""
+    @Volatile private var failedAt = 0L
     @Volatile private var basePos = 0L
     @Volatile private var baseStamp = 0L
     @Volatile private var speed = 0f
@@ -48,16 +49,22 @@ object Lyrics {
     }
 
     fun onTrack(context: Context, key: String, artist: String, title: String, album: String, durationMs: Long) {
-        if (key == trackKey) return
+        val retry = failedAt != 0L && SystemClock.elapsedRealtime() - failedAt > 60_000L
+        if (key == trackKey && !retry) return
         trackKey = key
+        failedAt = 0L
         lines = emptyList()
         val app = context.applicationContext
         if (!app.lyricsOn || title.isBlank()) return
         thread(name = "lyrics") {
             val found = runCatching { load(app, artist, title, album, durationMs / 1000) }
-                .onFailure { Log.i(TAG, "no lyrics for $title: ${it.message}") }
-                .getOrNull().orEmpty()
-            if (trackKey == key) lines = found
+                .onFailure {
+                    Log.i(TAG, "lyrics for $title not loaded: ${it.message}")
+                    if (trackKey == key) failedAt = SystemClock.elapsedRealtime()
+                }
+                .getOrNull()
+            if (found != null) Log.i(TAG, "lyrics for $title: ${found.size} lines")
+            if (trackKey == key && found != null) lines = found
         }
     }
 
@@ -99,7 +106,8 @@ object Lyrics {
     private fun load(app: Context, artist: String, title: String, album: String, durationSec: Long): List<Line> {
         val dir = File(app.filesDir, "lyrics").apply { mkdirs() }
         val f = File(dir, Integer.toHexString("$artist|$title|$album|$durationSec".hashCode()) + ".lrc")
-        if (f.exists()) return parse(f.readText())   // an empty file means "looked up, none"
+        // an empty file means "looked up, none": believed for a week; a server error (thrown by [get]) is never cached
+        if (f.exists() && (f.length() > 0L || System.currentTimeMillis() - f.lastModified() < 7 * 86_400_000L)) return parse(f.readText())
         val lrc = fetch(artist, title, album, durationSec)
         f.writeText(lrc.orEmpty())
         return parse(lrc.orEmpty())
@@ -112,7 +120,9 @@ object Lyrics {
         (get("$API/get?$q") as? JSONObject)?.optString("syncedLyrics")?.takeIf { it.isNotBlank() && it != "null" }?.let { return it }
         // the exact lookup is strict (an extra "- Remastered" breaks it): fall back to a search with the cleaned title
         val clean = title.replace(Regex("""\s*[(\[].*?[)\]]"""), "").replace(Regex("""\s+-\s+.*$"""), "").trim()
-        val hits = get("$API/search?track_name=${enc(clean)}&artist_name=${enc(artist)}") as? JSONArray ?: return null
+        // players join several artists ("A, B, C"): the database lists the first
+        val first = artist.split(",", " & ", " feat.", " ft.").first().trim()
+        val hits = get("$API/search?track_name=${enc(clean)}&artist_name=${enc(first)}") as? JSONArray ?: return null
         for (i in 0 until hits.length()) {
             val o = hits.optJSONObject(i) ?: continue
             val synced = o.optString("syncedLyrics")
@@ -122,18 +132,28 @@ object Lyrics {
         return null
     }
 
+    /** null = the database has no such song (404); any other failure, e.g. "server busy" (503), throws after a few tries. */
     private fun get(url: String): Any? {
-        val c = URL(url).openConnection() as HttpURLConnection
-        try {
-            c.connectTimeout = 8000
-            c.readTimeout = 8000
-            c.setRequestProperty("User-Agent", AGENT)
-            if (c.responseCode != 200) return null
-            val body = c.inputStream.bufferedReader().use { it.readText() }
-            return if (body.trimStart().startsWith("[")) JSONArray(body) else JSONObject(body)
-        } finally {
-            c.disconnect()
+        var last: Exception? = null
+        repeat(3) { attempt ->
+            if (attempt > 0) Thread.sleep(2500L * attempt)
+            val c = URL(url).openConnection() as HttpURLConnection
+            try {
+                c.connectTimeout = 8000
+                c.readTimeout = 8000
+                c.setRequestProperty("User-Agent", AGENT)
+                val code = c.responseCode
+                if (code == 404) return null
+                if (code != 200) { last = java.io.IOException("HTTP $code"); return@repeat }
+                val body = c.inputStream.bufferedReader().use { it.readText() }
+                return if (body.trimStart().startsWith("[")) JSONArray(body) else JSONObject(body)
+            } catch (e: java.io.IOException) {
+                last = e
+            } finally {
+                c.disconnect()
+            }
         }
+        throw last ?: java.io.IOException("no answer")
     }
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
