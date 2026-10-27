@@ -5,8 +5,9 @@
 <title>Coucou wallpaper</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #071311; cursor: none; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  /* a wallpaper never takes the pointer: the cursor stays the desktop's own, and clicks go through */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #071311; cursor: default; pointer-events: none; }
+  canvas { display: block; width: 100vw; height: 100vh; pointer-events: none; }
 </style>
 </head>
 <body>
