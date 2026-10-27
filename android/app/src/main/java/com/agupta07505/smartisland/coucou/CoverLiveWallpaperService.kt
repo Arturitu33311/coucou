@@ -382,8 +382,10 @@ open class CoverLiveWallpaperService : WallpaperService() {
         }
 
         private fun openClock() {
-            val alarms = android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
-            launch(if (alarms.resolveActivity(packageManager) != null) alarms else packageManager.getLaunchIntentForPackage("com.sec.android.app.clockpackage"), "clock")
+            // by launcher entry (the "show alarms" intent needs the SET_ALARM permission): Samsung Clock, then Google's, then AOSP's
+            val intent = listOf("com.sec.android.app.clockpackage", "com.google.android.deskclock", "com.android.deskclock")
+                .firstNotNullOfOrNull { packageManager.getLaunchIntentForPackage(it) }
+            launch(intent, "clock")
         }
 
         /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
