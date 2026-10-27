@@ -343,24 +343,26 @@ open class CoverLiveWallpaperService : WallpaperService() {
 
             // the clock (top left, where the widget was) and what is playing (above the dock)
             ensureHomeClock()
-            val ex = w * 0.07f - HOME_PAD + px * 0.6f
-            val ey = h * 0.062f + py * 0.6f
-            homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 10f, ey - tiltY * 7f + 6f, bmp) }
-            homeClockFill?.let { c.drawBitmap(it, ex, ey, bmp) }
-            drawHomeCover(c, t, dt, px, py)
+            val fb = homeClockFill
+            val ex = (w - (fb?.width ?: 0)) / 2f + px * 0.6f
+            val ey = h * 0.13f + py * 0.6f
+            homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
+            fb?.let { c.drawBitmap(it, ex, ey, bmp) }
+            // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
+            drawHomeCover(c, t, dt, px, py, ey + (fb?.height ?: 0) * 0.72f)
             drawNowPlaying(c, dt, px)
         }
 
         private var homeCoverMix = 0f
 
         /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
-        private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float) {
+        private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float, top: Float) {
             val sq = square
             homeCoverMix += ((if (sq != null && CoverBus.current().playing) 1f else 0f) - homeCoverMix) * minOf(1f, dt * 2.5f)
             if (sq == null || homeCoverMix < 0.02f) return
-            val side = w * 0.34f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f))
-            val cx = w * 0.66f + px * 1.5f
-            val cy = h * 0.135f + py * 1.3f + 5f * sin(t / 4f)
+            val side = w * 0.46f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f))
+            val cx = w * 0.5f + px * 1.5f
+            val cy = top + w * 0.23f + py * 1.3f + 5f * sin(t / 4f)
             val fade = homeCoverMix < 0.98f
             val layer = if (fade) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * homeCoverMix).toInt()) else c.save()
             c.rotate(5f + 1.2f * sin(t / 6f) + tiltX * 3f, cx, cy)
@@ -400,7 +402,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 clockPaint.getTextBounds("00:00", 0, 5, timeBounds)
                 refW = timeBounds.width().toFloat(); refH = timeBounds.height().toFloat()
             }
-            val fit = w * 0.50f / refW
+            val fit = w * 0.74f / refW
             textPath.reset()
             clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
             textPath.transform(pathMatrix.apply { setScale(fit, fit * 1.35f) })
@@ -452,6 +454,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private fun oneLine(text: String, size: Float, width: Int): StaticLayout {
             npPaint.textSize = size
             return StaticLayout.Builder.obtain(text, 0, text.length, npPaint, width)
+                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
                 .setMaxLines(1).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
         }
 
@@ -482,7 +485,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val a = (255 * npMix)
             val tint = tintColor()
             c.save()
-            c.translate(w * 0.07f + px * 0.3f, 0f)
+            c.translate(w * 0.07f + px * 0.3f, 0f)   // the column is 86% wide, centred, and its lines are centred in it
             for (l in parts) {
                 npPaint.color = when (l) { npTitle -> Color.WHITE; npArtist -> Color.argb(255, 200, 210, 208); else -> tint }
                 npPaint.alpha = (a * (if (l === npArtist) 0.62f else 1f)).toInt()
