@@ -17,6 +17,7 @@
    line being sung (filling in as it goes), and a small status gauge (battery arc, Wi-Fi, signal dots).
    ?demo=1 runs it with made-up data, for trying it without a player. */
 'use strict';
+const TOKEN = '__TOKEN__';          // this launch's secret, put here by the server; every request carries it as ?k=
 const DEMO = new URLSearchParams(location.search).has('demo');
 const STILL = new URLSearchParams(location.search).has('still');
 const WANT_CAR = new URLSearchParams(location.search).get('mode') !== 'classic';   // the car layout, when the car image is there
@@ -24,7 +25,7 @@ let carImg = null;
 if (WANT_CAR) {
   const im = new Image();
   im.onload = () => { carImg = im; clockKey = ''; carTintKey = ''; };
-  im.src = '/car.png';                                     // 404 when there is none: the classic layout is used
+  im.src = '/car.png?k=' + TOKEN;                                   // 404 when there is none: the classic layout is used
 }
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
@@ -73,7 +74,7 @@ async function poll() {
   try {
     if (DEMO) { st = demoState(); stAt = performance.now(); }
     else {
-      const r = await fetch('/state', { cache: 'no-store' });
+      const r = await fetch('/state?k=' + TOKEN, { cache: 'no-store' });
       st = await r.json(); stAt = performance.now();
     }
     onState();
@@ -129,7 +130,7 @@ function onState() {
     lyrKey = key; lyr = [];
     if (DEMO) lyr = parseLrc(DEMO_LRC);
     else if (st.lyricsEnabled) {
-      const q = new URLSearchParams({ artist: p.artist, title: p.title, album: p.album, duration: Math.round(p.lengthMs / 1000) });
+      const q = new URLSearchParams({ k: TOKEN, artist: p.artist, title: p.title, album: p.album, duration: Math.round(p.lengthMs / 1000) });
       fetch('/lyrics?' + q).then(r => r.ok ? r.text() : '').then(t => { if (lyrKey === key) lyr = parseLrc(t); }).catch(() => {});
     }
   }
@@ -137,7 +138,7 @@ function onState() {
     coverFrom = p.art;
     const next = new Image();
     next.onload = () => { coverImg = DEMO ? demoCover() : next; setColours(coverImg); coverKey = key; enterAt = performance.now(); };
-    if (DEMO) next.onload(); else next.src = p.art;
+    if (DEMO) next.onload(); else next.src = p.art + '&k=' + TOKEN;
   }
 }
 
@@ -294,7 +295,7 @@ let bassS = 0;
 async function pollSpec() {
   const p = st && st.player;
   if (!DEMO && WANT_CAR && p && p.status === 'Playing') {
-    try { spec = await (await fetch('/spectrum', { cache: 'no-store' })).json(); } catch (e) { /* no analyser: no visualizer */ }
+    try { spec = await (await fetch('/spectrum?k=' + TOKEN, { cache: 'no-store' })).json(); } catch (e) { /* no analyser: no visualizer */ }
     setTimeout(pollSpec, 60);
   } else setTimeout(pollSpec, 1000);
 }

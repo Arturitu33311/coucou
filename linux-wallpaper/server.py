@@ -11,11 +11,13 @@ Standard library only. Nothing is written outside ~/.cache/coucou-wallpaper.
 """
 import argparse
 import hashlib
+import hmac
 import http.client
 import ipaddress
 import json
 import os
 import re
+import secrets
 import select
 import socket
 import ssl
@@ -31,6 +33,7 @@ CACHE = os.path.join(os.path.expanduser("~"), ".cache", "coucou-wallpaper")
 CAR_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "coucou-wallpaper", "car")   # car_cut.png + credits.txt
 AGENT = "Coucou-Linux-wallpaper (https://github.com/Arturitu33311/coucou)"
 LYRICS_ON = False
+TOKEN = secrets.token_urlsafe(16)       # new on every launch
 CURRENT_ART = ""
 PORT = 8765
 
@@ -310,12 +313,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", "/index.html"):
                 with open(os.path.join(HERE, "wallpaper.html"), "rb") as f:
-                    return self.send(200, f.read(), "text/html; charset=utf-8")
+                    # the page carries this launch's secret; everything else needs it, so a web page that makes the browser
+                    # send a request to localhost cannot start the audio analysis or read what is playing
+                    return self.send(200, f.read().replace(b"__TOKEN__", TOKEN.encode()), "text/html; charset=utf-8")
+            if not hmac.compare_digest(q.get("k", [""])[0], TOKEN):
+                return self.send(403, b"forbidden", "text/plain")
             if u.path == "/car.png":                      # the user's own car cut-out; one fixed file, never a path from the request
                 with open(os.path.join(CAR_DIR, "car_cut.png"), "rb") as f:
                     return self.send(200, f.read(), "image/png")
             if u.path == "/spectrum":
-                return self.send(200, json.dumps(SPECTRUM.request()).encode(), "application/json")
+                # the analysis runs only while a player is playing
+                playing = ((state() or {}).get("player") or {}).get("status") == "Playing"
+                body = SPECTRUM.request() if playing else {"bands": [0.0] * Spectrum.BANDS, "bass": 0.0, "available": SPECTRUM.available is not False}
+                return self.send(200, json.dumps(body).encode(), "application/json")
             if u.path == "/state":
                 return self.send(200, json.dumps(state()).encode(), "application/json")
             if u.path == "/art":
