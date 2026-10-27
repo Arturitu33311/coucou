@@ -345,7 +345,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             ensureHomeClock()
             val fb = homeClockFill
             val ex = (w - (fb?.width ?: 0)) / 2f + px * 0.6f
-            val ey = h * 0.13f + py * 0.6f
+            val ey = h * 0.105f + py * 0.6f
             homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
             fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
             // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
@@ -434,10 +434,10 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 clockPaint.getTextBounds("00:00", 0, 5, timeBounds)
                 refW = timeBounds.width().toFloat(); refH = timeBounds.height().toFloat()
             }
-            val fit = w * 0.74f / refW
+            val fit = w * 0.80f / refW
             textPath.reset()
             clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
-            textPath.transform(pathMatrix.apply { setScale(fit, fit * 1.35f) })
+            textPath.transform(pathMatrix.apply { setScale(fit, fit * 1.9f) })   // tall and narrow, like the lock screen's
             mergedPath.reset()
             if (!mergedPath.op(textPath, textPath, Path.Op.UNION)) { mergedPath.reset(); mergedPath.addPath(textPath) }
             mergedPath.computeBounds(pathBounds, true)
