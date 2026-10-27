@@ -347,13 +347,44 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val ex = (w - (fb?.width ?: 0)) / 2f + px * 0.6f
             val ey = h * 0.13f + py * 0.6f
             homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
-            fb?.let { c.drawBitmap(it, ex, ey, bmp) }
+            fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
             // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
             drawHomeCover(c, t, dt, px, py, ey + (fb?.height ?: 0) * 0.72f)
             drawNowPlaying(c, dt, px)
         }
 
         private var homeCoverMix = 0f
+        private val coverHit = RectF()
+        private val clockHit = RectF()
+
+        /** The launcher reports taps on empty home-screen space to the wallpaper: the cover opens the player, the clock the clock app. */
+        override fun onCommand(action: String?, x: Int, y: Int, z: Int, extras: android.os.Bundle?, resultRequested: Boolean): android.os.Bundle? {
+            if (homeMode && action == android.app.WallpaperManager.COMMAND_TAP) {
+                val fx = x.toFloat(); val fy = y.toFloat()
+                when {
+                    homeCoverMix > 0.3f && coverHit.contains(fx, fy) -> openPlayer()
+                    clockHit.contains(fx, fy) -> openClock()
+                }
+            }
+            return null
+        }
+
+        private fun launch(intent: android.content.Intent?, what: String) {
+            if (intent == null) { Log.i("HomeTap", "no app for $what"); return }
+            runCatching { startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                .onFailure { Log.w("HomeTap", "could not open $what", it) }
+        }
+
+        /** The app that is playing (its package is the first part of the track key); Spotify if that is not known. */
+        private fun openPlayer() {
+            val pkg = CoverBus.current().key.substringBefore("|").takeIf { it.contains('.') && it != "debug" } ?: "com.spotify.music"
+            launch(packageManager.getLaunchIntentForPackage(pkg), pkg)
+        }
+
+        private fun openClock() {
+            val alarms = android.content.Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS)
+            launch(if (alarms.resolveActivity(packageManager) != null) alarms else packageManager.getLaunchIntentForPackage("com.sec.android.app.clockpackage"), "clock")
+        }
 
         /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
         private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float, top: Float) {
@@ -367,6 +398,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val layer = if (fade) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * homeCoverMix).toInt()) else c.save()
             c.rotate(5f + 1.2f * sin(t / 6f) + tiltX * 3f, cx, cy)
             rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+            coverHit.set(cx - side * 0.55f, cy - side * 0.55f, cx + side * 0.55f, cy + side * 0.55f)
             val r = side * 0.07f
             paint.style = Paint.Style.FILL
             paint.color = Color.argb(120, 0, 0, 0)
