@@ -519,6 +519,13 @@ open class CoverLiveWallpaperService : WallpaperService() {
         /** The essentials of the status bar, in the wallpaper, under it: the date and the battery (⚡ while charging). */
         private val badge by lazy { HomeStatusBadge(this@CoverLiveWallpaperService) }
 
+        /** The same status gauge, in the same corner, on the lock screen; coloured by the cover's accent (teal with no cover). */
+        private fun drawLockStatus(c: Canvas) {
+            val d = w * 0.115f
+            val base = if (square != null) withAlpha(accent, 255) else Color.rgb(94, 234, 212)
+            badge.draw(c, w - d * 0.5f - w * 0.10f + tiltX * w * 0.01f, h * 0.052f, d, ColorUtils.blendARGB(base, Color.WHITE, 0.25f))
+        }
+
         private fun drawInfoRow(c: Canvas, px: Float) {
             // top right corner, where the system's own status icons are
             val d = w * 0.115f
@@ -653,7 +660,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (w == 0 || h == 0) return
             c.drawColor(Color.rgb(7, 19, 17))
             if (homeMode) { drawHome(c, t); return }
-            if (carMode) drawCarBehind(c, t)
+            if (carMode) { drawCarBehind(c, t); drawLockStatus(c) }
 
             // blurred copy drifting slowly (Ken Burns)
             if (!carMode) backdrop?.let { b ->
