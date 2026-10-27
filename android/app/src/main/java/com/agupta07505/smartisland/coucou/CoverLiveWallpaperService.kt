@@ -13,6 +13,7 @@ import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
+import android.graphics.SweepGradient
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -47,6 +48,39 @@ class CoverLiveWallpaperService : WallpaperService() {
         private val blob1 = Paint(Paint.ANTI_ALIAS_FLAG)
         private val blob2 = Paint(Paint.ANTI_ALIAS_FLAG)
         private val clip = Path()
+        private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+        /** Only for bitmaps and never recoloured: a colour with alpha on [paint] would make the pictures translucent. */
+        private val bmp = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+        // vinyl: turns while music plays, slows down when it pauses
+        private var spin = 0f
+        private var spinSpeed = 0f
+        private var lastT = 0f
+        private val sheen = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = SweepGradient(
+                0f, 0f,
+                intArrayOf(0x00FFFFFF, 0x34FFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x34FFFFFF, 0x00FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.08f, 0.16f, 0.5f, 0.58f, 0.66f, 1f),
+            )
+        }
+
+        private val spinMark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = SweepGradient(
+                0f, 0f,
+                intArrayOf(0x00FFFFFF, 0x2CFFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x1CFFFFFF, 0x00FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.04f, 0.10f, 0.25f, 0.5f, 0.54f, 0.60f, 1f),
+            )
+        }
+
+        // particles: soft motes drifting up, in the cover's colours
+        private val nDots = 44
+        private val rnd = java.util.Random(7)
+        private val dx = FloatArray(nDots) { rnd.nextFloat() }
+        private val dy = FloatArray(nDots) { rnd.nextFloat() }
+        private val dr = FloatArray(nDots) { 2f + rnd.nextFloat() * 6f }
+        private val dv = FloatArray(nDots) { 0.012f + rnd.nextFloat() * 0.03f }
+        private val da = FloatArray(nDots) { 40f + rnd.nextFloat() * 100f }
+        private val dp = FloatArray(nDots) { rnd.nextFloat() * 6.28f }
 
         private val tick = object : Runnable {
             override fun run() {
@@ -123,7 +157,7 @@ class CoverLiveWallpaperService : WallpaperService() {
                 c.save()
                 c.translate(w / 2f + 40f * sin(t / 13f), h / 2f + 40f * cos(t / 11f))
                 c.scale(k, k)
-                c.drawBitmap(b, -b.width / 2f, -b.height / 2f, paint)
+                c.drawBitmap(b, -b.width / 2f, -b.height / 2f, bmp)
                 c.restore()
             }
             c.drawColor(Color.argb(if (backdrop != null) 168 else 0, 7, 19, 17))
@@ -138,12 +172,66 @@ class CoverLiveWallpaperService : WallpaperService() {
             c.drawCircle(0f, 0f, w * 0.75f, blob2)
             c.restore()
 
+            // spin of the record: speeds up with the music, coasts to a stop when it pauses
+            val dt = (t - lastT).coerceIn(0f, 0.1f)
+            lastT = t
+            val target = if (CoverBus.current().playing) 70f else 0f
+            spinSpeed += (target - spinSpeed) * minOf(1f, dt * 1.5f)
+            spin = (spin + spinSpeed * dt) % 360f
+
+            // particles, under everything that is solid
+            val light = Color.argb(255, 255, 255, 255)
+            for (i in 0 until nDots) {
+                val y = (((dy[i] - t * dv[i]) % 1f) + 1f) % 1f * h
+                val x = (dx[i] + 0.03f * sin(t * 0.4f + dp[i])) * w
+                val a = da[i] * (0.6f + 0.4f * sin(t * 1.3f + dp[i]))
+                val base = if (i % 2 == 0) c1 else accent
+                dot.color = androidx.core.graphics.ColorUtils.blendARGB(base, light, 0.35f)
+                dot.alpha = a.toInt().coerceIn(0, 255)
+                c.drawCircle(x, y, dr[i], dot)
+            }
+
             // the cover itself, breathing a little
             val sq = square ?: return
-            val side = w * 0.80f * (1f + 0.012f * sin(t / 3f))
-            val cx = w / 2f
+            val side = w * 0.64f * (1f + 0.012f * sin(t / 3f))
+            val cx = w * 0.40f
             val cy = h * 0.60f + 6f * sin(t / 4f)
             val box = RectF(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+
+            // the record sliding out from behind the cover
+            val vr = side * 0.485f
+            val vx = cx + side * 0.34f
+            c.save()
+            c.translate(vx, cy)
+            dot.color = Color.argb(90, 0, 0, 0)
+            c.drawCircle(side * 0.02f, side * 0.02f, vr, dot)
+            dot.color = Color.rgb(11, 11, 12)
+            c.drawCircle(0f, 0f, vr, dot)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f
+            paint.color = Color.argb(20, 255, 255, 255)
+            for (k in 0..9) c.drawCircle(0f, 0f, vr * (0.40f + 0.058f * k), paint)
+            c.drawCircle(0f, 0f, vr * 0.99f, sheen)
+            // a faint wedge that turns with the record, so the spin shows even with the label behind the cover
+            c.save()
+            c.rotate(spin)
+            c.drawCircle(0f, 0f, vr * 0.99f, spinMark)
+            c.restore()
+            val rl = vr * 0.34f
+            c.save()
+            c.rotate(spin)
+            clip.reset(); clip.addCircle(0f, 0f, rl, Path.Direction.CW)
+            c.clipPath(clip)
+            val q = sq.width * 0.30f
+            c.drawBitmap(sq, Rect((sq.width / 2 - q).toInt(), (sq.height / 2 - q).toInt(), (sq.width / 2 + q).toInt(), (sq.height / 2 + q).toInt()), RectF(-rl, -rl, rl, rl), bmp)
+            c.restore()
+            paint.color = accent
+            paint.strokeWidth = 2f
+            c.drawCircle(0f, 0f, rl, paint)
+            paint.style = Paint.Style.FILL
+            dot.color = Color.rgb(11, 11, 12)
+            c.drawCircle(0f, 0f, vr * 0.035f, dot)
+            c.restore()
             val r = side * 0.07f
             c.save()
             c.rotate(1.0f * sin(t / 7f), cx, cy)
@@ -152,7 +240,7 @@ class CoverLiveWallpaperService : WallpaperService() {
             c.drawRoundRect(RectF(box.left, box.top + side * 0.025f, box.right, box.bottom + side * 0.025f), r, r, paint)
             clip.reset(); clip.addRoundRect(box, r, r, Path.Direction.CW)
             c.save(); c.clipPath(clip)
-            c.drawBitmap(sq, Rect(0, 0, sq.width, sq.height), box, paint)
+            c.drawBitmap(sq, Rect(0, 0, sq.width, sq.height), box, bmp)
             c.restore()
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 2f

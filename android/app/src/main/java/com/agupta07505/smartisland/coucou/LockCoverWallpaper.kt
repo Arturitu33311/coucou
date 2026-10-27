@@ -130,6 +130,7 @@ object LockCoverWallpaper {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out)
         val p = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        val bmp = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG) // never recoloured: keeps the pictures opaque
 
         // backdrop: the cover scaled to fill, blurred by going down to 1/28 and back up, then darkened
         val small = Bitmap.createScaledBitmap(cover, 28, (28f * h / w).toInt().coerceAtLeast(28), true)
@@ -137,7 +138,7 @@ object LockCoverWallpaper {
         c.save()
         c.translate((w - small.width * k) / 2f, (h - small.height * k) / 2f)
         c.scale(k, k)
-        c.drawBitmap(small, 0f, 0f, p)
+        c.drawBitmap(small, 0f, 0f, bmp)
         c.restore()
         c.drawColor(Color.argb(176, 7, 19, 17))
 
@@ -156,7 +157,7 @@ object LockCoverWallpaper {
         c.drawBitmap(
             cover,
             android.graphics.Rect((cover.width - sq) / 2, (cover.height - sq) / 2, (cover.width + sq) / 2, (cover.height + sq) / 2),
-            box, p,
+            box, bmp,
         )
         c.restore()
         p.style = Paint.Style.STROKE
