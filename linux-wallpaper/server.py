@@ -255,7 +255,9 @@ class Spectrum:
         except ImportError:
             self.available = False
             return
-        rate, n = 22050, 1024
+        # a window of 2048 samples (finer than ~11 Hz per bin, so the bass bands have something to measure), slid forward
+        # 512 samples (about 23 ms) at a time
+        rate, n, hop = 22050, 2048, 512
         try:
             proc = subprocess.Popen(["parec", "-d", "@DEFAULT_MONITOR@", "--format=s16le", f"--rate={rate}", "--channels=1", "--latency-msec=40"],
                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -267,18 +269,22 @@ class Spectrum:
         freqs = np.fft.rfftfreq(n, 1 / rate)
         edges = np.geomspace(40, 9000, self.BANDS + 1)
         idx = [np.where((freqs >= edges[i]) & (freqs < edges[i + 1]))[0] for i in range(self.BANDS)]
+        centres = np.sqrt(edges[:-1] * edges[1:])
+        window = np.zeros(n, dtype=np.float32)
         peak = 0.6
         try:
             while time.time() - self.last_req < 10:
                 if not select.select([proc.stdout], [], [], 1.0)[0]:
                     self.bands, self.bass = [0.0] * self.BANDS, 0.0     # nothing is being played
                     continue
-                buf = proc.stdout.read(n * 2)
-                if len(buf) < n * 2:
+                buf = proc.stdout.read(hop * 2)
+                if len(buf) < hop * 2:
                     break
-                x = np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768
-                mag = np.abs(np.fft.rfft(x * win))
-                b = np.log1p(np.array([mag[i].mean() if len(i) else 0.0 for i in idx]) * 40)
+                window = np.concatenate([window[hop:], np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768])
+                mag = np.abs(np.fft.rfft(window * win))
+                # a band with several bins: their mean; a narrower one: the spectrum interpolated at its centre
+                raw = np.array([mag[i].mean() if len(i) > 1 else np.interp(c, freqs, mag) for i, c in zip(idx, centres)])
+                b = np.log1p(raw * 40)
                 # automatic gain, shared by all bands (so their shape is kept): the loudest recent level is "full", with a
                 # floor so near-silence is not blown up
                 peak = max(peak * 0.995, float(b.max()), 0.6)

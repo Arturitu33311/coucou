@@ -17,7 +17,15 @@
    line being sung (filling in as it goes), and a small status gauge (battery arc, Wi-Fi, signal dots).
    ?demo=1 runs it with made-up data, for trying it without a player. */
 'use strict';
-const TOKEN = '__TOKEN__';          // this launch's secret, put here by the server; every request carries it as ?k=
+// older web engines (the wallpaper app's) lack roundRect: a plain version, same behaviour
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+  };
+}
+const TOKEN ='__TOKEN__';          // this launch's secret, put here by the server; every request carries it as ?k=
 const DEMO = new URLSearchParams(location.search).has('demo');
 const STILL = new URLSearchParams(location.search).has('still');
 const WANT_CAR = new URLSearchParams(location.search).get('mode') !== 'classic';   // the car layout, when the car image is there
@@ -76,6 +84,7 @@ async function poll() {
     if (DEMO) { st = demoState(); stAt = performance.now(); }
     else {
       const r = await fetch('/state?k=' + TOKEN, { cache: 'no-store' });
+      if (r.status === 403) { setTimeout(() => location.reload(), 1500); return; }   // the server restarted: a new token, so a new page
       st = await r.json(); stAt = performance.now();
     }
     onState();
@@ -132,7 +141,12 @@ function onState() {
     if (DEMO) lyr = parseLrc(DEMO_LRC);
     else if (st.lyricsEnabled) {
       const q = new URLSearchParams({ k: TOKEN, artist: p.artist, title: p.title, album: p.album, duration: Math.round(p.lengthMs / 1000) });
-      fetch('/lyrics?' + q).then(r => r.ok ? r.text() : '').then(t => { if (lyrKey === key) lyr = parseLrc(t); }).catch(() => {});
+      // the lyrics service is sometimes busy: try again a few times, a bit later
+      const tryLyrics = n => fetch('/lyrics?' + q).then(r => {
+        if (r.ok) return r.text().then(t => { if (lyrKey === key) lyr = parseLrc(t); });
+        if (n < 4 && lyrKey === key) setTimeout(() => tryLyrics(n + 1), 45000);
+      }).catch(() => { if (n < 4 && lyrKey === key) setTimeout(() => tryLyrics(n + 1), 45000); });
+      tryLyrics(0);
     }
   }
   if (p.art !== coverFrom) {              // the new cover loads; the old one stays until it is there
