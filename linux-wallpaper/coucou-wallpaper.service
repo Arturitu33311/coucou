@@ -1,10 +1,12 @@
 [Unit]
-Description=Coucou Linux wallpaper (local server for the animated wallpaper page)
+Description=Coucou Linux wallpaper (local server for the animated wallpaper page shown by Hidamari)
 
 [Service]
-# edit the path to where this folder lives; add --lyrics to look up synced lyrics on lrclib.net
-ExecStart=/usr/bin/python3 %h/dev/coucou-suite/linux-wallpaper/server.py --port 8765
+# Runs the copy in ~/.local/share/coucou-wallpaper/app (so it does not depend on where the repo is).
+# --lyrics looks up synced lyrics on lrclib.net (artist, title and album of what plays); remove it to keep everything local.
+ExecStart=/usr/bin/python3 %h/.local/share/coucou-wallpaper/app/server.py --port 8765 --lyrics
 Restart=on-failure
+RestartSec=2
 
 [Install]
 WantedBy=default.target
