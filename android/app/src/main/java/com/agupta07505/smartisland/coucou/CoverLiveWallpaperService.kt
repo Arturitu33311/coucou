@@ -347,7 +347,39 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val ey = h * 0.062f + py * 0.6f
             homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 10f, ey - tiltY * 7f + 6f, bmp) }
             homeClockFill?.let { c.drawBitmap(it, ex, ey, bmp) }
+            drawHomeCover(c, t, dt, px, py)
             drawNowPlaying(c, dt, px)
+        }
+
+        private var homeCoverMix = 0f
+
+        /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
+        private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float) {
+            val sq = square
+            homeCoverMix += ((if (sq != null && CoverBus.current().playing) 1f else 0f) - homeCoverMix) * minOf(1f, dt * 2.5f)
+            if (sq == null || homeCoverMix < 0.02f) return
+            val side = w * 0.34f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f))
+            val cx = w * 0.66f + px * 1.5f
+            val cy = h * 0.135f + py * 1.3f + 5f * sin(t / 4f)
+            val fade = homeCoverMix < 0.98f
+            val layer = if (fade) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * homeCoverMix).toInt()) else c.save()
+            c.rotate(5f + 1.2f * sin(t / 6f) + tiltX * 3f, cx, cy)
+            rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+            val r = side * 0.07f
+            paint.style = Paint.Style.FILL
+            paint.color = Color.argb(120, 0, 0, 0)
+            c.drawRoundRect(rectA.left + side * 0.02f, rectA.top + side * 0.04f, rectA.right + side * 0.02f, rectA.bottom + side * 0.04f, r, r, paint)
+            clip.reset(); clip.addRoundRect(rectA, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            srcA.set(0, 0, sq.width, sq.height)
+            c.drawBitmap(sq, srcA, rectA, bmp)
+            c.restore()
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            paint.color = accent
+            c.drawRoundRect(rectA, r, r, paint)
+            paint.style = Paint.Style.FILL
+            c.restoreToCount(layer)
         }
 
         // ---- home clock and now playing ----------------------------------------------------------------------------
