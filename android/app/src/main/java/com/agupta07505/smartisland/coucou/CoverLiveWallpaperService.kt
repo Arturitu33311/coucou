@@ -202,6 +202,11 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val vivid = homeMode && mix < 0.5f
             val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix).let { if (vivid) saturate(it) else it } else c1
             val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix).let { if (vivid) saturate(it) else it } else c2
+            if (homeMode && (l1 != lightA || l2 != lightB)) {
+                lightA = l1; lightB = l2
+                // tell the system (and the launcher's accent / icon tint) what colour the wallpaper is now
+                if (android.os.Build.VERSION.SDK_INT >= 27) notifyColorsChanged()
+            }
             blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l1, 150), withAlpha(l1, 0)), null, Shader.TileMode.CLAMP)
             blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l2, 130), withAlpha(l2, 0)), null, Shader.TileMode.CLAMP)
             val light = Color.WHITE
@@ -256,7 +261,17 @@ open class CoverLiveWallpaperService : WallpaperService() {
 
         // ---- home variant -----------------------------------------------------------------------------------------
 
-        private var pageX = 0.5f                // home page scroll, 0..1 (the launcher tells us)
+        private var lightA = 0
+        private var lightB = 0
+
+        /** The home wallpaper's own colours, for the system palette: the two lights, which follow the music and the hour. */
+        @androidx.annotation.RequiresApi(27)
+        override fun onComputeColors(): android.app.WallpaperColors? {
+            if (!homeMode || lightA == 0) return null
+            return android.app.WallpaperColors(Color.valueOf(lightA), Color.valueOf(lightB), null)
+        }
+
+        private var pageX = 0.5f               // home page scroll, 0..1 (the launcher tells us)
         private var hourKey = -1L
         private val vignette = Paint()
 
