@@ -349,11 +349,15 @@ open class CoverLiveWallpaperService : WallpaperService() {
             homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
             fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
             // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
+            drawInfoRow(c, px)
             drawHomeCover(c, t, dt, px, py, ey + (fb?.height ?: 0) * 0.72f)
             drawNowPlaying(c, t, dt, px)
         }
 
         private var homeCoverMix = 0f
+        private var coverKeySeen: String? = null
+        private var enterAt = 0f
+        private var enterFrom = 0f
         private val coverHit = RectF()
         private val clockHit = RectF()
 
@@ -362,11 +366,36 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (homeMode && action == android.app.WallpaperManager.COMMAND_TAP) {
                 val fx = x.toFloat(); val fy = y.toFloat()
                 when {
-                    homeCoverMix > 0.3f && coverHit.contains(fx, fy) -> openPlayer()
+                    homeCoverMix > 0.3f && coverHit.contains(fx, fy) -> coverTap(fx)
+                    npMix > 0.3f && npHit.contains(fx, fy) -> openPlayer()
                     clockHit.contains(fx, fy) -> openClock()
                 }
             }
             return null
+        }
+
+        private var nudgeAt = -10f
+        private var nudgeDir = 0
+        private val npHit = RectF()
+
+        /** Taps on the cover are the player's controls: left third previous, right third next, middle play / pause. */
+        private fun coverTap(fx: Float) {
+            val f = (fx - coverHit.left) / coverHit.width()
+            nudgeAt = (SystemClock.uptimeMillis() - t0) / 1000f
+            when {
+                f < 0.34f -> { nudgeDir = 1; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+                f > 0.66f -> { nudgeDir = -1; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT) }
+                else -> { nudgeDir = 0; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
+            }
+        }
+
+        /** A media key, as the headset button sends it: goes to whichever player is active, no permission needed. */
+        private fun mediaKey(code: Int) {
+            runCatching {
+                val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+                am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code))
+                am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code))
+            }.onFailure { Log.w("HomeTap", "media key failed", it) }
         }
 
         private fun launch(intent: android.content.Intent?, what: String) {
@@ -393,11 +422,27 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val sq = square
             homeCoverMix += ((if (sq != null && CoverBus.current().playing) 1f else 0f) - homeCoverMix) * minOf(1f, dt * 2.5f)
             if (sq == null || homeCoverMix < 0.02f) return
-            val side = w * 0.46f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f))
-            val cx = w * 0.5f + px * 1.5f
+            // a tap on the cover answers with a small slide (next: to the left, previous: to the right) or a press (play / pause);
+            // a new track comes in from the side it was asked from
+            val n = (t - nudgeAt) / 0.45f
+            var nx = 0f
+            var press = 1f
+            if (n in 0f..1f) {
+                val k = sin(Math.PI.toFloat() * n) * (1f - n * 0.5f)
+                if (nudgeDir == 0) press = 1f - 0.07f * k else nx = nudgeDir * w * 0.07f * k
+            }
+            if (shownKey !== coverKeySeen) {
+                coverKeySeen = shownKey
+                enterAt = t
+                enterFrom = if (t - nudgeAt < 4f && nudgeDir != 0) -nudgeDir.toFloat() else 0f
+            }
+            val en = ((t - enterAt) / 0.5f).coerceIn(0f, 1f)
+            val ee = 1f - (1f - en) * (1f - en) * (1f - en)
+            val side = w * 0.46f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f)) * press
+            val cx = w * 0.5f + px * 1.5f + nx + enterFrom * w * 0.16f * (1f - ee)
             val cy = top + w * 0.23f + py * 1.3f + 5f * sin(t / 4f)
-            val fade = homeCoverMix < 0.98f
-            val layer = if (fade) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * homeCoverMix).toInt()) else c.save()
+            val alpha = homeCoverMix * (0.3f + 0.7f * ee)
+            val layer = if (alpha < 0.98f) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * alpha).toInt()) else c.save()
             c.rotate(5f + 1.2f * sin(t / 6f) + tiltX * 3f, cx, cy)
             rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
             coverHit.set(cx - side * 0.55f, cy - side * 0.55f, cx + side * 0.55f, cy + side * 0.55f)
@@ -419,6 +464,35 @@ open class CoverLiveWallpaperService : WallpaperService() {
         }
 
         // ---- home clock and now playing ----------------------------------------------------------------------------
+
+        private val infoPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.06f
+            setShadowLayer(6f, 0f, 2f, Color.argb(150, 0, 0, 0))
+        }
+        private var infoText = ""
+        private var infoAt = 0L
+        private val dateFmt = java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.getDefault())
+
+        /** The essentials of the status bar, in the wallpaper, under it: the date and the battery (⚡ while charging). */
+        private fun drawInfoRow(c: Canvas, px: Float) {
+            val now = System.currentTimeMillis()
+            if (infoText.isEmpty() || now - infoAt > 20_000L) {
+                infoAt = now
+                val b = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                val level = b?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                val scale = b?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
+                val status = b?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
+                val pct = if (level >= 0) "${if (charging) "⚡" else ""}${level * 100 / scale.coerceAtLeast(1)}%" else ""
+                infoText = (dateFmt.format(java.util.Date(now)).lowercase() + if (pct.isNotEmpty()) "   ·   $pct" else "").trim()
+            }
+            infoPaint.textSize = w * 0.034f
+            infoPaint.color = tintColor()
+            infoPaint.alpha = 215
+            c.drawText(infoText, w / 2f + px * 0.4f, h * 0.072f, infoPaint)
+        }
 
         private var homeClockMin = -1L
         private var homeClockW = 0
@@ -519,6 +593,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val head = listOfNotNull(npTitle, npArtist)
             val total = head.sumOf { it.height } + gap * 2 + slot
             var y = h * 0.785f - total
+            npHit.set(w * 0.07f, y - gap, w * 0.93f, h * 0.785f + gap)
             val a = (255 * npMix)
             val tint = tintColor()
             c.save()
