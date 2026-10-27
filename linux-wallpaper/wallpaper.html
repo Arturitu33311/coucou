@@ -265,29 +265,36 @@ let lyrCache = { key: '', idx: -2, w: 0, prev: null, cur: null, next: null }, ly
 function lyricIdx(pos) { let lo = 0, hi = lyr.length - 1, a = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (lyr[m].ms <= pos) { a = m; lo = m + 1; } else hi = m - 1; } return a; }
 
 function drawGauge(cx, cy, d) {
+  // the battery fills the centre (a big number inside its arc); the network is a small, true indicator under it:
+  // "LAN" when wired, Wi-Fi arcs lit by the real signal when on Wi-Fi, a dim slashed symbol with no network
   const r = d / 2, col = tint(), bat = st && st.battery, wf = st && st.wifi;
-  const A0 = 150 * Math.PI / 180, SW = 240 * Math.PI / 180, ink = 'rgba(255,255,255,.94)', dim = 'rgba(255,255,255,.27)';
+  const A0 = 150 * Math.PI / 180, SW = 240 * Math.PI / 180, ink = 'rgba(255,255,255,.94)', dim = 'rgba(255,255,255,.30)';
   ctx.lineCap = 'round'; ctx.lineWidth = d * .07;
   ctx.strokeStyle = 'rgba(255,255,255,.24)'; ctx.beginPath(); ctx.arc(cx, cy, r, A0, A0 + SW); ctx.stroke();
+  let low = false;
   if (bat) {
-    const low = bat.pct <= 20 && !bat.charging;
+    low = bat.pct <= 20 && !bat.charging;
     ctx.strokeStyle = low ? 'rgb(255,99,99)' : rgb(col); ctx.beginPath(); ctx.arc(cx, cy, r, A0, A0 + SW * bat.pct / 100); ctx.stroke();
-    ctx.font = `bold ${d * .21}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = low ? 'rgb(255,130,130)' : ink; ctx.fillText((bat.charging ? '⚡' : '') + bat.pct, cx, cy - r * .40 + d * .07);
+    ctx.font = `bold ${d * .34}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = low ? 'rgb(255,130,130)' : ink;
+    ctx.fillText(String(bat.pct), cx + (bat.charging ? d * .06 : 0), cy - d * .06);
+    if (bat.charging) { ctx.font = `bold ${d * .17}px sans-serif`; ctx.fillStyle = rgb(col); ctx.fillText('⚡', cx - d * .27, cy - d * .07); }
   }
-  const gy = cy + r * .30, on = wf && wf.connected, level = on ? (wf.level || 0) : 0, lit = on ? Math.min(3, Math.max(level > 0 ? 1 : 0, Math.round(level * 3 / 4))) : 0;
-  ctx.lineWidth = d * .05;
-  ctx.fillStyle = on ? ink : dim; ctx.beginPath(); ctx.arc(cx, gy, d * .04, 0, 7); ctx.fill();
-  for (let i = 0; i < 3; i++) {
-    const rr_ = d * (.11 + .075 * i);
-    ctx.strokeStyle = (i < lit || (on && level >= 3)) ? ink : dim;
-    ctx.beginPath(); ctx.arc(cx, gy, rr_, 225 * Math.PI / 180, 315 * Math.PI / 180); ctx.stroke();
-  }
-  const sizes = [.030, .040, .040, .030];
-  for (let i = 0; i < 4; i++) {
-    const a = (62 + i * 18.7) * Math.PI / 180;
-    ctx.fillStyle = i < level ? ink : dim;
-    ctx.beginPath(); ctx.arc(cx + r * .8 * Math.cos(a), cy + r * .8 * Math.sin(a), d * sizes[i], 0, 7); ctx.fill();
+  const gy = cy + r * .62;
+  if (wf && wf.wired) {
+    ctx.font = `600 ${d * .13}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = ink; ctx.fillText('LAN', cx, gy);
+  } else if (wf && wf.connected) {
+    const level = wf.level || 0, lit = Math.max(level > 0 ? 1 : 0, Math.round(level * 3 / 4));
+    ctx.lineWidth = d * .035; ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(cx, gy + d * .045, d * .028, 0, 7); ctx.fill();
+    for (let i = 0; i < 3; i++) {
+      const rr_ = d * (.07 + .05 * i);
+      ctx.strokeStyle = i < lit ? ink : dim;
+      ctx.beginPath(); ctx.arc(cx, gy + d * .045, rr_, 225 * Math.PI / 180, 315 * Math.PI / 180); ctx.stroke();
+    }
+  } else {                                           // no network
+    ctx.lineWidth = d * .035; ctx.strokeStyle = dim;
+    ctx.beginPath(); ctx.arc(cx, gy + d * .045, d * .12, 225 * Math.PI / 180, 315 * Math.PI / 180); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx - d * .09, gy - d * .03); ctx.lineTo(cx + d * .09, gy + d * .09); ctx.stroke();
   }
 }
 
@@ -321,6 +328,7 @@ async function pollSpec() {
 }
 pollSpec();
 
+let spinA = 0, spinT = 0;
 let carTint = null, carRefl = null, carTintKey = '', carBox = null, carShine = null, carShineX = null;
 function ensureCarTint(cwid) {
   const col = dispA || [94, 234, 212];
@@ -349,15 +357,16 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   // a lighter composition: room around everything, the car sized by its height as well as its width (an SUV is taller than
   // a coupe) and sitting at a slight angle, like the phone's cover
   const ratio = carImg.width / carImg.height;
-  const cwid = Math.min(W * .44, H * .40 * ratio), cx = W * .36, base = H * .82, DEG = Math.PI / 180;
+  const cwid = Math.min(W * .50, H * .30 * ratio), cx = W * .36, base = H * .82, DEG = Math.PI / 180;
   // no sensor to tilt the picture: a slow drift does it, and each layer moves by a different amount (the nearer, the more)
   const dX = Math.sin(t / 7.3) * .7 + Math.sin(t / 2.9) * .3, dY = Math.sin(t / 9.1 + 1) * .6 + Math.sin(t / 3.7) * .2;
   ensureCarTint(cwid);
-  const lean = (-1.7 + Math.sin(t / 6) * .35) * DEG, x0 = cx + dX * 22, roofY = base - carBox.h;
+  const lean = 0, x0 = cx + dX * 22, roofY = base - carBox.h;
 
   // the floor: a faint sheen, and the lights' colour pooling under the car (it swells with the bass)
-  const fl = ctx.createLinearGradient(0, base, 0, H); fl.addColorStop(0, 'rgba(255,255,255,.06)'); fl.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = fl; ctx.fillRect(0, base, W, H - base);
+  ctx.save(); ctx.translate(x0, base - 2); ctx.scale(1, .06);
+  { const R2 = cwid * .54, sh = ctx.createRadialGradient(0, 0, 0, 0, 0, R2); sh.addColorStop(0, 'rgba(0,0,0,.55)'); sh.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = sh; ctx.fillRect(-R2, -R2, 2 * R2, 2 * R2); }
+  ctx.restore();
   ctx.save(); ctx.translate(x0, base + 8); ctx.scale(1, .15 + .04 * bassS);
   const R = cwid * (.62 + .08 * bassS), pool = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
   pool.addColorStop(0, rgb(dispA, .5 + .3 * bassS)); pool.addColorStop(1, rgb(dispA, 0));
@@ -367,34 +376,18 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   // (less at the sides), for depth, never so much that a 3 / 8 or a 6 / 0 could be mistaken
   ensureClock();
   const ey = Math.max(H * .06, roofY - clockBox.h * .80) + dY * 4, ccx = cx + dX * 10, ccy = ey + clockBox.h / 2;
-  ctx.save(); ctx.translate(ccx, ccy); ctx.rotate((-2.6 + Math.sin(t / 7) * .5) * DEG);
+  ctx.save(); ctx.translate(ccx, ccy);
   ctx.drawImage(clockEcho, -clockBox.w / 2 - 5 + dX * 4, -clockBox.h / 2 + 6);
   ctx.drawImage(clockFill, -clockBox.w / 2, -clockBox.h / 2);
   ctx.restore();
 
-  // the car, in front, and its reflection (leaning the other way, as a mirror would)
-  ctx.save(); ctx.translate(x0, base + 3); ctx.rotate(-lean); ctx.drawImage(carRefl, -carBox.w / 2, dY * 4); ctx.restore();
-  ctx.save(); ctx.translate(x0, base); ctx.rotate(lean);
-  const cxl = -carBox.w / 2, cyl = -carBox.h + dY * 4;
-  ctx.drawImage(carTint, cxl, cyl);
-  // it brightens with the bass, and a soft light slides over its body every few seconds
-  if (bassS > .02) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .16 * bassS; ctx.drawImage(carTint, cxl, cyl); ctx.restore(); }
-  const sp = (t % 12) / 12;
-  if (sp < .3) {
-    const cw = carShine.width, ch = carShine.height, xs = -cw * .25 + (sp / .3) * cw * 1.5, g2 = carShineX;
-    g2.globalCompositeOperation = 'source-over'; g2.clearRect(0, 0, cw, ch);
-    const lg = g2.createLinearGradient(xs - 80, 0, xs + 80, ch * .35);
-    lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.5)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
-    g2.fillStyle = lg; g2.fillRect(0, 0, cw, ch);
-    g2.globalCompositeOperation = 'destination-in'; g2.drawImage(carTint, 0, 0);
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(carShine, cxl, cyl); ctx.restore();
-  }
-  ctx.restore();
+  // the car, in front: as it is, with no reflection or overlay (nothing that would not belong to the real background)
+  ctx.drawImage(carTint, x0 - carBox.w / 2, base - carBox.h + dY * 4);
 
   // the visualizer, on the glass floor in front of the car (slightly tilted with it): low sounds in the middle, high ones to the sides
   {
     const N = 32, vw = carBox.w * .84, bw = vw / N * .42, y0 = base + H * .07, maxH = H * .055, col = mix(tint(), [255, 255, 255], .35);
-    ctx.save(); ctx.translate(x0, y0); ctx.rotate(lean * .6);
+    ctx.save(); ctx.translate(x0, y0);
     ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = bw;
     ctx.shadowColor = rgb(dispA, .7); ctx.shadowBlur = 12;
     for (let i = 0; i < N; i++) {
@@ -411,23 +404,40 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   if (!(p && recent && a > .02 && coverImg)) return;
   const cardW = W * .235, cardH = H * .62, cardX = W * .735 + (1 - a) * 60 + dX * 12, cardY = H * .20 + dY * 6, pad = cardW * .08, inner = cardW - pad * 2;
   ctx.save(); ctx.globalAlpha = a;
-  ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate((2.0 + Math.sin(t / 8) * .4) * DEG); ctx.translate(-(cardX + cardW / 2), -(cardY + cardH / 2));
-  glass(cardX, cardY, cardW, cardH, 30, .09);
+    glass(cardX, cardY, cardW, cardH, 30, .09);
   const en = clamp((now - enterAt) / 600, 0, 1), ee = 1 - Math.pow(1 - en, 3);
-  const side = inner * .70 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .35;
-  ctx.save(); ctx.translate(mx, my); ctx.rotate((-4.5 + 1.2 * Math.sin(t / 6)) * DEG);
-  const rad = side * .08;
+  // cover with the record sliding out from behind it, as on the phone's lock screen; the pair turns a few degrees together
+  const side = inner * .70 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .38;
+  spinA = (spinA + (playing ? 70 : 0) * Math.min(.1, (now - (spinT || now)) / 1000)) % 360; spinT = now;
+  ctx.save(); ctx.translate(mx - side * .1625, my); ctx.rotate((-6 + 1.5 * Math.sin(t / 6)) * DEG);
+  const vr = side * .485, vx = side * .34, rad = side * .08;
+  ctx.save(); ctx.globalAlpha = a * (.3 + .7 * ee);
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(vx + side * .02, side * .02, vr, 0, 7); ctx.fill();
+  ctx.fillStyle = '#0b0b0c'; ctx.beginPath(); ctx.arc(vx, 0, vr, 0, 7); ctx.fill();
+  ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255,255,255,.08)';
+  for (let k = 0; k < 10; k++) { ctx.beginPath(); ctx.arc(vx, 0, vr * (.40 + .058 * k), 0, 7); ctx.stroke(); }
+  ctx.save(); ctx.translate(vx, 0); ctx.rotate(spinA * DEG);                       // a faint wedge turns with the record
+  const wg = ctx.createConicGradient ? ctx.createConicGradient(0, 0, 0) : null;
+  if (wg) { wg.addColorStop(0, 'rgba(255,255,255,0)'); wg.addColorStop(.04, 'rgba(255,255,255,.17)'); wg.addColorStop(.10, 'rgba(255,255,255,0)'); wg.addColorStop(.5, 'rgba(255,255,255,0)'); wg.addColorStop(.54, 'rgba(255,255,255,.11)'); wg.addColorStop(.6, 'rgba(255,255,255,0)'); wg.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = wg; ctx.beginPath(); ctx.arc(0, 0, vr * .99, 0, 7); ctx.fill(); }
+  const rl = vr * .34, q = Math.min(coverImg.width, coverImg.height);
+  ctx.save(); ctx.beginPath(); ctx.arc(0, 0, rl, 0, 7); ctx.clip();                // the label: the middle of the cover, turning
+  ctx.drawImage(coverImg, (coverImg.width - q) / 2 + q * .2, (coverImg.height - q) / 2 + q * .2, q * .6, q * .6, -rl, -rl, 2 * rl, 2 * rl);
+  ctx.restore(); ctx.restore();
+  ctx.lineWidth = 2; ctx.strokeStyle = rgb(accent, .6); ctx.beginPath(); ctx.arc(vx, 0, rl, 0, 7); ctx.stroke();
+  ctx.fillStyle = '#0b0b0c'; ctx.beginPath(); ctx.arc(vx, 0, vr * .035, 0, 7); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.rotate((1.0 * Math.sin(t / 7)) * DEG);                          // the cover, a touch more
   ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(-side / 2 + side * .02, -side / 2 + side * .04, side, side, rad); ctx.fill();
   ctx.save(); rr(-side / 2, -side / 2, side, side, rad); ctx.clip(); ctx.globalAlpha = a * (.3 + .7 * ee);
   const sq = Math.min(coverImg.width, coverImg.height);
   ctx.drawImage(coverImg, (coverImg.width - sq) / 2, (coverImg.height - sq) / 2, sq, sq, -side / 2, -side / 2, side, side);
   ctx.restore();
   ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.35)'; rr(-side / 2, -side / 2, side, side, rad); ctx.stroke();
-  ctx.restore();
+  ctx.restore(); ctx.restore();
 
   const white = [255, 255, 255];
   const tt = fit(p.title, H * .034, inner, 2, '600'), ar = fit(p.artist, H * .024, inner, 1, '400');
-  let y = my + inner * .35 + H * .030;
+  let y = my + inner * .38 + H * .030;
   drawBlock(tt, mx, y, 'center', white, 1); y += tt.lines.length * tt.lh + H * .006;
   drawBlock(ar, mx, y, 'center', [210, 218, 216], .68); y += ar.lines.length * ar.lh;
 
