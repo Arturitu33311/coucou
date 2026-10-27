@@ -44,8 +44,9 @@ for a in "$@"; do
       echo "Desinstalando…"
       systemctl --user disable --now coucou-wallpaper 2>/dev/null
       rm -f "$UNIT"; systemctl --user daemon-reload
-      latest="$(ls -1t "$HID"/config-daily.json.bak-coucou-* 2>/dev/null | head -1)"
-      if [ -n "$latest" ]; then cp "$latest" "$HID/config-daily.json"; echo "  config-daily.json restaurado desde $latest"; fi
+      # the OLDEST backup is the original (later ones, if any, were made from an already-switched file)
+      oldest="$(ls -1tr "$HID"/config-daily.json.bak-coucou-* 2>/dev/null | head -1)"
+      if [ -n "$oldest" ]; then cp "$oldest" "$HID/config-daily.json"; echo "  config-daily.json restaurado desde $oldest"; fi
       echo "Listo. (Los archivos de $APP se dejan; borra esa carpeta si quieres.)"
       exit 0 ;;
     *) echo "Opción desconocida: $a"; exit 2 ;;
@@ -85,8 +86,12 @@ systemctl --user is-active --quiet coucou-wallpaper && ok "servicio activo y hab
 echo "3/4 Perfil de Hidamari"
 if [ "$PROFILE" = 1 ]; then
   if [ -f "$HID/config-daily.json" ]; then
-    cp "$HID/config-daily.json" "$HID/config-daily.json.bak-coucou-$STAMP"
-    set_profile_web "$HID/config-daily.json" && ok "config-daily.json -> página web (copia: config-daily.json.bak-coucou-$STAMP)" || fail "no se pudo editar config-daily.json"
+    if grep -q '"MODE_WEBPAGE"' "$HID/config-daily.json"; then
+      ok "config-daily.json ya apunta a la página web (no se hace otra copia: la del original se conserva)"
+    else
+      cp "$HID/config-daily.json" "$HID/config-daily.json.bak-coucou-$STAMP"
+      set_profile_web "$HID/config-daily.json" && ok "config-daily.json -> página web (copia: config-daily.json.bak-coucou-$STAMP)" || fail "no se pudo editar config-daily.json"
+    fi
     [ -f "$HID/config.json" ] && set_profile_web "$HID/config.json" && ok "config.json (la sesión actual) también"
   else
     fail "no encuentro $HID/config-daily.json"
@@ -107,7 +112,11 @@ if [ -n "$tok" ]; then
 else
   fail "la página no trae su clave"
 fi
-grep -q "pointer-events: none" "$APP/wallpaper.html" && ok "el fondo no captura el mouse" || fail "falta el arreglo del mouse"
+if grep -q "cursor: none" "$APP/wallpaper.html"; then fail "la página oculta el cursor"; else ok "el cursor sigue siendo el del escritorio"; fi
+grep -q "/control" "$APP/server.py" && grep -q "function control" "$APP/wallpaper.html" && ok "controles de reproducción presentes" || fail "faltan los controles"
+if [ -n "${tok:-}" ]; then
+  [ "$(curl -s -m 5 -X POST -o /dev/null -w '%{http_code}' "${URL}control?a=next")" = 403 ] && ok "los controles rechazan sin clave (403)" || fail "los controles deberían rechazar sin clave"
+fi
 
 echo
 if [ "$FAILED" = 0 ]; then
