@@ -11,9 +11,11 @@ Standard library only. Nothing is written outside ~/.cache/coucou-wallpaper.
 """
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import time
 import urllib.parse
@@ -24,6 +26,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "coucou-wallpaper")
 AGENT = "Coucou-Linux-wallpaper (https://github.com/Arturitu33311/coucou)"
 LYRICS_ON = False
+CURRENT_ART = ""
+PORT = 8765
 
 _state_cache = (0.0, None)
 
@@ -47,6 +51,8 @@ def player_state():
     status, title, artist, album, art, length, pos = p[:7]
     if not title:
         return None
+    global CURRENT_ART
+    CURRENT_ART = art      # kept here: /art serves this and never a URL from the request
     to_int = lambda s: int(s) if s.strip().lstrip("-").isdigit() else 0
     return {
         "status": status, "title": title, "artist": artist, "album": album,
@@ -91,16 +97,48 @@ def state():
     return s
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def _public_host(host):
+    """False for anything that resolves to a loopback, private, link-local or otherwise internal address."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return False
+    return bool(infos)
+
+
+def _art_dirs():
+    home = os.path.expanduser("~")
+    return [os.path.realpath(p) for p in ("/tmp", "/var/tmp", os.path.join(home, ".cache"), os.path.join(home, ".local", "share"),
+                                          os.path.join(home, ".var", "app"), os.path.join(home, ".config"), os.path.join(home, "snap"))]
+
+
 def fetch_art(url):
+    """The cover the player published, and only that: file:// only for images inside cache / temp folders, http(s)
+    only to public hosts and without following redirects."""
     u = urllib.parse.urlparse(url)
     if u.scheme == "file":
-        with open(urllib.parse.unquote(u.path), "rb") as f:
+        path = os.path.realpath(urllib.parse.unquote(u.path))
+        ok_dir = any(path == d or path.startswith(d + os.sep) for d in _art_dirs())
+        if not ok_dir or not path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")):
+            raise ValueError("not an allowed cover file")
+        if os.path.getsize(path) > 8_000_000:
+            raise ValueError("too big")
+        with open(path, "rb") as f:
             return f.read()
-    if u.scheme in ("http", "https"):
+    if u.scheme in ("http", "https") and u.hostname and _public_host(u.hostname):
         req = urllib.request.Request(url, headers={"User-Agent": AGENT})
-        with urllib.request.urlopen(req, timeout=6) as r:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=6) as r:
             return r.read(8_000_000)
-    raise ValueError("unsupported scheme")
+    raise ValueError("unsupported cover URL")
 
 
 def lyrics(artist, title, album, duration):
@@ -163,6 +201,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        # DNS rebinding: a web page can point its own name at 127.0.0.1; its requests then carry that name as Host
+        if self.headers.get("Host", "") not in (f"127.0.0.1:{PORT}", f"localhost:{PORT}"):
+            return self.send(403, b"forbidden", "text/plain")
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         try:
@@ -172,11 +213,17 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/state":
                 return self.send(200, json.dumps(state()).encode(), "application/json")
             if u.path == "/art":
-                return self.send(200, fetch_art(q["u"][0]), "image/jpeg")
+                state()                                   # refresh what is playing; the "u" in the request is only a cache-buster
+                if not CURRENT_ART:
+                    return self.send(404, b"no cover", "text/plain")
+                return self.send(200, fetch_art(CURRENT_ART), "image/jpeg")
             if u.path == "/lyrics":
                 if not LYRICS_ON:
                     return self.send(200, b"", "text/plain")
                 g = lambda k: q.get(k, [""])[0]
+                now = (state() or {}).get("player") or {}
+                if (g("artist"), g("title")) != (now.get("artist"), now.get("title")):
+                    return self.send(404, b"not the track that is playing", "text/plain")   # only for what is playing
                 text = lyrics(g("artist"), g("title"), g("album"), int(g("duration") or 0))
                 return self.send(200, text.encode("utf-8"), "text/plain; charset=utf-8")
         except Exception as e:
@@ -190,7 +237,9 @@ def main():
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--lyrics", action="store_true", help="look up synced lyrics on lrclib.net (sends artist, title, album)")
     args = ap.parse_args()
+    global PORT
     LYRICS_ON = args.lyrics
+    PORT = args.port
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Coucou wallpaper on http://127.0.0.1:{args.port}/  (lyrics {'on' if LYRICS_ON else 'off'})", flush=True)
     srv.serve_forever()
