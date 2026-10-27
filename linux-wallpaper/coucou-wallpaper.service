@@ -1,0 +1,10 @@
+[Unit]
+Description=Coucou Linux wallpaper (local server for the animated wallpaper page)
+
+[Service]
+# edit the path to where this folder lives; add --lyrics to look up synced lyrics on lrclib.net
+ExecStart=/usr/bin/python3 %h/dev/coucou-suite/linux-wallpaper/server.py --port 8765
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

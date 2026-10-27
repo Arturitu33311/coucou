@@ -7,6 +7,7 @@
 | `relay/` | Relay (upstream) | MIT |
 | `android/` | Android app: the island and Coucou on the phone. Derived from SmartIsland | **GPL-3.0** (`android/LICENSE`) |
 | `jinx/` | Jinx's side: laptop assistant (`jinx-assist/`), the VGA panel on the server (`vga-panel/`) | MIT |
+| `linux-wallpaper/` | The phone's cover / clock / lyrics / status-gauge wallpaper as a live web wallpaper for Linux (local server + canvas page) | MIT |
 | `scripts/check-contracts.sh` | Fails if the PC's and the phone's shared test vectors differ | — |
 
 `android/` keeps the SmartIsland history and licence. It no longer follows or contributes to the SmartIsland upstream.

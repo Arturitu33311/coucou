@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Coucou wallpaper</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #071311; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/* Coucou Linux wallpaper. The same ideas as the Android wallpaper, on a canvas: slow lights and motes in the colours of
+   the cover (or of the hour when nothing plays), a big 12 h clock, the cover overlapping it, title, artist and the
+   line being sung (filling in as it goes), and a small status gauge (battery arc, Wi-Fi, signal dots).
+   ?demo=1 runs it with made-up data, for trying it without a player. */
+'use strict';
+const DEMO = new URLSearchParams(location.search).has('demo');
+const STILL = new URLSearchParams(location.search).has('still');
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0;
+let clockKey = '', clockFill = null, clockEcho = null, clockBox = null;
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; clockKey = ''; }
+addEventListener('resize', resize); resize();
+
+// ---------- helpers ----------
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const rgb = (c, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+const mix = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+function hsv2rgb(h, s, v) {
+  const f = n => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [f(5) * 255, f(3) * 255, f(1) * 255];
+}
+function rgb2hsv(c) {
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, mx ? d / mx : 0, mx];
+}
+const boost = c => { const [h, s, v] = rgb2hsv(c); return hsv2rgb(h, clamp(s * 1.25, .4, 1), clamp(v, .55, .95)); };
+const saturate = c => { const [h, s, v] = rgb2hsv(c); return hsv2rgb(h, clamp(s * 1.45 + .12, 0, 1), clamp(v * 1.15, .65, 1)); };
+
+// the hour's colours: dawn teal-blue, noon teal, evening violet-teal, deep blue at night
+const KEYS = [0, 5, 8, 13, 18, 21, 24];
+const TINT_A = [[14, 40, 78], [40, 120, 150], [40, 170, 160], [30, 170, 140], [110, 80, 170], [30, 60, 110], [14, 40, 78]];
+const TINT_B = [[10, 30, 60], [90, 120, 170], [60, 190, 170], [20, 130, 120], [60, 130, 160], [20, 50, 90], [10, 30, 60]];
+function hourTint(set) {
+  const d = new Date(), hr = d.getHours() + d.getMinutes() / 60;
+  let i = 0; while (i < KEYS.length - 2 && hr >= KEYS[i + 1]) i++;
+  return mix(set[i], set[i + 1], clamp((hr - KEYS[i]) / (KEYS[i + 1] - KEYS[i]), 0, 1));
+}
+
+// ---------- state ----------
+let st = null, stAt = 0;          // last /state and when it arrived
+let coverImg = null, coverKey = '', coverFrom = '';
+let colA = [20, 120, 110], colB = [30, 90, 70], accent = [94, 234, 212];
+let dispA = null, dispB = null;
+let coverMix = 0, enterAt = 0;
+let lastPlayingAt = 0;
+let lyr = [], lyrKey = '';
+
+async function poll() {
+  try {
+    if (DEMO) { st = demoState(); stAt = performance.now(); }
+    else {
+      const r = await fetch('/state', { cache: 'no-store' });
+      st = await r.json(); stAt = performance.now();
+    }
+    onState();
+  } catch (e) { /* server not up yet: keep what we have */ }
+  setTimeout(poll, 1000);
+}
+
+function demoState() {
+  const t = performance.now();
+  return {
+    player: { status: 'Playing', title: 'Demo song', artist: 'Demo Artist, Guest', album: 'Demo', art: 'demo', lengthMs: 200000, positionMs: (t % 200000) },
+    battery: { pct: 64, charging: false }, wifi: { connected: true, level: 3 }, lyricsEnabled: true,
+  };
+}
+
+function demoCover() {
+  const c = document.createElement('canvas'); c.width = c.height = 600;
+  const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 600, 600); gr.addColorStop(0, '#f06b3a'); gr.addColorStop(1, '#4a1d7a');
+  g.fillStyle = gr; g.fillRect(0, 0, 600, 600);
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.beginPath(); g.arc(300, 300, 140, 0, 7); g.fill();
+  g.fillStyle = '#1b1b1b'; g.fillRect(230, 270, 140, 60);
+  return c;
+}
+
+const DEMO_LRC = `[00:00.00] ♪
+[00:04.00] Primera línea corta
+[00:10.00] Una línea bastante más larga para comprobar que se parte en varias líneas en lugar de cortarse con puntos suspensivos
+[00:20.00] Otra línea corta
+[00:26.00] Y una cuarta línea de tamaño medio
+[00:34.00] Final`;
+
+function parseLrc(text) {
+  const out = [], tag = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+  for (const raw of text.split('\n')) {
+    const tags = [...raw.matchAll(tag)];
+    if (!tags.length) continue;
+    const last = tags[tags.length - 1], body = raw.slice(last.index + last[0].length).trim();
+    for (const m of tags) {
+      const frac = m[3] ? parseInt(m[3].padEnd(3, '0').slice(0, 3)) : 0;
+      out.push({ ms: +m[1] * 60000 + +m[2] * 1000 + frac, text: body });
+    }
+  }
+  return out.sort((a, b) => a.ms - b.ms);
+}
+
+function onState() {
+  const p = st.player;
+  if (p && p.status === 'Playing') lastPlayingAt = Date.now();
+  if (!p) return;
+  const key = p.title + '|' + p.artist;
+  if (key !== lyrKey) {
+    lyrKey = key; lyr = [];
+    if (DEMO) lyr = parseLrc(DEMO_LRC);
+    else if (st.lyricsEnabled) {
+      const q = new URLSearchParams({ artist: p.artist, title: p.title, album: p.album, duration: Math.round(p.lengthMs / 1000) });
+      fetch('/lyrics?' + q).then(r => r.ok ? r.text() : '').then(t => { if (lyrKey === key) lyr = parseLrc(t); }).catch(() => {});
+    }
+  }
+  if (p.art !== coverFrom) {              // the new cover loads; the old one stays until it is there
+    coverFrom = p.art;
+    const next = new Image();
+    next.onload = () => { coverImg = DEMO ? demoCover() : next; setColours(coverImg); coverKey = key; enterAt = performance.now(); };
+    if (DEMO) next.onload(); else next.src = p.art;
+  }
+}
+
+const probe = document.createElement('canvas'); probe.width = probe.height = 24;
+function setColours(img) {
+  const g = probe.getContext('2d', { willReadFrequently: true });
+  const sq = Math.min(img.width, img.height);
+  g.drawImage(img, (img.width - sq) / 2, (img.height - sq) / 2, sq, sq, 0, 0, 24, 24);
+  const d = g.getImageData(0, 0, 24, 24).data;
+  const avg = (x0, x1) => {
+    let r = 0, gg = 0, b = 0, n = 0;
+    for (let y = 0; y < 24; y++) for (let x = x0; x < x1; x++) { const i = (y * 24 + x) * 4; r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++; }
+    return [r / n, gg / n, b / n];
+  };
+  colA = boost(avg(0, 12)); colB = boost(avg(12, 24)); accent = boost(avg(0, 24));
+}
+
+// where the lights should be: the cover's colours while one is shown, the hour's otherwise (mixing them gives mud)
+function targets() {
+  const hasCover = !!coverImg && coverMix > 0.02;
+  const k = hasCover ? 0.15 : 0.9;
+  let a = mix(hasCover ? colA : [20, 120, 110], hourTint(TINT_A), k), b = mix(hasCover ? colB : [30, 90, 70], hourTint(TINT_B), k);
+  if (hasCover) { a = saturate(a); b = saturate(b); }
+  return [a, b];
+}
+const tint = () => mix(saturate(dispA || [94, 234, 212]), [255, 255, 255], 0.25);
+
+// ---------- drawing ----------
+const N = 60, dots = Array.from({ length: N }, (_, i) => ({ x: Math.random(), y: Math.random(), r: 1.5 + Math.random() * 4, v: .012 + Math.random() * .03, a: .15 + Math.random() * .4, p: Math.random() * 6.28, c: i % 2 }));
+function ensureClock() {
+  const d = new Date(), h12 = d.getHours() % 12 || 12, text = `${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const col = tint(), key = text + '|' + W + 'x' + H + '|' + col.map(v => v | 0).join(',');
+  if (key === clockKey) return;
+  clockKey = key;
+  const cw = Math.min(W * 0.46, H * 0.95);
+  const probeC = document.createElement('canvas').getContext('2d');
+  const face = '"Oswald","DejaVu Sans Condensed","Arial Narrow","Liberation Sans Narrow",sans-serif';
+  probeC.font = `bold 100px ${face}`;
+  const ref = probeC.measureText('00:00').width;
+  const size = 100 * cw / ref, sy = 1.9;
+  probeC.font = `bold ${size}px ${face}`;
+  const m = probeC.measureText(text), asc = m.actualBoundingBoxAscent * sy, pad = 12;
+  const bw = Math.ceil(m.width + pad * 2), bh = Math.ceil(asc + pad * 2 + 4);
+  const make = (fill) => {
+    const c = document.createElement('canvas'); c.width = bw; c.height = bh;
+    const g = c.getContext('2d');
+    g.translate(pad, pad + asc); g.scale(1, sy);
+    g.font = `bold ${size}px ${face}`; g.lineJoin = 'round';
+    if (fill) {
+      const gr = g.createLinearGradient(0, -asc / sy, 0, 0);
+      gr.addColorStop(0, rgb(mix(col, [255, 255, 255], .7), .88)); gr.addColorStop(.6, rgb(col, .5)); gr.addColorStop(1, rgb(col, .12));
+      g.fillStyle = gr; g.fillText(text, 0, 0);
+      g.lineWidth = 2.4 / sy; g.strokeStyle = rgb(col, .92); g.strokeText(text, 0, 0);
+    } else { g.lineWidth = 1.8 / sy; g.strokeStyle = rgb(col, .32); g.strokeText(text, 0, 0); }
+    return c;
+  };
+  clockFill = make(true); clockEcho = make(false); clockBox = { w: bw, h: bh };
+}
+
+function wrap(text, font, maxW) {
+  ctx.font = font;
+  const words = text.split(/\s+/), lines = []; let cur = '';
+  for (const w of words) {
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+/* wraps in maxW; needing more than `good` lines the type shrinks (to 62 %) before anything is cut */
+function fit(text, base, maxW, good, weight = '500') {
+  const face = '"Inter","Roboto","DejaVu Sans",sans-serif';
+  let s = base, lines;
+  for (;;) {
+    lines = wrap(text, `${weight} ${s}px ${face}`, maxW);
+    if (lines.length <= good || s <= base * .62) break;
+    s *= .92;
+  }
+  return { lines, size: s, font: `${weight} ${s}px ${face}`, lh: s * 1.25 };
+}
+function drawBlock(b, x, y, align, color, alpha) {
+  ctx.font = b.font; ctx.textAlign = align; ctx.textBaseline = 'top'; ctx.fillStyle = rgb(color, alpha);
+  b.lines.forEach((l, i) => ctx.fillText(l, x, y + i * b.lh));
+}
+/* karaoke: the line dim, then the sung part of it over it, bright; follows the wrapped lines */
+function drawSwept(b, x, y, align, color, dimA, brightA, progress) {
+  drawBlock(b, x, y, align, color, dimA);
+  if (progress <= 0) return;
+  const total = b.lines.join(' ').length; let reveal = progress * total;
+  ctx.font = b.font;
+  b.lines.forEach((l, i) => {
+    if (reveal <= 0) return;
+    const part = Math.min(l.length, reveal), wFull = ctx.measureText(l).width, wPart = ctx.measureText(l.slice(0, part)).width;
+    const left = align === 'center' ? x - wFull / 2 : align === 'right' ? x - wFull : x;
+    ctx.save(); ctx.beginPath(); ctx.rect(left - 4, y + i * b.lh - 2, wPart + 4, b.lh + 4); ctx.clip();
+    drawBlock({ ...b, lines: [l] }, x, y + i * b.lh, align, color, brightA);
+    ctx.restore(); reveal -= l.length + 1;
+  });
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+
+let lyrCache = { key: '', idx: -2, w: 0, prev: null, cur: null, next: null }, lyrAt = 0;
+function lyricIdx(pos) { let lo = 0, hi = lyr.length - 1, a = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (lyr[m].ms <= pos) { a = m; lo = m + 1; } else hi = m - 1; } return a; }
+
+function drawGauge(cx, cy, d) {
+  const r = d / 2, col = tint(), bat = st && st.battery, wf = st && st.wifi;
+  const A0 = 150 * Math.PI / 180, SW = 240 * Math.PI / 180, ink = 'rgba(255,255,255,.94)', dim = 'rgba(255,255,255,.27)';
+  ctx.lineCap = 'round'; ctx.lineWidth = d * .07;
+  ctx.strokeStyle = 'rgba(255,255,255,.24)'; ctx.beginPath(); ctx.arc(cx, cy, r, A0, A0 + SW); ctx.stroke();
+  if (bat) {
+    const low = bat.pct <= 20 && !bat.charging;
+    ctx.strokeStyle = low ? 'rgb(255,99,99)' : rgb(col); ctx.beginPath(); ctx.arc(cx, cy, r, A0, A0 + SW * bat.pct / 100); ctx.stroke();
+    ctx.font = `bold ${d * .21}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = low ? 'rgb(255,130,130)' : ink; ctx.fillText((bat.charging ? '⚡' : '') + bat.pct, cx, cy - r * .40 + d * .07);
+  }
+  const gy = cy + r * .30, on = wf && wf.connected, level = on ? (wf.level || 0) : 0, lit = on ? Math.min(3, Math.max(level > 0 ? 1 : 0, Math.round(level * 3 / 4))) : 0;
+  ctx.lineWidth = d * .05;
+  ctx.fillStyle = on ? ink : dim; ctx.beginPath(); ctx.arc(cx, gy, d * .04, 0, 7); ctx.fill();
+  for (let i = 0; i < 3; i++) {
+    const rr_ = d * (.11 + .075 * i);
+    ctx.strokeStyle = (i < lit || (on && level >= 3)) ? ink : dim;
+    ctx.beginPath(); ctx.arc(cx, gy, rr_, 225 * Math.PI / 180, 315 * Math.PI / 180); ctx.stroke();
+  }
+  const sizes = [.030, .040, .040, .030];
+  for (let i = 0; i < 4; i++) {
+    const a = (62 + i * 18.7) * Math.PI / 180;
+    ctx.fillStyle = i < level ? ink : dim;
+    ctx.beginPath(); ctx.arc(cx + r * .8 * Math.cos(a), cy + r * .8 * Math.sin(a), d * sizes[i], 0, 7); ctx.fill();
+  }
+}
+
+let lastFrame = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (document.hidden || now - lastFrame < 30) return;       // ~30 fps: a wallpaper is mostly looked past
+  const dt = Math.min(.1, (now - lastFrame) / 1000); lastFrame = now;
+  const t = now / 1000;
+
+  // eased colours
+  const [tA, tB] = targets();
+  if (!dispA) { dispA = tA; dispB = tB; }
+  const k = STILL ? 1 : Math.min(1, dt * 3);       // ?still=1 (for screenshots): no easing, straight to the end state
+  dispA = mix(dispA, tA, k); dispB = mix(dispB, tB, k);
+
+  const p = st && st.player, playing = !!p && p.status === 'Playing';
+  const recent = playing || (p && Date.now() - lastPlayingAt < 90000);
+  const target = (coverImg && p && recent) ? (playing ? 1 : .7) : 0;
+  coverMix += (target - coverMix) * (STILL ? 1 : Math.min(1, dt * 2.5));
+  const pos = p ? p.positionMs + (playing ? (performance.now() - stAt) : 0) : 0;
+
+  // base, lights, motes
+  ctx.fillStyle = '#071311'; ctx.fillRect(0, 0, W, H);
+  const R = Math.max(W, H) * .62, beat = playing ? 1 + .06 * Math.sin(t * 1.6) : 1;
+  const light = (x, y, c, a) => {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R * beat);
+    g.addColorStop(0, rgb(c, a)); g.addColorStop(1, rgb(c, 0));
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  };
+  light(W * (.30 + .22 * Math.sin(t / 9)), H * (.30 + .14 * Math.cos(t / 11)), dispA, .85);
+  light(W * (.72 + .18 * Math.cos(t / 10)), H * (.72 + .12 * Math.sin(t / 12)), dispB, .75);
+  for (const d of dots) {
+    const y = (((d.y - t * d.v * .7) % 1) + 1) % 1 * H, x = (d.x + .03 * Math.sin(t * .3 + d.p)) * W;
+    ctx.fillStyle = rgb(mix(d.c ? dispA : accent, [255, 255, 255], .35), d.a * .6 * (.6 + .4 * Math.sin(t * 1.1 + d.p)));
+    ctx.beginPath(); ctx.arc(x, y, d.r, 0, 7); ctx.fill();
+  }
+  const vg = ctx.createLinearGradient(0, H * .55, 0, H); vg.addColorStop(0, 'rgba(4,12,11,0)'); vg.addColorStop(1, 'rgba(4,12,11,.55)');
+  ctx.fillStyle = vg; ctx.fillRect(0, H * .55, W, H * .45);
+
+  // clock, centre of the left half
+  ensureClock();
+  const cx0 = W * .30, ey = H * .09, ex = cx0 - clockBox.w / 2, sway = Math.sin(t / 5);
+  ctx.drawImage(clockEcho, ex - 5 + sway * 4, ey + 6);
+  ctx.drawImage(clockFill, ex, ey);
+
+  // cover, overlapping the clock's lower part
+  if (coverMix > .02 && coverImg) {
+    const en = clamp((now - enterAt) / 500, 0, 1), ee = 1 - Math.pow(1 - en, 3);
+    const side = clockBox.w * .55 * (.92 + .08 * coverMix) * (1 + .012 * Math.sin(t / 3));
+    const cy = ey + clockBox.h * .72 + side / 2 + 5 * Math.sin(t / 4), cx = cx0 + 10 * sway;
+    ctx.save(); ctx.globalAlpha = clamp(coverMix, 0, 1) * (.3 + .7 * ee);
+    ctx.translate(cx, cy); ctx.rotate((5 + 1.2 * Math.sin(t / 6)) * Math.PI / 180);
+    const rad = side * .07;
+    ctx.fillStyle = 'rgba(0,0,0,.45)'; rr(-side / 2 + side * .02, -side / 2 + side * .04, side, side, rad); ctx.fill();
+    ctx.save(); rr(-side / 2, -side / 2, side, side, rad); ctx.clip();
+    const sq = Math.min(coverImg.width, coverImg.height);
+    ctx.drawImage(coverImg, (coverImg.width - sq) / 2, (coverImg.height - sq) / 2, sq, sq, -side / 2, -side / 2, side, side);
+    ctx.restore();
+    ctx.lineWidth = 2; ctx.strokeStyle = rgb(accent, .6); rr(-side / 2, -side / 2, side, side, rad); ctx.stroke();
+    ctx.restore();
+  }
+
+  // title, artist and lyrics, in the right column
+  if (p && recent) {
+    const a = clamp(coverMix, 0, 1), colX = W * .60, colW = W * .34, white = [255, 255, 255];
+    const tt = fit(p.title, H * .055, colW, 2, '600'), ar = fit(p.artist, H * .032, colW, 1, '400');
+    let y = H * .22;
+    drawBlock(tt, colX, y, 'left', white, a); y += tt.lines.length * tt.lh + H * .008;
+    drawBlock(ar, colX, y, 'left', [200, 210, 208], a * .62);
+    if (lyr.length) {
+      const idx = lyricIdx(pos);
+      if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.w !== W) {
+        const tx = i => (lyr[i] && lyr[i].text) || '';
+        lyrCache = { key: lyrKey, idx, w: W,
+          prev: tx(idx - 1) ? fit(tx(idx - 1), H * .030, colW, 2) : null,
+          cur: idx >= 0 ? fit(tx(idx) || '♪', H * .046, colW, 4) : null,
+          next: tx(idx + 1) ? fit(tx(idx + 1), H * .030, colW, 2) : null };
+        lyrAt = now;
+      }
+      const e = clamp((now - lyrAt) / 400, 0, 1), ease = 1 - Math.pow(1 - e, 3), gap = H * .022, cy = H * .60;
+      const curH = lyrCache.cur ? lyrCache.cur.lines.length * lyrCache.cur.lh : 0, col = mix(tint(), [255, 255, 255], .55);
+      const shift = (1 - ease) * (curH + gap);
+      const cl = lyr[idx], nx = lyr[idx + 1];
+      const span = clamp(((nx ? nx.ms : (cl ? cl.ms + 4000 : 0)) - (cl ? cl.ms : 0)), 600, 9000);
+      const prog = cl ? clamp((pos - cl.ms) / (span * .85), 0, 1) : 1;
+      if (lyrCache.cur) drawSwept(lyrCache.cur, colX, cy - curH / 2 + shift, 'left', col, a * (.4 + .2 * ease), a * (.7 + .3 * ease), prog);
+      if (lyrCache.prev) drawBlock(lyrCache.prev, colX, cy - curH / 2 + shift - gap - lyrCache.prev.lines.length * lyrCache.prev.lh, 'left', white, a * (.38 + .5 * (1 - ease)));
+      if (lyrCache.next) drawBlock(lyrCache.next, colX, cy - curH / 2 + shift + curH + gap, 'left', white, a * .5);
+    }
+  }
+
+  // status gauge, top right
+  drawGauge(W - H * .09, H * .075, H * .085);
+}
+requestAnimationFrame(frame);
+poll();
+</script>
+</body>
+</html>
