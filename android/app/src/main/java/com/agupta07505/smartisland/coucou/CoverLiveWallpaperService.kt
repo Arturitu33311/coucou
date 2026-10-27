@@ -199,8 +199,9 @@ open class CoverLiveWallpaperService : WallpaperService() {
             // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
             // (mostly the hour's colour when idle, mostly the cover's while it plays: mixing the two gives mud)
             val mix = if (square != null && CoverBus.current().playing) 0.15f else 0.9f
-            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix) else c1
-            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix) else c2
+            val vivid = homeMode && mix < 0.5f
+            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix).let { if (vivid) saturate(it) else it } else c1
+            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix).let { if (vivid) saturate(it) else it } else c2
             blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l1, 150), withAlpha(l1, 0)), null, Shader.TileMode.CLAMP)
             blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l2, 130), withAlpha(l2, 0)), null, Shader.TileMode.CLAMP)
             val light = Color.WHITE
@@ -666,6 +667,15 @@ open class CoverLiveWallpaperService : WallpaperService() {
             Color.colorToHSV(color, hsv)
             hsv[1] = (hsv[1] * 1.25f).coerceIn(0.4f, 1f)
             hsv[2] = hsv[2].coerceIn(0.55f, 0.95f)
+            return Color.HSVToColor(hsv)
+        }
+
+        /** More colour for the home lights while music plays: covers are often dark and the glow came out grey. */
+        private fun saturate(color: Int): Int {
+            val hsv = FloatArray(3)
+            Color.colorToHSV(color, hsv)
+            hsv[1] = (hsv[1] * 1.45f + 0.12f).coerceIn(0f, 1f)
+            hsv[2] = (hsv[2] * 1.15f).coerceIn(0.65f, 1f)
             return Color.HSVToColor(hsv)
         }
 
