@@ -73,8 +73,7 @@ object LockCoverWallpaper {
     /** The animated cover wallpaper owns the lock screen: setting a still image would replace it. */
     private fun liveActive(app: Context): Boolean = runCatching {
         android.os.Build.VERSION.SDK_INT >= 34 &&
-            WallpaperManager.getInstance(app).getWallpaperInfo(WallpaperManager.FLAG_LOCK)?.serviceName ==
-            CoverLiveWallpaperService::class.java.name
+            WallpaperManager.getInstance(app).getWallpaperInfo(WallpaperManager.FLAG_LOCK)?.packageName == app.packageName
     }.getOrDefault(false)
 
     /** Put back what was there. Called by the timer, and when the user turns the switch off. */

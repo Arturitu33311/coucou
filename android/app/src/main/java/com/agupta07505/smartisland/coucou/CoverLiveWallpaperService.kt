@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.LinearGradient
 import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
@@ -18,6 +19,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
+import android.util.Log
 import android.view.SurfaceHolder
 import kotlin.math.cos
 import kotlin.math.sin
@@ -25,9 +27,12 @@ import kotlin.math.sin
 /**
  * PROTOTYPE of the animated cover wallpaper: the cover of what is playing, sharp and breathing, over a blurred copy that
  * drifts slowly, with two soft lights in the cover's own colours moving behind it. Draws only while it is visible, ~30 fps,
- * and does nothing else: no network, no sensors. With nothing playing it shows the dark teal base with the same lights.
+ * and does nothing else: no network; the car variant reads the gravity sensor (no permission) only while visible. With nothing playing it shows the dark teal base with the same lights.
  */
-class CoverLiveWallpaperService : WallpaperService() {
+open class CoverLiveWallpaperService : WallpaperService() {
+    /** The "car" variant: a photo with the clock BEHIND the car (cut-out in front), the music effects on the floor. */
+    protected open val carMode: Boolean = false
+
     override fun onCreateEngine(): Engine = CoverEngine()
 
     private inner class CoverEngine : Engine() {
@@ -49,6 +54,31 @@ class CoverLiveWallpaperService : WallpaperService() {
         private val blob2 = Paint(Paint.ANTI_ALIAS_FLAG)
         private val clip = Path()
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        // car variant: photo, cut-out of the car (rows [CUT_TOP, CUT_TOP + height) of the photo) and the big clock
+        private var carBg: Bitmap? = null
+        private var carCut: Bitmap? = null
+        private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.BOLD)
+            color = Color.argb(150, 232, 240, 238)
+            textAlign = Paint.Align.LEFT
+        }
+        private val datePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL)
+            color = Color.argb(190, 232, 240, 238)
+            textAlign = Paint.Align.CENTER
+        }
+        private val timeBounds = Rect()
+        private val textPath = Path()
+        private val mergedPath = Path()
+        private var merged = ""
+        private val pathMatrix = android.graphics.Matrix()
+        private val clockFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val clockStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.rgb(94, 234, 212)
+            strokeJoin = Paint.Join.ROUND
+        }
         /** Only for bitmaps and never recoloured: a colour with alpha on [paint] would make the pictures translucent. */
         private val bmp = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
@@ -100,11 +130,12 @@ class CoverLiveWallpaperService : WallpaperService() {
         override fun onVisibilityChanged(v: Boolean) {
             visible = v
             main.removeCallbacks(tick)
-            if (v) main.post(tick)
+            if (v) { startTilt(); main.post(tick) } else stopTilt()
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             visible = false
+            stopTilt()
             main.removeCallbacks(tick)
         }
 
@@ -150,9 +181,10 @@ class CoverLiveWallpaperService : WallpaperService() {
             if (w == 0 || h == 0) return
             val t = (SystemClock.uptimeMillis() - t0) / 1000f
             c.drawColor(Color.rgb(7, 19, 17))
+            if (carMode) drawCarBehind(c)
 
             // blurred copy drifting slowly (Ken Burns)
-            backdrop?.let { b ->
+            if (!carMode) backdrop?.let { b ->
                 val k = maxOf(w.toFloat() / b.width, h.toFloat() / b.height) * (1.18f + 0.05f * sin(t / 9f))
                 c.save()
                 c.translate(w / 2f + 40f * sin(t / 13f), h / 2f + 40f * cos(t / 11f))
@@ -160,9 +192,11 @@ class CoverLiveWallpaperService : WallpaperService() {
                 c.drawBitmap(b, -b.width / 2f, -b.height / 2f, bmp)
                 c.restore()
             }
-            c.drawColor(Color.argb(if (backdrop != null) 168 else 0, 7, 19, 17))
+            if (!carMode) c.drawColor(Color.argb(if (backdrop != null) 168 else 0, 7, 19, 17))
 
             // two soft lights in the cover's colours
+            blob1.alpha = if (carMode) 70 else 255
+            blob2.alpha = if (carMode) 70 else 255
             c.save()
             c.translate(w * (0.30f + 0.22f * sin(t / 7f)), h * (0.28f + 0.12f * cos(t / 9f)))
             c.drawCircle(0f, 0f, w * 0.75f, blob1)
@@ -193,10 +227,15 @@ class CoverLiveWallpaperService : WallpaperService() {
 
             // the cover itself, breathing a little
             val sq = square ?: return
-            val side = w * 0.64f * (1f + 0.012f * sin(t / 3f))
-            val cx = w * 0.40f
-            val cy = h * 0.60f + 6f * sin(t / 4f)
+            val side = w * (if (carMode) 0.38f else 0.64f) * (1f + 0.012f * sin(t / 3f))
+            val cx = w * (if (carMode) 0.36f else 0.40f) + (if (carMode) tiltX * w * 0.050f else 0f)
+            val cy = h * (if (carMode) 0.735f else 0.60f) + 6f * sin(t / 4f) + (if (carMode) tiltY * w * 0.040f else 0f)
             val box = RectF(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+
+            // cover and record turn together: in the car variant they lean like the car in the photo (it points up and to
+            // the left), and follow the tilt a little, so the group sits in the composition and not square to the screen
+            c.save()
+            c.rotate(if (carMode) -8f + 1.5f * sin(t / 6f) + tiltX * 3f else 0f, cx, cy)
 
             // the record sliding out from behind the cover
             val vr = side * 0.485f
@@ -248,6 +287,132 @@ class CoverLiveWallpaperService : WallpaperService() {
             c.drawRoundRect(box, r, r, paint)
             paint.style = Paint.Style.FILL
             c.restore()
+            c.restore() // the lean of the whole group
+        }
+
+        private fun loadCar() {
+            if (carBg != null) return
+            // The photo and its cut-out are the user's own picture (copyrighted, so not part of the app): they are read from
+            // Android/data/<app>/files/car/car_bg.jpg and car_cut.png. Without them only the dark base and the clock show.
+            runCatching {
+                val dir = getExternalFilesDir("car") ?: return@runCatching
+                carBg = android.graphics.BitmapFactory.decodeFile(java.io.File(dir, "car_bg.jpg").path)
+                carCut = android.graphics.BitmapFactory.decodeFile(java.io.File(dir, "car_cut.png").path)
+            }.onFailure { Log.w("CoverLive", "car layers missing", it) }
+        }
+
+        /**
+         * Photo, then the big clock, then the car in front of it, each layer shifted by the tilt by a different amount
+         * (the farther, the less), so the phone behaves like a window onto a small 3D scene. The photo is fitted to the
+         * width (the car must not be cropped), anchored to the bottom, and the dark band above it is the photo's own top row.
+         */
+        private fun drawCarBehind(c: Canvas) {
+            loadCar()
+            val bg = carBg ?: return
+            val k = w * 1.06f / bg.width
+            val ox = (w - bg.width * k) / 2f
+            val oy = h - bg.height * k
+            val sway = if (tiltLive) 0f else 1f   // no sensor: a very slow idle sway keeps the depth readable
+            val t = (SystemClock.uptimeMillis() - t0) / 1000f
+            val tx = tiltX + sway * 0.35f * sin(t / 5f)
+            val ty = tiltY + sway * 0.20f * cos(t / 6f)
+
+            c.save()
+            c.translate(ox + tx * w * 0.012f, oy + ty * w * 0.010f)
+            c.scale(k, k)
+            if (oy > 0f) c.drawBitmap(bg, Rect(0, 0, bg.width, 2), RectF(-w.toFloat(), -oy / k - 2f, bg.width + w.toFloat(), 2f), bmp)
+            c.drawBitmap(bg, 0f, 0f, bmp)
+            c.restore()
+
+            // the clock, in the photo's coordinates: wide, tall, translucent, its lower part hidden by the car
+            val now = java.util.Date()
+            val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(now)
+            clockPaint.textSize = 420f
+            clockPaint.getTextBounds(time, 0, time.length, timeBounds)
+            val visibleW = (w - 2f * w * 0.075f) / k   // leaves room for the parallax shift without touching the edges
+            val fit = visibleW / timeBounds.width()
+            // The digits are a Path (not text) so the stroke keeps one width however much they are stretched:
+            // a hairline teal outline, a fill that dissolves downwards into the floor, and an "echo" outline behind
+            // them that slides apart from the front one with the tilt, which is what makes the clock itself look deep.
+            val tall = 550f / (timeBounds.height() * fit)
+            // The font's glyphs are built from overlapping strokes; stroking them as they are draws the inner joins
+            // ("4", "9"). Merging the contours into one silhouette removes them. Rebuilt only when the minute or size changes.
+            val pathKey = "$time|$w|$h"
+            if (pathKey != merged) {
+                textPath.reset()
+                clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
+                textPath.transform(pathMatrix.apply { setScale(fit, fit * tall) })
+                mergedPath.reset()
+                if (!mergedPath.op(textPath, textPath, Path.Op.UNION)) { mergedPath.reset(); mergedPath.addPath(textPath) }
+                merged = pathKey
+            }
+            val half = timeBounds.width() * fit / 2f - timeBounds.left * fit
+            val baseY = 730f
+            c.save()
+            c.translate(ox + tx * w * 0.022f, oy + ty * w * 0.018f)
+            c.scale(k, k)
+            c.translate(bg.width / 2f - half, baseY)
+            val top = -550f
+            clockFill.shader = LinearGradient(
+                0f, top, 0f, 0f,
+                intArrayOf(Color.argb(205, 236, 246, 243), Color.argb(150, 190, 235, 228), Color.argb(14, 94, 234, 212)),
+                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP,
+            )
+            c.save()
+            c.translate(-tx * 20f, -ty * 14f + 10f)            // the echo, drawn first, a little behind and apart
+            clockStroke.alpha = 85
+            clockStroke.strokeWidth = 2.2f
+            c.drawPath(mergedPath, clockStroke)
+            c.restore()
+            c.drawPath(mergedPath, clockFill)
+            clockStroke.alpha = 235
+            clockStroke.strokeWidth = 3.2f
+            c.drawPath(mergedPath, clockStroke)
+            c.restore()
+
+            c.save()
+            c.translate(ox + tx * w * 0.036f, oy + ty * w * 0.030f)
+            c.scale(k, k)
+            carCut?.let { c.drawBitmap(it, 0f, CUT_TOP.toFloat(), bmp) }
+            c.restore()
+        }
+
+        // --- tilt (gravity sensor: no permission), smoothed, relative to how the phone is usually held ---
+        private var tiltX = 0f
+        private var tiltY = 0f
+        private var tiltLive = false
+        private var fx = 0f
+        private var fy = 0f
+        private var refX = 0f
+        private var refY = 5f
+        private var haveRef = false
+        private val sensors by lazy { getSystemService(SENSOR_SERVICE) as? android.hardware.SensorManager }
+        private val tiltListener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val gx = e.values[0]
+                val gy = e.values[1]
+                if (!haveRef) { refX = gx; refY = gy; fx = gx; fy = gy; haveRef = true }
+                fx += (gx - fx) * 0.10f
+                fy += (gy - fy) * 0.10f
+                refX += (fx - refX) * 0.0015f     // the way the phone is held becomes the neutral position, slowly
+                refY += (fy - refY) * 0.0015f
+                tiltX = ((fx - refX) / 4.5f).coerceIn(-1f, 1f) * -1f
+                tiltY = ((fy - refY) / 4.5f).coerceIn(-1f, 1f)
+                tiltLive = true
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+
+        private fun startTilt() {
+            if (!carMode) return
+            val m = sensors ?: return
+            val s = m.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: m.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: return
+            haveRef = false
+            m.registerListener(tiltListener, s, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+        }
+
+        private fun stopTilt() {
+            runCatching { sensors?.unregisterListener(tiltListener) }
         }
 
         private fun avg(b: Bitmap, x0: Int, x1: Int): Int {
@@ -269,4 +434,11 @@ class CoverLiveWallpaperService : WallpaperService() {
 
         private fun withAlpha(color: Int, a: Int) = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
     }
+
+    private companion object { const val CUT_TOP = 600 }
+}
+
+/** The same animated wallpaper, with the photo of the car and the clock behind it. */
+class CarClockWallpaperService : CoverLiveWallpaperService() {
+    override val carMode: Boolean get() = true
 }
