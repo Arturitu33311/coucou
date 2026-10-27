@@ -28,9 +28,14 @@ sensors on a PC to tilt the picture, so it moves on its own:
 
 The car image is **not** in the repo (photos have their own licences). Put a cut-out at
 `~/.local/share/coucou-wallpaper/car/car_cut.png`, with its credit in `credits.txt` next to it. `tools/cut_car.py` makes
-the cut-out from a photo (GrabCut, needs `cv2`); the author's example uses a CC BY 2.0 photo of a Porsche Carrera GT from
-Wikimedia Commons (credit in that folder's `credits.txt`). Without the file, or with `?mode=classic`, the plain layout
-(clock, cover and text side by side) is used.
+the cut-out from a photo (GrabCut, needs `cv2`; `--bg x0,y0,x1,y1` marks areas that are surely not the car). It works best
+on a car whose colour differs from the background: a glossy black car confuses it. The author's example is a red 2021+
+Cadillac Escalade (CC BY-SA 4.0, Ethan Llamas, Wikimedia Commons; credit in that folder's `credits.txt`). Without the file,
+or with `?mode=classic`, the plain layout (clock, cover and text side by side) is used.
+
+The composition is deliberately light and a little off-axis: the car is sized by its height as well as its width and leans
+slightly, the clock and the card are turned a few degrees and the cover a bit more, and the lyrics live in a clipped region
+under the artist so they can never overlap it.
 
 The visualizer reads the default **output's monitor** with `parec` (a speaker's monitor, never a microphone), in memory, and
 only while the page asks for it. It needs `numpy`; without it (or without `parec`) there is simply no visualizer.

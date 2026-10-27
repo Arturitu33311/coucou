@@ -194,7 +194,7 @@ function ensureClock() {
   const col = tint(), key = text + '|' + W + 'x' + H + '|' + col.map(v => v | 0).join(',') + carOn;
   if (key === clockKey) return;
   clockKey = key;
-  const cw = carOn ? W * 0.56 : Math.min(W * 0.46, H * 0.95);
+  const cw = carOn ? W * 0.42 : Math.min(W * 0.46, H * 0.95);
   const probeC = document.createElement('canvas').getContext('2d');
   const face = '"Oswald","DejaVu Sans Condensed","Arial Narrow","Liberation Sans Narrow",sans-serif';
   probeC.font = `bold 100px ${face}`;
@@ -346,65 +346,76 @@ function ensureCarTint(cwid) {
 }
 
 function drawCarScene(now, t, p, recent, playing, pos) {
-  const cwid = W * .52, cx = W * .37, base = H * .84;
+  // a lighter composition: room around everything, the car sized by its height as well as its width (an SUV is taller than
+  // a coupe) and sitting at a slight angle, like the phone's cover
+  const ratio = carImg.width / carImg.height;
+  const cwid = Math.min(W * .44, H * .40 * ratio), cx = W * .36, base = H * .82, DEG = Math.PI / 180;
   // no sensor to tilt the picture: a slow drift does it, and each layer moves by a different amount (the nearer, the more)
   const dX = Math.sin(t / 7.3) * .7 + Math.sin(t / 2.9) * .3, dY = Math.sin(t / 9.1 + 1) * .6 + Math.sin(t / 3.7) * .2;
   ensureCarTint(cwid);
+  const lean = (-1.7 + Math.sin(t / 6) * .35) * DEG, x0 = cx + dX * 22, roofY = base - carBox.h;
+
   // the floor: a faint sheen, and the lights' colour pooling under the car (it swells with the bass)
-  const fl = ctx.createLinearGradient(0, base, 0, H); fl.addColorStop(0, 'rgba(255,255,255,.07)'); fl.addColorStop(1, 'rgba(255,255,255,0)');
+  const fl = ctx.createLinearGradient(0, base, 0, H); fl.addColorStop(0, 'rgba(255,255,255,.06)'); fl.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = fl; ctx.fillRect(0, base, W, H - base);
-  ctx.save(); ctx.translate(cx + dX * 26, base + 10); ctx.scale(1, .16 + .04 * bassS);
-  const R = cwid * (.66 + .08 * bassS), pool = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
-  pool.addColorStop(0, rgb(dispA, .55 + .3 * bassS)); pool.addColorStop(1, rgb(dispA, 0));
+  ctx.save(); ctx.translate(x0, base + 8); ctx.scale(1, .15 + .04 * bassS);
+  const R = cwid * (.62 + .08 * bassS), pool = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+  pool.addColorStop(0, rgb(dispA, .5 + .3 * bassS)); pool.addColorStop(1, rgb(dispA, 0));
   ctx.fillStyle = pool; ctx.fillRect(-R, -R, 2 * R, 2 * R); ctx.restore();
 
-  // the clock, behind the car: low enough that the roof hides the foot of the digits (about a fifth at the highest point, less
-  // at the sides) and for depth, but never so much that a 3 / 8 or a 6 / 0 could be mistaken
+  // the clock, behind the car and turned a little: the roof hides about a fifth of the digits' height at its highest point
+  // (less at the sides), for depth, never so much that a 3 / 8 or a 6 / 0 could be mistaken
   ensureClock();
-  const ex = cx - clockBox.w / 2 + dX * 10, ey = H * .19 + dY * 5;
-  ctx.drawImage(clockEcho, ex - 6 + dX * 5, ey + 7);
-  ctx.drawImage(clockFill, ex, ey);
+  const ey = Math.max(H * .06, roofY - clockBox.h * .80) + dY * 4, ccx = cx + dX * 10, ccy = ey + clockBox.h / 2;
+  ctx.save(); ctx.translate(ccx, ccy); ctx.rotate((-2.6 + Math.sin(t / 7) * .5) * DEG);
+  ctx.drawImage(clockEcho, -clockBox.w / 2 - 5 + dX * 4, -clockBox.h / 2 + 6);
+  ctx.drawImage(clockFill, -clockBox.w / 2, -clockBox.h / 2);
+  ctx.restore();
 
-  // reflection, then the car, in front
-  const x = cx - carBox.w / 2 + dX * 26, ycar = base - carBox.h + dY * 4;
-  ctx.drawImage(carRefl, x, base + 3 + dY * 4);
-  ctx.drawImage(carTint, x, ycar);
-  // the car brightens with the bass, and a soft light slides over its body every few seconds
-  if (bassS > .02) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .16 * bassS; ctx.drawImage(carTint, x, ycar); ctx.restore(); }
+  // the car, in front, and its reflection (leaning the other way, as a mirror would)
+  ctx.save(); ctx.translate(x0, base + 3); ctx.rotate(-lean); ctx.drawImage(carRefl, -carBox.w / 2, dY * 4); ctx.restore();
+  ctx.save(); ctx.translate(x0, base); ctx.rotate(lean);
+  const cxl = -carBox.w / 2, cyl = -carBox.h + dY * 4;
+  ctx.drawImage(carTint, cxl, cyl);
+  // it brightens with the bass, and a soft light slides over its body every few seconds
+  if (bassS > .02) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .16 * bassS; ctx.drawImage(carTint, cxl, cyl); ctx.restore(); }
   const sp = (t % 12) / 12;
   if (sp < .3) {
     const cw = carShine.width, ch = carShine.height, xs = -cw * .25 + (sp / .3) * cw * 1.5, g2 = carShineX;
     g2.globalCompositeOperation = 'source-over'; g2.clearRect(0, 0, cw, ch);
     const lg = g2.createLinearGradient(xs - 80, 0, xs + 80, ch * .35);
-    lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.55)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+    lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.5)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
     g2.fillStyle = lg; g2.fillRect(0, 0, cw, ch);
     g2.globalCompositeOperation = 'destination-in'; g2.drawImage(carTint, 0, 0);
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(carShine, x, ycar); ctx.restore();
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(carShine, cxl, cyl); ctx.restore();
   }
+  ctx.restore();
 
-  // the visualizer, on the glass floor in front of the car: low sounds in the middle, high ones to the sides
+  // the visualizer, on the glass floor in front of the car (slightly tilted with it): low sounds in the middle, high ones to the sides
   {
-    const N = 32, vw = carBox.w * 1.02, bw = vw / N * .5, y0 = base + H * .09, maxH = H * .085, col = mix(tint(), [255, 255, 255], .35);
-    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = bw;
-    ctx.shadowColor = rgb(dispA, .8); ctx.shadowBlur = 14;
+    const N = 32, vw = carBox.w * .84, bw = vw / N * .42, y0 = base + H * .07, maxH = H * .055, col = mix(tint(), [255, 255, 255], .35);
+    ctx.save(); ctx.translate(x0, y0); ctx.rotate(lean * .6);
+    ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = bw;
+    ctx.shadowColor = rgb(dispA, .7); ctx.shadowBlur = 12;
     for (let i = 0; i < N; i++) {
       const b = bars[Math.min(N - 1, Math.floor(Math.abs(i - (N - 1) / 2) * 2))];
-      const hgt = (.035 + .965 * Math.pow(b, .8)) * maxH, vx = cx + (i - (N - 1) / 2) * (vw / (N - 1)) + dX * 26;
-      ctx.strokeStyle = rgb(mix(dispA, col, b), .45 + .45 * b);
-      ctx.beginPath(); ctx.moveTo(vx, y0 - hgt / 2); ctx.lineTo(vx, y0 + hgt / 2); ctx.stroke();
+      const hgt = (.035 + .965 * Math.pow(b, .8)) * maxH, vx = (i - (N - 1) / 2) * (vw / (N - 1));
+      ctx.strokeStyle = rgb(mix(dispA, col, b), .4 + .45 * b);
+      ctx.beginPath(); ctx.moveTo(vx, -hgt / 2); ctx.lineTo(vx, hgt / 2); ctx.stroke();
     }
     ctx.restore();
   }
 
-  // the music card, in glass, on the right
+  // the music card, in glass, on the right, turned a few degrees; the cover inside is tilted a bit more
   const a = clamp(coverMix, 0, 1);
   if (!(p && recent && a > .02 && coverImg)) return;
-  const cardW = W * .27, cardH = H * .70, cardX = W * .705 + (1 - a) * 60 + dX * 14, cardY = H * .17 + dY * 8, pad = cardW * .07, inner = cardW - pad * 2;
+  const cardW = W * .235, cardH = H * .62, cardX = W * .735 + (1 - a) * 60 + dX * 12, cardY = H * .20 + dY * 6, pad = cardW * .08, inner = cardW - pad * 2;
   ctx.save(); ctx.globalAlpha = a;
-  glass(cardX, cardY, cardW, cardH, 32, .09);
+  ctx.translate(cardX + cardW / 2, cardY + cardH / 2); ctx.rotate((2.0 + Math.sin(t / 8) * .4) * DEG); ctx.translate(-(cardX + cardW / 2), -(cardY + cardH / 2));
+  glass(cardX, cardY, cardW, cardH, 30, .09);
   const en = clamp((now - enterAt) / 600, 0, 1), ee = 1 - Math.pow(1 - en, 3);
-  const side = inner * .80 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .40;
-  ctx.save(); ctx.translate(mx, my); ctx.rotate((1.2 * Math.sin(t / 6)) * Math.PI / 180);
+  const side = inner * .70 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .35;
+  ctx.save(); ctx.translate(mx, my); ctx.rotate((-4.5 + 1.2 * Math.sin(t / 6)) * DEG);
   const rad = side * .08;
   ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(-side / 2 + side * .02, -side / 2 + side * .04, side, side, rad); ctx.fill();
   ctx.save(); rr(-side / 2, -side / 2, side, side, rad); ctx.clip(); ctx.globalAlpha = a * (.3 + .7 * ee);
@@ -415,29 +426,39 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   ctx.restore();
 
   const white = [255, 255, 255];
-  const tt = fit(p.title, H * .042, inner, 2, '600'), ar = fit(p.artist, H * .028, inner, 1, '400');
-  let y = my + inner * .40 + H * .03;
+  const tt = fit(p.title, H * .034, inner, 2, '600'), ar = fit(p.artist, H * .024, inner, 1, '400');
+  let y = my + inner * .35 + H * .030;
   drawBlock(tt, mx, y, 'center', white, 1); y += tt.lines.length * tt.lh + H * .006;
-  drawBlock(ar, mx, y, 'center', [210, 218, 216], .68); y += ar.lines.length * ar.lh + H * .03;
+  drawBlock(ar, mx, y, 'center', [210, 218, 216], .68); y += ar.lines.length * ar.lh;
+
   if (lyr.length) {
     const idx = lyricIdx(pos);
     if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.w !== (inner | 0)) {
       const tx = i => (lyr[i] && lyr[i].text) || '';
       lyrCache = { key: lyrKey, idx, w: inner | 0,
-        prev: tx(idx - 1) ? fit(tx(idx - 1), H * .026, inner, 2) : null,
-        cur: idx >= 0 ? fit(tx(idx) || '♪', H * .036, inner, 3) : null,
-        next: tx(idx + 1) ? fit(tx(idx + 1), H * .026, inner, 2) : null };
+        prev: tx(idx - 1) ? fit(tx(idx - 1), H * .022, inner, 2) : null,
+        cur: idx >= 0 ? fit(tx(idx) || '♪', H * .030, inner, 3) : null,
+        next: tx(idx + 1) ? fit(tx(idx + 1), H * .022, inner, 2) : null };
       lyrAt = now;
     }
-    const e = clamp((now - lyrAt) / 400, 0, 1), ease = 1 - Math.pow(1 - e, 3), gap = H * .016;
-    const curH = lyrCache.cur ? lyrCache.cur.lines.length * lyrCache.cur.lh : 0, col = mix(tint(), white, .55);
-    const mid = y + (cardY + cardH - pad - y) / 2, shift = (1 - ease) * (curH + gap);
+    const e = clamp((now - lyrAt) / 400, 0, 1), ease = 1 - Math.pow(1 - e, 3), gap = H * .014;
+    const lh = b => b ? b.lines.length * b.lh : 0, curH = lh(lyrCache.cur), col = mix(tint(), white, .55);
+    // the lyrics live in their own region under the artist, and are clipped to it: nothing can overlap the artist
+    const lyTop = y + H * .026, lyH = cardY + cardH - pad - lyTop;
+    let usePrev = !!lyrCache.prev, useNext = !!lyrCache.next;
+    let total = curH + (usePrev ? lh(lyrCache.prev) + gap : 0) + (useNext ? lh(lyrCache.next) + gap : 0);
+    if (total > lyH && usePrev) { usePrev = false; total = curH + (useNext ? lh(lyrCache.next) + gap : 0); }   // too tall: drop the previous line first,
+    if (total > lyH && useNext) { useNext = false; total = curH; }                                              // then the next
+    const top0 = lyTop + Math.max(0, (lyH - total) / 2) + (1 - ease) * (curH + gap) * .6;                        // glides up when the line changes
     const cl = lyr[idx], nx = lyr[idx + 1];
     const span = clamp(((nx ? nx.ms : (cl ? cl.ms + 4000 : 0)) - (cl ? cl.ms : 0)), 600, 9000);
     const prog = cl ? clamp((pos - cl.ms) / (span * .85), 0, 1) : 1;
-    if (lyrCache.cur) drawSwept(lyrCache.cur, mx, mid - curH / 2 + shift, 'center', col, .4 + .2 * ease, .7 + .3 * ease, prog);
-    if (lyrCache.prev) drawBlock(lyrCache.prev, mx, mid - curH / 2 + shift - gap - lyrCache.prev.lines.length * lyrCache.prev.lh, 'center', white, .38 + .5 * (1 - ease));
-    if (lyrCache.next) drawBlock(lyrCache.next, mx, mid - curH / 2 + shift + curH + gap, 'center', white, .5);
+    ctx.save(); ctx.beginPath(); ctx.rect(cardX + pad * .4, lyTop, cardW - pad * .8, lyH); ctx.clip();
+    let yy = top0;
+    if (usePrev) { drawBlock(lyrCache.prev, mx, yy, 'center', white, .38 + .5 * (1 - ease)); yy += lh(lyrCache.prev) + gap; }
+    if (lyrCache.cur) { drawSwept(lyrCache.cur, mx, yy, 'center', col, .4 + .2 * ease, .7 + .3 * ease, prog); yy += curH + gap; }
+    if (useNext) drawBlock(lyrCache.next, mx, yy, 'center', white, .5);
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -489,7 +510,7 @@ function frame(now) {
 
   if (carImg && WANT_CAR) {                                  // the car layout
     drawCarScene(now, t, p, recent, playing, pos);
-    const d = H * .085, gx = W - H * .09, gy = H * .075;
+    const d = H * .07, gx = W - H * .085, gy = H * .07;
     glass(gx - d * .72, gy - d * .72, d * 1.44, d * 1.44, d * .72, .08);
     drawGauge(gx, gy, d);
     return;
