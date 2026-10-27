@@ -197,8 +197,10 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (w == 0) return
             val r = w * 0.75f
             // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
-            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), 0.45f) else c1
-            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), 0.45f) else c2
+            // (mostly the hour's colour when idle, mostly the cover's while it plays: mixing the two gives mud)
+            val mix = if (square != null && CoverBus.current().playing) 0.15f else 0.9f
+            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix) else c1
+            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix) else c2
             blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l1, 150), withAlpha(l1, 0)), null, Shader.TileMode.CLAMP)
             blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l2, 130), withAlpha(l2, 0)), null, Shader.TileMode.CLAMP)
             val light = Color.WHITE
@@ -288,14 +290,15 @@ open class CoverLiveWallpaperService : WallpaperService() {
         /** Dark base, two slow lights that follow the music's colours and the hour, motes, and a little depth from tilt and page. */
         private fun drawHome(c: Canvas, t: Float) {
             val minute = System.currentTimeMillis() / 60_000L
-            if (minute != hourKey) { hourKey = minute; rebuildLights() }
+            val mode = (minute shl 1) + (if (CoverBus.current().playing) 1 else 0)   // minute passed, or music started/stopped
+            if (mode != hourKey) { hourKey = mode; rebuildLights() }
             val dt = (t - lastT).coerceIn(0f, 0.1f)
             lastT = t
             val playing = CoverBus.current().playing
             val beat = if (playing) 1f + 0.06f * sin(t * 1.6f) else 1f     // the lights breathe a little with music
             val px = tiltX * w * 0.045f + (0.5f - pageX) * w * 0.12f
             val py = tiltY * w * 0.035f
-            blob1.alpha = 150; blob2.alpha = 135
+            blob1.alpha = 215; blob2.alpha = 195
             c.save()
             c.translate(w * (0.30f + 0.22f * sin(t / 9f)) + px, h * (0.26f + 0.12f * cos(t / 11f)) + py)
             c.scale(beat, beat)
