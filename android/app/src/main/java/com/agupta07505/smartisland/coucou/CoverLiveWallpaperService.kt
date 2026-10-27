@@ -350,7 +350,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
             // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
             drawHomeCover(c, t, dt, px, py, ey + (fb?.height ?: 0) * 0.72f)
-            drawNowPlaying(c, dt, px)
+            drawNowPlaying(c, t, dt, px)
         }
 
         private var homeCoverMix = 0f
@@ -484,7 +484,9 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private var npLyricFor: List<Lyrics.Line>? = null
         private var npLyricIdx = -2
         private var npLyric: StaticLayout? = null
+        private var npLyricAt = 0f
 
+        /** Title and artist stay on one line (they are short; "…" is fine there). */
         private fun oneLine(text: String, size: Float, width: Int): StaticLayout {
             npPaint.textSize = size
             return StaticLayout.Builder.obtain(text, 0, text.length, npPaint, width)
@@ -493,7 +495,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         }
 
         /** Title, artist and the line being sung, small, above the dock; fades in while music plays and out when it stops. */
-        private fun drawNowPlaying(c: Canvas, dt: Float, px: Float) {
+        private fun drawNowPlaying(c: Canvas, t: Float, dt: Float, px: Float) {
             val now = CoverBus.current()
             npMix += ((if (now.playing) 1f else 0f) - npMix) * minOf(1f, dt * 2.5f)
             if (npMix < 0.02f) return
@@ -508,23 +510,33 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val ly = Lyrics.lines
             val idx = if (ly.isEmpty()) -1 else Lyrics.indexAt(ly, Lyrics.positionMs())
             if (ly !== npLyricFor || idx != npLyricIdx) {
-                npLyricFor = ly; npLyricIdx = idx
-                npLyric = ly.getOrNull(idx)?.text?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.040f, width) }
+                npLyricFor = ly; npLyricIdx = idx; npLyricAt = t
+                npLyric = ly.getOrNull(idx)?.text?.takeIf { it.isNotBlank() }?.let { fitText(it, npPaint, w * 0.042f, width, 2, 3, true) }
             }
             val gap = w * 0.012f
-            val parts = listOfNotNull(npTitle, npArtist, npLyric)
-            if (parts.isEmpty()) return
-            val total = parts.sumOf { it.height } + gap * (parts.size - 1) + (if (npLyric != null && parts.size > 1) gap else 0f)
+            // with lyrics on, a fixed two-line slot is kept under the artist so the title does not jump when a line wraps
+            val slot = if (ly.isNotEmpty()) 2.4f * w * 0.042f * 1.25f else 0f
+            val head = listOfNotNull(npTitle, npArtist)
+            val total = head.sumOf { it.height } + gap * 2 + slot
             var y = h * 0.785f - total
             val a = (255 * npMix)
             val tint = tintColor()
             c.save()
             c.translate(w * 0.07f + px * 0.3f, 0f)   // the column is 86% wide, centred, and its lines are centred in it
-            for (l in parts) {
-                npPaint.color = when (l) { npTitle -> Color.WHITE; npArtist -> Color.argb(255, 200, 210, 208); else -> tint }
+            for (l in head) {
+                npPaint.color = if (l === npTitle) Color.WHITE else Color.argb(255, 200, 210, 208)
                 npPaint.alpha = (a * (if (l === npArtist) 0.62f else 1f)).toInt()
                 c.save(); c.translate(0f, y); l.draw(c); c.restore()
-                y += l.height + gap + (if (l === npArtist) gap else 0f)
+                y += l.height + gap
+            }
+            npLyric?.let { l ->
+                val e = ((t - npLyricAt) / 0.4f).coerceIn(0f, 1f)
+                val ease = 1f - (1f - e) * (1f - e) * (1f - e)
+                npPaint.color = tint
+                c.save()
+                c.translate(0f, y + gap + (slot - l.height) / 2f + (1f - ease) * w * 0.035f)   // glides up into place
+                drawSwept(c, l, npPaint, (a * (0.4f + 0.2f * ease)).toInt(), (a * (0.7f + 0.3f * ease)).toInt(), sweep(ly, idx))
+                c.restore()
             }
             c.restore()
         }
@@ -661,13 +673,48 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private var lyricAt = 0f
         private val lyricLayouts = arrayOfNulls<StaticLayout>(3)   // previous, current, next
 
-        private fun layoutOf(text: String, size: Float, width: Int): StaticLayout {
-            lyricPaint.textSize = size
-            return StaticLayout.Builder.obtain(text, 0, text.length, lyricPaint, width)
-                .setMaxLines(4).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        /**
+         * Wraps [text] in [width]. A line that needs more than [goodLines] lines gets smaller type (down to 62%) before
+         * anything is cut; only past [maxLines] at the smallest size does it end in "…".
+         */
+        private fun fitText(text: String, paint: TextPaint, base: Float, width: Int, goodLines: Int, maxLines: Int, centered: Boolean): StaticLayout {
+            var size = base
+            while (true) {
+                paint.textSize = size
+                val l = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+                    .setAlignment(if (centered) android.text.Layout.Alignment.ALIGN_CENTER else android.text.Layout.Alignment.ALIGN_NORMAL)
+                    .setMaxLines(maxLines).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+                if (l.lineCount <= goodLines || size <= base * 0.62f) return l
+                size *= 0.92f
+            }
         }
 
-        /** The line being sung (bright), the one before and the one after (dim), in a column from [x0] to the right edge. */
+        /** How much of the line at [idx] has been sung, 0..1: its own time up to the next line's (capped, so a long gap is not a crawl). */
+        private fun sweep(ly: List<Lyrics.Line>, idx: Int): Float {
+            val cur = ly.getOrNull(idx) ?: return 1f
+            val span = ((ly.getOrNull(idx + 1)?.ms ?: (cur.ms + 4000L)) - cur.ms).coerceIn(600L, 9000L)
+            return ((Lyrics.positionMs() - cur.ms) / (span * 0.85f)).coerceIn(0f, 1f)
+        }
+
+        /** The line dim, then the sung part of it drawn over in full brightness (a karaoke fill that follows the wrapped lines). */
+        private fun drawSwept(c: Canvas, l: StaticLayout, paint: TextPaint, dimAlpha: Int, brightAlpha: Int, progress: Float) {
+            paint.alpha = dimAlpha
+            l.draw(c)
+            if (progress <= 0f) return
+            val reveal = progress * l.text.length
+            for (i in 0 until l.lineCount) {
+                if (reveal <= l.getLineStart(i)) break
+                val right = if (reveal >= l.getLineEnd(i)) l.getLineRight(i) + 6f
+                else l.getPrimaryHorizontal(reveal.toInt().coerceAtMost(l.text.length))
+                c.save()
+                c.clipRect(l.getLineLeft(i) - 6f, l.getLineTop(i).toFloat(), right, l.getLineBottom(i).toFloat())
+                paint.alpha = brightAlpha
+                l.draw(c)
+                c.restore()
+            }
+        }
+
+        /** The line being sung (filling in as it goes), the one before and the one after (dim), in a column from [x0] to the right edge. */
         private fun drawLyrics(c: Canvas, ly: List<Lyrics.Line>, t: Float, x0: Float, cy: Float) {
             val width = (w * 0.965f - x0).toInt()
             if (width < w * 0.18f) return
@@ -678,24 +725,23 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 fun text(i: Int) = ly.getOrNull(i)?.text.orEmpty()
                 val big = w * 0.050f
                 val small = w * 0.034f
-                lyricLayouts[0] = text(idx - 1).takeIf { it.isNotBlank() }?.let { layoutOf(it, small, width) }
-                lyricLayouts[1] = if (idx >= 0) layoutOf(text(idx).ifBlank { "♪" }, big, width) else null
-                lyricLayouts[2] = text(idx + 1).takeIf { it.isNotBlank() }?.let { layoutOf(it, small, width) }
+                lyricLayouts[0] = text(idx - 1).takeIf { it.isNotBlank() }?.let { fitText(it, lyricPaint, small, width, 2, 3, false) }
+                lyricLayouts[1] = if (idx >= 0) fitText(text(idx).ifBlank { "♪" }, lyricPaint, big, width, 4, 6, false) else null
+                lyricLayouts[2] = text(idx + 1).takeIf { it.isNotBlank() }?.let { fitText(it, lyricPaint, small, width, 2, 3, false) }
             }
-            val e = ((t - lyricAt) / 0.35f).coerceIn(0f, 1f)
-            val ease = 1f - (1f - e) * (1f - e)
+            val e = ((t - lyricAt) / 0.4f).coerceIn(0f, 1f)
+            val ease = 1f - (1f - e) * (1f - e) * (1f - e)
             val gap = w * 0.022f
             val cur = lyricLayouts[1]
             val curH = cur?.height?.toFloat() ?: 0f
             val a = (255 * lyricMix).toInt()
             c.save()
-            c.translate(x0, cy - curH / 2f + (1f - ease) * w * 0.03f)
+            // the three lines glide up together when the line changes
+            c.translate(x0, cy - curH / 2f + (1f - ease) * (curH + gap))
             lyricPaint.color = Color.WHITE
-            lyricPaint.alpha = (a * ease).toInt()
-            cur?.draw(c)
-            lyricPaint.color = Color.WHITE
+            cur?.let { drawSwept(c, it, lyricPaint, (a * (0.4f + 0.2f * ease)).toInt(), (a * (0.7f + 0.3f * ease)).toInt(), sweep(ly, idx)) }
             lyricLayouts[0]?.let { p ->
-                c.save(); c.translate(0f, -gap - p.height); lyricPaint.alpha = (a * 0.38f * ease).toInt(); p.draw(c); c.restore()
+                c.save(); c.translate(0f, -gap - p.height); lyricPaint.alpha = (a * (0.38f + 0.5f * (1f - ease))).toInt(); p.draw(c); c.restore()
             }
             lyricLayouts[2]?.let { n ->
                 c.save(); c.translate(0f, curH + gap); lyricPaint.alpha = (a * 0.5f).toInt(); n.draw(c); c.restore()
