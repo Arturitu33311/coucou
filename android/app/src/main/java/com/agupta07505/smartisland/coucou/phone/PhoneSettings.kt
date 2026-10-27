@@ -57,6 +57,11 @@ object PhoneSettings {
         get() = prefs(this).getBoolean("lockCover", false)
         set(v) = prefs(this).edit().putBoolean("lockCover", v).apply()
 
+    /** Show synced lyrics beside the record in the car wallpaper (off by default: it asks lrclib.net for them). */
+    var Context.lyricsOn: Boolean
+        get() = prefs(this).getBoolean("lyricsOn", false)
+        set(v) = prefs(this).edit().putBoolean("lyricsOn", v).apply()
+
     /** What Mochi wears here: "auto" (the seasons, then what he is doing), "none" or an outfit id. */
     var Context.mochiOutfit: String
         get() = prefs(this).getString("mochiOutfit", "auto") ?: "auto"

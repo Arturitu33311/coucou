@@ -17,6 +17,8 @@ import android.graphics.Shader
 import android.graphics.SweepGradient
 import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.util.Log
 import android.view.Choreographer
 import android.view.SurfaceHolder
@@ -276,6 +278,10 @@ open class CoverLiveWallpaperService : WallpaperService() {
             spinSpeed += (target - spinSpeed) * minOf(1f, dt * 1.5f)
             spin = (spin + spinSpeed * dt) % 360f
 
+            // lyrics: when there are some, the cover and record slide a little to the left to leave a column for them
+            val ly = if (carMode) Lyrics.lines else emptyList()
+            lyricMix += ((if (ly.isNotEmpty()) 1f else 0f) - lyricMix) * minOf(1f, dt * 3f)
+
             // particles, under everything that is solid
             for (i in 0 until nDots) {
                 val y = (((dy[i] - t * dv[i]) % 1f) + 1f) % 1f * h
@@ -289,7 +295,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             // the cover itself, breathing a little
             val sq = square ?: return
             val side = w * (if (carMode) 0.38f else 0.64f) * (1f + 0.012f * sin(t / 3f))
-            val cx = w * (if (carMode) 0.36f else 0.40f) + (if (carMode) tiltX * w * 0.050f else 0f)
+            val cx = w * (if (carMode) 0.36f - 0.085f * lyricMix else 0.40f) +(if (carMode) tiltX * w * 0.050f else 0f)
             val cy = h * (if (carMode) 0.735f else 0.60f) + 6f * sin(t / 4f) + (if (carMode) tiltY * w * 0.040f else 0f)
             rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
 
@@ -351,7 +357,63 @@ open class CoverLiveWallpaperService : WallpaperService() {
             c.drawRoundRect(rectA, r, r, paint)
             paint.style = Paint.Style.FILL
             c.restore()
+            if (ly.isNotEmpty()) drawLyrics(c, ly, t, cx + side * 0.825f + w * 0.025f, cy)
             c.restore() // the lean of the whole group
+        }
+
+        // ---- lyrics beside the record ---------------------------------------------------------------------------
+
+        private val lyricPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setShadowLayer(10f, 0f, 2f, Color.argb(170, 0, 0, 0))
+        }
+        private var lyricMix = 0f
+        private var lyricFor: List<Lyrics.Line>? = null
+        private var lyricIdx = -2
+        private var lyricW = 0
+        private var lyricAt = 0f
+        private val lyricLayouts = arrayOfNulls<StaticLayout>(3)   // previous, current, next
+
+        private fun layoutOf(text: String, size: Float, width: Int): StaticLayout {
+            lyricPaint.textSize = size
+            return StaticLayout.Builder.obtain(text, 0, text.length, lyricPaint, width)
+                .setMaxLines(4).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        }
+
+        /** The line being sung (bright), the one before and the one after (dim), in a column from [x0] to the right edge. */
+        private fun drawLyrics(c: Canvas, ly: List<Lyrics.Line>, t: Float, x0: Float, cy: Float) {
+            val width = (w * 0.965f - x0).toInt()
+            if (width < w * 0.18f) return
+            val idx = Lyrics.indexAt(ly, Lyrics.positionMs())
+            if (ly !== lyricFor || idx != lyricIdx || width != lyricW) {
+                if (ly !== lyricFor || idx != lyricIdx) lyricAt = t
+                lyricFor = ly; lyricIdx = idx; lyricW = width
+                fun text(i: Int) = ly.getOrNull(i)?.text.orEmpty()
+                val big = w * 0.050f
+                val small = w * 0.034f
+                lyricLayouts[0] = text(idx - 1).takeIf { it.isNotBlank() }?.let { layoutOf(it, small, width) }
+                lyricLayouts[1] = if (idx >= 0) layoutOf(text(idx).ifBlank { "♪" }, big, width) else null
+                lyricLayouts[2] = text(idx + 1).takeIf { it.isNotBlank() }?.let { layoutOf(it, small, width) }
+            }
+            val e = ((t - lyricAt) / 0.35f).coerceIn(0f, 1f)
+            val ease = 1f - (1f - e) * (1f - e)
+            val gap = w * 0.022f
+            val cur = lyricLayouts[1]
+            val curH = cur?.height?.toFloat() ?: 0f
+            val a = (255 * lyricMix).toInt()
+            c.save()
+            c.translate(x0, cy - curH / 2f + (1f - ease) * w * 0.03f)
+            lyricPaint.color = Color.WHITE
+            lyricPaint.alpha = (a * ease).toInt()
+            cur?.draw(c)
+            lyricPaint.color = Color.WHITE
+            lyricLayouts[0]?.let { p ->
+                c.save(); c.translate(0f, -gap - p.height); lyricPaint.alpha = (a * 0.38f * ease).toInt(); p.draw(c); c.restore()
+            }
+            lyricLayouts[2]?.let { n ->
+                c.save(); c.translate(0f, curH + gap); lyricPaint.alpha = (a * 0.5f).toInt(); n.draw(c); c.restore()
+            }
+            c.restore()
         }
 
         // ---- car variant ------------------------------------------------------------------------------------------

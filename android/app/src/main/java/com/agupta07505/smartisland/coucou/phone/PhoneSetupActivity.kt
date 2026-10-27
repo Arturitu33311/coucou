@@ -141,6 +141,28 @@ private fun Setup() {
             )
         }
 
+        Card("Lyrics on the lock screen") {
+            var on by remember { mutableStateOf(with(PhoneSettings) { context.lyricsOn }) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = on,
+                    onCheckedChange = {
+                        on = it
+                        with(PhoneSettings) { context.lyricsOn = it }
+                        if (!it) com.agupta07505.smartisland.coucou.Lyrics.clear()
+                    },
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Show the lyrics beside the record", color = Color.White, fontSize = 14.sp)
+            }
+            Text(
+                "In the Coucou car wallpaper, the line being sung shows next to the record, in time with the song. " +
+                    "To find them, the artist, title and album of each song are sent once to lrclib.net, a free community " +
+                    "lyrics database (no account, nothing else is sent). Off by default.",
+                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+            )
+        }
+
         Card("Mochi's outfit") {
             var choice by remember { mutableStateOf(with(PhoneSettings) { context.mochiOutfit }) }
             Text(
