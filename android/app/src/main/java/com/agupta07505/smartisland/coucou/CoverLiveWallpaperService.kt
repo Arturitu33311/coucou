@@ -162,7 +162,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             w = width; h = height
             vignette.shader = null
-            rebuildLights()
+            rebuildLights(snap = true)
             clockKey = ""
             draw((SystemClock.uptimeMillis() - t0) / 1000f)
         }
@@ -193,12 +193,36 @@ open class CoverLiveWallpaperService : WallpaperService() {
 
         // ---- what is playing --------------------------------------------------------------------------------------
 
-        private fun rebuildLights() {
-            if (w == 0) return
+        // the colours the lights are showing, easing toward where [rebuildLights] says they should be
+        private var dispA = 0
+        private var dispB = 0
+        private var targetA = 0
+        private var targetB = 0
+        private var lastFadeT = 0f
+
+        private fun buildShaders(a: Int, b: Int) {
             val r = w * 0.75f
+            blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(a, 150), withAlpha(a, 0)), null, Shader.TileMode.CLAMP)
+            blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(b, 130), withAlpha(b, 0)), null, Shader.TileMode.CLAMP)
+        }
+
+        /** Eases the lights' colours toward their targets (a second or so), so a new song or the idle base does not snap. */
+        private fun fadeLights(t: Float) {
+            val dt = (t - lastFadeT).coerceIn(0f, 0.1f)
+            lastFadeT = t
+            if (w == 0 || (dispA == targetA && dispB == targetB)) return
+            val k = minOf(1f, dt * 3f)
+            fun near(a: Int, b: Int) = kotlin.math.abs(Color.red(a) - Color.red(b)) + kotlin.math.abs(Color.green(a) - Color.green(b)) + kotlin.math.abs(Color.blue(a) - Color.blue(b)) < 6
+            dispA = if (near(dispA, targetA)) targetA else ColorUtils.blendARGB(dispA, targetA, k)
+            dispB = if (near(dispB, targetB)) targetB else ColorUtils.blendARGB(dispB, targetB, k)
+            buildShaders(dispA, dispB)
+        }
+
+        private fun rebuildLights(snap: Boolean = false) {
+            if (w == 0) return
             // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
-            // (mostly the hour's colour when idle, mostly the cover's while it plays: mixing the two gives mud)
-            val mix = if (square != null && CoverBus.current().playing) 0.15f else 0.9f
+            // (mostly the hour's colour with no cover, mostly the cover's while one is shown: mixing the two gives mud)
+            val mix = if (square != null) 0.15f else 0.9f
             val vivid = homeMode && mix < 0.5f
             val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix).let { if (vivid) saturate(it) else it } else c1
             val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix).let { if (vivid) saturate(it) else it } else c2
@@ -207,19 +231,32 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 // tell the system (and the launcher's accent / icon tint) what colour the wallpaper is now
                 if (android.os.Build.VERSION.SDK_INT >= 27) notifyColorsChanged()
             }
-            blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l1, 150), withAlpha(l1, 0)), null, Shader.TileMode.CLAMP)
-            blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l2, 130), withAlpha(l2, 0)), null, Shader.TileMode.CLAMP)
+            targetA = l1; targetB = l2
+            if (snap || dispA == 0) { dispA = l1; dispB = l2 }
+            buildShaders(dispA, dispB)
             val light = Color.WHITE
             for (i in 0 until nDots) dotColor[i] = ColorUtils.blendARGB(if (i % 2 == 0) c1 else accent, light, 0.35f)
         }
 
+        private var noCoverSince = 0L
+
         private fun refresh() {
             val now = CoverBus.current()
+            val nowMs = System.currentTimeMillis()
             // paused for a while: back to the dark base, like the still wallpaper puts the old one back
-            val idle = !now.playing && System.currentTimeMillis() - now.at > 90_000L
-            if (now === lastNow && idle == lastIdle) return
+            val idle = !now.playing && nowMs - now.at > 90_000L
+            val stale = noCoverSince != 0L && nowMs - noCoverSince > 6000L
+            if (now === lastNow && idle == lastIdle && !stale) return
             lastNow = now; lastIdle = idle
             val cover = if (idle) null else now.cover
+            val missing = cover == null || cover.isRecycled || cover.width < 32
+            if (missing && !idle && !stale && square != null) {
+                // a new track whose cover has not arrived yet (players send the title first): keep the last cover and
+                // colours instead of dipping to the idle base; if it never comes, give up after 6 s
+                if (noCoverSince == 0L) noCoverSince = nowMs
+                return
+            }
+            noCoverSince = 0L
             val id = if (idle) "idle" else now.key + "#" + CoverBus.signature(cover)
             if (id == shownKey) return
             shownKey = id
@@ -247,6 +284,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private fun draw(t: Float) {
             val holder = surfaceHolder ?: return
             refresh()
+            fadeLights(t)
             val c = try {
                 holder.lockHardwareCanvas()
             } catch (_: Throwable) {
@@ -484,7 +522,8 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private fun drawInfoRow(c: Canvas, px: Float) {
             // top right corner, where the system's own status icons are
             val d = w * 0.115f
-            badge.draw(c, w - d * 0.5f - w * 0.045f + px * 0.3f, h * 0.034f, d, tintColor())
+            // (a little in from the corner and lower: a screen protector's edge cut the gauge off)
+            badge.draw(c, w - d * 0.5f - w * 0.10f + px * 0.3f, h * 0.052f, d, tintColor())
         }
 
         private var homeClockMin = -1L
