@@ -11,11 +11,13 @@ Standard library only. Nothing is written outside ~/.cache/coucou-wallpaper.
 """
 import argparse
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
 import re
 import socket
+import ssl
 import subprocess
 import time
 import urllib.parse
@@ -97,22 +99,53 @@ def state():
     return s
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
-
-
-def _public_host(host):
-    """False for anything that resolves to a loopback, private, link-local or otherwise internal address."""
+def _public_host(host, port=443):
+    """The addresses to connect to, or None unless every address the name resolves to is public (a global address:
+    not loopback, private, link-local, reserved or multicast). The caller connects to THESE addresses, so the name is
+    never resolved a second time (which is what DNS rebinding relies on)."""
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-            return False
-    return bool(infos)
+        return None
+    if not infos or not all(ipaddress.ip_address(i[4][0]).is_global for i in infos):
+        return None
+    return [i[4][0] for i in infos]
+
+
+def _get_pinned(url, limit=8_000_000):
+    """GET [url] over http(s) to the checked address, with the original name for Host and TLS; redirects are not followed."""
+    u = urllib.parse.urlparse(url)
+    https = u.scheme == "https"
+    port = u.port or (443 if https else 80)
+    ips = _public_host(u.hostname, port)
+    if ips is None:
+        raise ValueError("cover host is not a public address")
+    host = u.hostname
+
+    class Pinned(http.client.HTTPSConnection if https else http.client.HTTPConnection):
+        def connect(self):
+            last = None
+            for ip in ips:                      # only addresses that were checked; the name is not resolved again
+                try:
+                    sock = socket.create_connection((ip, port), timeout=4)
+                    self.sock = ssl.create_default_context().wrap_socket(sock, server_hostname=host) if https else sock
+                    return
+                except OSError as e:
+                    last = e
+            raise last or OSError("no address")
+
+    conn = Pinned(host, port, timeout=6)
+    try:
+        conn.request("GET", (u.path or "/") + ("?" + u.query if u.query else ""), headers={"User-Agent": AGENT})
+        r = conn.getresponse()
+        if r.status != 200:
+            raise ValueError(f"cover server answered {r.status}")
+        data = r.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError("cover too big")
+        return data
+    finally:
+        conn.close()
 
 
 def _art_dirs():
@@ -134,10 +167,8 @@ def fetch_art(url):
             raise ValueError("too big")
         with open(path, "rb") as f:
             return f.read()
-    if u.scheme in ("http", "https") and u.hostname and _public_host(u.hostname):
-        req = urllib.request.Request(url, headers={"User-Agent": AGENT})
-        with urllib.request.build_opener(_NoRedirect).open(req, timeout=6) as r:
-            return r.read(8_000_000)
+    if u.scheme in ("http", "https") and u.hostname:
+        return _get_pinned(url)
     raise ValueError("unsupported cover URL")
 
 
