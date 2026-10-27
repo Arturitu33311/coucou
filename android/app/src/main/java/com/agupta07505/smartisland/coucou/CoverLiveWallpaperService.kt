@@ -476,22 +476,25 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private val dateFmt = java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.getDefault())
 
         /** The essentials of the status bar, in the wallpaper, under it: the date and the battery (⚡ while charging). */
+        private val badge by lazy { HomeStatusBadge(this@CoverLiveWallpaperService) }
+
         private fun drawInfoRow(c: Canvas, px: Float) {
             val now = System.currentTimeMillis()
-            if (infoText.isEmpty() || now - infoAt > 20_000L) {
+            if (infoText.isEmpty() || now - infoAt > 30_000L) {
                 infoAt = now
-                val b = registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
-                val level = b?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-                val scale = b?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100) ?: 100
-                val status = b?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
-                val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING || status == android.os.BatteryManager.BATTERY_STATUS_FULL
-                val pct = if (level >= 0) "${if (charging) "⚡" else ""}${level * 100 / scale.coerceAtLeast(1)}%" else ""
-                infoText = (dateFmt.format(java.util.Date(now)).lowercase() + if (pct.isNotEmpty()) "   ·   $pct" else "").trim()
+                infoText = dateFmt.format(java.util.Date(now)).lowercase()
             }
-            infoPaint.textSize = w * 0.034f
-            infoPaint.color = tintColor()
+            val d = w * 0.125f
+            val cx = w / 2f + px * 0.4f
+            val cy = h * 0.066f
+            val tint = tintColor()
+            badge.draw(c, cx, cy, d, tint)
+            // the date, to the left of the gauge
+            infoPaint.textSize = w * 0.036f
+            infoPaint.textAlign = Paint.Align.RIGHT
+            infoPaint.color = tint
             infoPaint.alpha = 215
-            c.drawText(infoText, w / 2f + px * 0.4f, h * 0.072f, infoPaint)
+            c.drawText(infoText, cx - d * 0.5f - w * 0.045f, cy + w * 0.013f, infoPaint)
         }
 
         private var homeClockMin = -1L
