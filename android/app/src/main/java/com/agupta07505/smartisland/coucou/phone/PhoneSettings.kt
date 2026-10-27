@@ -52,6 +52,11 @@ object PhoneSettings {
         prefs(c).edit().putString("deviceId", id).apply()
     }
 
+    /** Put the cover of what is playing on the lock screen (off by default: it replaces the lock wallpaper while music plays). */
+    var Context.lockCover: Boolean
+        get() = prefs(this).getBoolean("lockCover", false)
+        set(v) = prefs(this).edit().putBoolean("lockCover", v).apply()
+
     /** What Mochi wears here: "auto" (the seasons, then what he is doing), "none" or an outfit id. */
     var Context.mochiOutfit: String
         get() = prefs(this).getString("mochiOutfit", "auto") ?: "auto"

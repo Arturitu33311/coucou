@@ -550,6 +550,12 @@ class SmartIslandNotificationListenerService : NotificationListenerService() {
             ?: notification.tickerText?.toString()
             ?: (if (mode == IslandMode.Stopwatch) "Running" else if (mode == IslandMode.Timer) "Running" else "")
 
+        if (mediaInfo != null) {
+            com.agupta07505.smartisland.coucou.LockCoverWallpaper.onPlayback(
+                this, mediaInfo.artwork, mediaInfo.isPlaying, "${sbn.packageName}|$notifTitle|$notifText",
+            )
+        }
+
         notificationRepository.postNotification(
             IslandNotification(
                 key = sbn.key,
