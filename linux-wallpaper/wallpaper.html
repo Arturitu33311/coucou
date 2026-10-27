@@ -5,9 +5,9 @@
 <title>Coucou wallpaper</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  /* a wallpaper never takes the pointer: the cursor stays the desktop's own, and clicks go through */
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #071311; cursor: default; pointer-events: none; }
-  canvas { display: block; width: 100vw; height: 100vh; pointer-events: none; }
+  /* the cursor stays the desktop's own; the page only reacts over the music card (click the cover, scroll the card) */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #071311; cursor: default; }
+  canvas { display: block; width: 100vw; height: 100vh; }
 </style>
 </head>
 <body>
@@ -72,6 +72,7 @@ function hourTint(set) {
 }
 
 // ---------- state ----------
+let est = 0, estKey = '';
 let st = null, stAt = 0;          // last /state and when it arrived
 let coverImg = null, coverKey = '', coverFrom = '';
 let colA = [20, 120, 110], colB = [30, 90, 70], accent = [94, 234, 212];
@@ -80,6 +81,9 @@ let coverMix = 0, enterAt = 0;
 let lastPlayingAt = 0;
 let lyr = [], lyrKey = '';
 
+async function poll1() {
+  try { const r = await fetch('/state?k=' + TOKEN, { cache: 'no-store' }); if (r.ok) { st = await r.json(); stAt = performance.now(); onState(); } } catch (e) {}
+}
 async function poll() {
   try {
     if (DEMO) { st = demoState(); stAt = performance.now(); }
@@ -263,6 +267,19 @@ function drawSwept(b, x, y, align, color, dimA, brightA, progress) {
 function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
 
 let lyrCache = { key: '', idx: -2, w: 0, prev: null, cur: null, next: null }, lyrAt = 0;
+/* the line being sung, and whether it is really a silence: a timed line only says when it starts, so after its estimated end
+   (about 80 ms a character plus a second, never past the next line) a long wait for the next line shows a note, not the old line */
+function lyricState(pos) {
+  const idx = lyricIdx(pos);
+  if (idx < 0) return { idx, silent: false };
+  const cl = lyr[idx], nx = lyr[idx + 1], txt = (cl.text || '').trim();
+  if (!txt) return { idx, silent: true };
+  let end = cl.ms + clamp(txt.length * 80 + 1000, 1200, 8000);
+  if (nx) end = Math.min(end, nx.ms);
+  // (a property of the two lines' times, not of the position: the silence lasts right up to the next line, with no flicker)
+  const silent = nx ? (nx.ms - end > 1500 && pos > end + 400) : pos > end + 1500;
+  return { idx, silent };
+}
 function lyricIdx(pos) { let lo = 0, hi = lyr.length - 1, a = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (lyr[m].ms <= pos) { a = m; lo = m + 1; } else hi = m - 1; } return a; }
 
 function drawGauge(cx, cy, d) {
@@ -330,6 +347,31 @@ async function pollSpec() {
 pollSpec();
 
 let spinA = 0, spinT = 0;
+let cardHit = null;
+const ctl = { at: -1e9, dir: 0 };
+
+/* the controls: click the cover to play / pause, scroll over the card for the next / previous track (down = next) */
+function control(action) {
+  ctl.at = performance.now(); ctl.dir = action === 'next' ? -1 : action === 'previous' ? 1 : 0;
+  if (DEMO) return;
+  fetch('/control?k=' + TOKEN + '&a=' + action, { method: 'POST' }).then(() => { setTimeout(poll1, 150); }).catch(() => {});
+}
+const inRect = (e, r) => r && e.clientX >= r.x && e.clientX <= r.x + r.w && e.clientY >= r.y && e.clientY <= r.y + r.h;
+let cardHover = false, hoverMix = 0;
+cv.addEventListener('mousemove', e => { cardHover = inRect(e, cardHit); cv.style.cursor = cardHover ? 'pointer' : 'default'; });
+cv.addEventListener('mouseleave', () => { cardHover = false; });
+cv.addEventListener('click', e => {
+  if (cardHit && inRect(e, cardHit) && e.clientY <= cardHit.coverBottom) control('playpause');
+});
+let wheelAcc = 0, wheelAt = 0;
+cv.addEventListener('wheel', e => {
+  if (!inRect(e, cardHit)) return;
+  e.preventDefault();
+  const n = performance.now();
+  if (n - wheelAt > 250) wheelAcc = 0;                          // a new gesture
+  wheelAt = n; wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) >= 40 && n - ctl.at > 500) { control(wheelAcc > 0 ? 'next' : 'previous'); wheelAcc = 0; }
+}, { passive: false });
 let carTint = null, carRefl = null, carTintKey = '', carBox = null, carShine = null, carShineX = null;
 function ensureCarTint(cwid) {
   const col = dispA || [94, 234, 212];
@@ -405,12 +447,17 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   if (!(p && recent && a > .02 && coverImg)) return;
   const cardW = W * .235, cardH = H * .62, cardX = W * .735 + (1 - a) * 60 + dX * 12, cardY = H * .20 + dY * 6, pad = cardW * .08, inner = cardW - pad * 2;
   ctx.save(); ctx.globalAlpha = a;
-    glass(cardX, cardY, cardW, cardH, 30, .09);
+    cardHit = { x: cardX, y: cardY, w: cardW, h: cardH, coverBottom: cardY + pad + inner * .38 + inner * .35 + 10 };
+  hoverMix += ((cardHover ? 1 : 0) - hoverMix) * .2;                     // the card brightens a little under the pointer
+  glass(cardX, cardY, cardW, cardH, 30, .09 + .07 * hoverMix);
   const en = clamp((now - enterAt) / 600, 0, 1), ee = 1 - Math.pow(1 - en, 3);
   // cover with the record sliding out from behind it, as on the phone's lock screen; the pair turns a few degrees together
   const side = inner * .70 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .38;
   spinA = (spinA + (playing ? 70 : 0) * Math.min(.1, (now - (spinT || now)) / 1000)) % 360; spinT = now;
-  ctx.save(); ctx.translate(mx - side * .1625, my); ctx.rotate((-6 + 1.5 * Math.sin(t / 6)) * DEG);
+  // feedback: next slides the cover left and back, previous right, play / pause presses it in
+  const cn = clamp((now - ctl.at) / 450, 0, 1), ck = Math.sin(Math.PI * cn) * (1 - cn * .5);
+  const slideX = ctl.dir * side * .12 * ck, press = ctl.dir === 0 ? 1 - .07 * ck : 1;
+  ctx.save(); ctx.translate(mx - side * .1625 + slideX, my); ctx.scale(press, press); ctx.rotate((-6 + 1.5 * Math.sin(t / 6)) * DEG);
   const vr = side * .485, vx = side * .34, rad = side * .08;
   ctx.save(); ctx.globalAlpha = a * (.3 + .7 * ee);
   ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(vx + side * .02, side * .02, vr, 0, 7); ctx.fill();
@@ -434,6 +481,12 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   ctx.drawImage(coverImg, (coverImg.width - sq) / 2, (coverImg.height - sq) / 2, sq, sq, -side / 2, -side / 2, side, side);
   ctx.restore();
   ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.35)'; rr(-side / 2, -side / 2, side, side, rad); ctx.stroke();
+  if (hoverMix > .02) {                                                    // under the pointer: the cover offers play / pause
+    ctx.globalAlpha = a * hoverMix; ctx.fillStyle = 'rgba(0,0,0,.38)'; ctx.beginPath(); ctx.arc(0, 0, side * .17, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.95)';
+    if (playing) { ctx.fillRect(-side * .06, -side * .075, side * .045, side * .15); ctx.fillRect(side * .015, -side * .075, side * .045, side * .15); }
+    else { ctx.beginPath(); ctx.moveTo(-side * .045, -side * .08); ctx.lineTo(side * .085, 0); ctx.lineTo(-side * .045, side * .08); ctx.closePath(); ctx.fill(); }
+  }
   ctx.restore(); ctx.restore();
 
   const white = [255, 255, 255];
@@ -443,12 +496,12 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   drawBlock(ar, mx, y, 'center', [210, 218, 216], .68); y += ar.lines.length * ar.lh;
 
   if (lyr.length) {
-    const idx = lyricIdx(pos);
-    if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.w !== (inner | 0)) {
-      const tx = i => (lyr[i] && lyr[i].text) || '';
-      lyrCache = { key: lyrKey, idx, w: inner | 0,
-        prev: tx(idx - 1) ? fit(tx(idx - 1), H * .022, inner, 2) : null,
-        cur: idx >= 0 ? fit(tx(idx) || '♪', H * .030, inner, 3) : null,
+    const ls = lyricState(pos), idx = ls.idx, sil = ls.silent;
+    if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.sil !== sil || lyrCache.w !== (inner | 0)) {
+      const tx = i => (lyr[i] && lyr[i].text) || '', pi = sil ? idx : idx - 1;
+      lyrCache = { key: lyrKey, idx, sil, w: inner | 0,
+        prev: tx(pi) ? fit(tx(pi), H * .022, inner, 2) : null,
+        cur: idx >= 0 ? fit(sil ? '♪' : (tx(idx) || '♪'), H * .030, inner, 3) : null,
         next: tx(idx + 1) ? fit(tx(idx + 1), H * .022, inner, 2) : null };
       lyrAt = now;
     }
@@ -463,7 +516,7 @@ function drawCarScene(now, t, p, recent, playing, pos) {
     const top0 = lyTop + Math.max(0, (lyH - total) / 2) + (1 - ease) * (curH + gap) * .6;                        // glides up when the line changes
     const cl = lyr[idx], nx = lyr[idx + 1];
     const span = clamp(((nx ? nx.ms : (cl ? cl.ms + 4000 : 0)) - (cl ? cl.ms : 0)), 600, 9000);
-    const prog = cl ? clamp((pos - cl.ms) / (span * .85), 0, 1) : 1;
+    const prog = sil ? 1 : (cl ? clamp((pos - cl.ms) / Math.min(span * .85, (cl.text || '').length * 80 + 1000), 0, 1) : 1);
     ctx.save(); ctx.beginPath(); ctx.rect(cardX + pad * .4, lyTop, cardW - pad * .8, lyH); ctx.clip();
     let yy = top0;
     if (usePrev) { drawBlock(lyrCache.prev, mx, yy, 'center', white, .38 + .5 * (1 - ease)); yy += lh(lyrCache.prev) + gap; }
@@ -491,7 +544,12 @@ function frame(now) {
   const recent = playing || (p && Date.now() - lastPlayingAt < 90000);
   const target = (coverImg && p && recent) ? (playing ? 1 : .7) : 0;
   coverMix += (target - coverMix) * (STILL ? 1 : Math.min(1, dt * 2.5));
-  const pos = p ? p.positionMs + (playing ? (performance.now() - stAt) : 0) : 0;
+  // a steady clock: the player is read about once a second, and each reading is a little late or early, so the position
+  // follows it smoothly (a seek or a new track, more than 1.5 s away, snaps) instead of jumping with every reading
+  const meas = p ? p.positionMs + (playing ? (Date.now() - (p.sampledAt || Date.now())) : 0) : 0;
+  if (!p || estKey !== (p.title + '|' + p.artist) || Math.abs(meas - est) > 1500) { est = meas; estKey = p ? p.title + '|' + p.artist : ''; }
+  else est += (meas - est) * Math.min(1, dt * 2.5);
+  const pos = est;
 
   // the sound: bars rise fast and fall slowly, so they look like they have weight
   if (DEMO) {
@@ -558,12 +616,12 @@ function frame(now) {
     drawBlock(tt, colX, y, 'left', white, a); y += tt.lines.length * tt.lh + H * .008;
     drawBlock(ar, colX, y, 'left', [200, 210, 208], a * .62);
     if (lyr.length) {
-      const idx = lyricIdx(pos);
-      if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.w !== W) {
-        const tx = i => (lyr[i] && lyr[i].text) || '';
-        lyrCache = { key: lyrKey, idx, w: W,
-          prev: tx(idx - 1) ? fit(tx(idx - 1), H * .030, colW, 2) : null,
-          cur: idx >= 0 ? fit(tx(idx) || '♪', H * .046, colW, 4) : null,
+      const ls = lyricState(pos), idx = ls.idx, sil = ls.silent;
+      if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.sil !== sil || lyrCache.w !== W) {
+        const tx = i => (lyr[i] && lyr[i].text) || '', pi = sil ? idx : idx - 1;
+        lyrCache = { key: lyrKey, idx, sil, w: W,
+          prev: tx(pi) ? fit(tx(pi), H * .030, colW, 2) : null,
+          cur: idx >= 0 ? fit(sil ? '♪' : (tx(idx) || '♪'), H * .046, colW, 4) : null,
           next: tx(idx + 1) ? fit(tx(idx + 1), H * .030, colW, 2) : null };
         lyrAt = now;
       }
@@ -572,7 +630,7 @@ function frame(now) {
       const shift = (1 - ease) * (curH + gap);
       const cl = lyr[idx], nx = lyr[idx + 1];
       const span = clamp(((nx ? nx.ms : (cl ? cl.ms + 4000 : 0)) - (cl ? cl.ms : 0)), 600, 9000);
-      const prog = cl ? clamp((pos - cl.ms) / (span * .85), 0, 1) : 1;
+      const prog = sil ? 1 : (cl ? clamp((pos - cl.ms) / Math.min(span * .85, (cl.text || '').length * 80 + 1000), 0, 1) : 1);
       if (lyrCache.cur) drawSwept(lyrCache.cur, colX, cy - curH / 2 + shift, 'left', col, a * (.4 + .2 * ease), a * (.7 + .3 * ease), prog);
       if (lyrCache.prev) drawBlock(lyrCache.prev, colX, cy - curH / 2 + shift - gap - lyrCache.prev.lines.length * lyrCache.prev.lh, 'left', white, a * (.38 + .5 * (1 - ease)));
       if (lyrCache.next) drawBlock(lyrCache.next, colX, cy - curH / 2 + shift + curH + gap, 'left', white, a * .5);

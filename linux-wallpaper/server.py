@@ -50,7 +50,9 @@ def run(cmd, timeout=1.5):
 def player_state():
     sep = "|||"
     fmt = sep.join(["{{status}}", "{{title}}", "{{artist}}", "{{album}}", "{{mpris:artUrl}}", "{{mpris:length}}", "{{position}}"])
+    t0 = time.time()
     out = run(["playerctl", "metadata", "--format", fmt])
+    sampled = int((t0 + time.time()) / 2 * 1000)     # when the position was read (the middle of the call), so the page can age it
     if not out:
         return None
     p = out.split(sep)
@@ -65,7 +67,7 @@ def player_state():
     return {
         "status": status, "title": title, "artist": artist, "album": album,
         "art": "/art?u=" + urllib.parse.quote(art, safe="") if art else "",
-        "lengthMs": to_int(length) // 1000, "positionMs": to_int(pos) // 1000,
+        "lengthMs": to_int(length) // 1000, "positionMs": to_int(pos) // 1000, "sampledAt": sampled,
     }
 
 
@@ -309,6 +311,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        """Player controls: play/pause, next, previous. Same Host check and per-launch token as everything else."""
+        if self.headers.get("Host", "") not in (f"127.0.0.1:{PORT}", f"localhost:{PORT}"):
+            return self.send(403, b"forbidden", "text/plain")
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        if u.path != "/control" or not hmac.compare_digest(q.get("k", [""])[0], TOKEN):
+            return self.send(403, b"forbidden", "text/plain")
+        action = {"playpause": "play-pause", "next": "next", "previous": "previous"}.get(q.get("a", [""])[0])
+        if not action:
+            return self.send(400, b"unknown action", "text/plain")
+        run(["playerctl", action], timeout=2)
+        global _state_cache
+        _state_cache = (0.0, None)                      # the next /state must be fresh
+        return self.send(200, b"ok", "text/plain")
 
     def do_GET(self):
         # DNS rebinding: a web page can point its own name at 127.0.0.1; its requests then carry that name as Host
