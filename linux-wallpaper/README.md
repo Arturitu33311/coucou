@@ -52,7 +52,15 @@ Open `http://127.0.0.1:8765/?demo=1` for made-up data (no player needed). `&stil
 [lrclib.net](https://lrclib.net), a free community lyrics database (no account, no key), and the answer is cached in
 `~/.cache/coucou-wallpaper`. The cover is fetched from the URL your player itself published for it.
 
-## Use it as the wallpaper
+## Install everything with one command
+```
+./install.sh               # files, user service (enabled at login), Hidamari's daily profile, and a self-check
+./install.sh --no-lyrics   # keep everything local (no lyrics lookup)
+./install.sh --no-profile  # do not touch Hidamari's profiles
+./install.sh --uninstall   # remove the service and restore the daily profile from its backup
+```
+
+## Use it as the wallpaper (by hand)
 With Hidamari (Flatpak), choose the *Webpage* source and give it `http://127.0.0.1:8765/`. Keep `server.py` running:
 `coucou-wallpaper.service` is a systemd user unit for that (edit the path in `ExecStart`, then
 `systemctl --user enable --now coucou-wallpaper`).
