@@ -16,9 +16,11 @@ import ipaddress
 import json
 import os
 import re
+import select
 import socket
 import ssl
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -26,6 +28,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(os.path.expanduser("~"), ".cache", "coucou-wallpaper")
+CAR_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "coucou-wallpaper", "car")   # car_cut.png + credits.txt
 AGENT = "Coucou-Linux-wallpaper (https://github.com/Arturitu33311/coucou)"
 LYRICS_ON = False
 CURRENT_ART = ""
@@ -219,6 +222,73 @@ def lyrics(artist, title, album, duration):
     return text
 
 
+class Spectrum:
+    """What the PC is playing, as 32 bands (0..1) and a bass level, for the visualizer.
+
+    Reads the default OUTPUT's monitor with `parec` (never a microphone), analyses it in memory with numpy and keeps
+    nothing. Runs only while the page asks for it (it stops 10 s after the last request); without numpy or parec the
+    answer says "available": false and the page simply has no visualizer."""
+    BANDS = 32
+
+    def __init__(self):
+        self.bands = [0.0] * self.BANDS
+        self.bass = 0.0
+        self.available = None
+        self.last_req = 0.0
+        self.thread = None
+        self.lock = threading.Lock()
+
+    def request(self):
+        self.last_req = time.time()
+        with self.lock:
+            if self.thread is None or not self.thread.is_alive():
+                self.thread = threading.Thread(target=self._run, daemon=True)
+                self.thread.start()
+            return {"bands": [round(b, 2) for b in self.bands], "bass": round(self.bass, 2), "available": self.available is not False}
+
+    def _run(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.available = False
+            return
+        rate, n = 22050, 1024
+        try:
+            proc = subprocess.Popen(["parec", "-d", "@DEFAULT_MONITOR@", "--format=s16le", f"--rate={rate}", "--channels=1", "--latency-msec=40"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            self.available = False
+            return
+        self.available = True
+        win = np.hanning(n)
+        freqs = np.fft.rfftfreq(n, 1 / rate)
+        edges = np.geomspace(40, 9000, self.BANDS + 1)
+        idx = [np.where((freqs >= edges[i]) & (freqs < edges[i + 1]))[0] for i in range(self.BANDS)]
+        peak = 0.6
+        try:
+            while time.time() - self.last_req < 10:
+                if not select.select([proc.stdout], [], [], 1.0)[0]:
+                    self.bands, self.bass = [0.0] * self.BANDS, 0.0     # nothing is being played
+                    continue
+                buf = proc.stdout.read(n * 2)
+                if len(buf) < n * 2:
+                    break
+                x = np.frombuffer(buf, dtype=np.int16).astype(np.float32) / 32768
+                mag = np.abs(np.fft.rfft(x * win))
+                b = np.log1p(np.array([mag[i].mean() if len(i) else 0.0 for i in idx]) * 40)
+                # automatic gain, shared by all bands (so their shape is kept): the loudest recent level is "full", with a
+                # floor so near-silence is not blown up
+                peak = max(peak * 0.995, float(b.max()), 0.6)
+                v = np.clip((b / peak - 0.12) / 0.88, 0, 1)
+                self.bands, self.bass = v.tolist(), float(v[:5].mean())
+        finally:
+            proc.kill()
+            proc.wait()
+
+
+SPECTRUM = Spectrum()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -241,6 +311,11 @@ class Handler(BaseHTTPRequestHandler):
             if u.path in ("/", "/index.html"):
                 with open(os.path.join(HERE, "wallpaper.html"), "rb") as f:
                     return self.send(200, f.read(), "text/html; charset=utf-8")
+            if u.path == "/car.png":                      # the user's own car cut-out; one fixed file, never a path from the request
+                with open(os.path.join(CAR_DIR, "car_cut.png"), "rb") as f:
+                    return self.send(200, f.read(), "image/png")
+            if u.path == "/spectrum":
+                return self.send(200, json.dumps(SPECTRUM.request()).encode(), "application/json")
             if u.path == "/state":
                 return self.send(200, json.dumps(state()).encode(), "application/json")
             if u.path == "/art":

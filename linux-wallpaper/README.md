@@ -15,6 +15,26 @@ the battery from `/sys/class/power_supply`, and the Wi-Fi level from `nmcli`. `w
 at about 30 fps and pauses when hidden. Standard library only; nothing leaves the machine except, if you turn it on, the
 lyrics lookup.
 
+## The car layout (default when there is a car image)
+Like the phone's lock screen: a big 12 h clock **behind** a car (the roof hides the foot of the digits, for depth), the car's
+reflection on a glass floor, and a frosted-glass music card on the right (cover, title, artist, lyrics). There are no
+sensors on a PC to tilt the picture, so it moves on its own:
+- **Visualizer** on the floor in front of the car: what the PC is playing, as 32 bars (bass in the middle). The bass also
+  swells the floor's glow and the lights, makes the car brighten and the cover breathe.
+- **Slow drift**: every layer sways by a different amount (the nearer, the more), which reads as parallax.
+- **A soft light slides over the car** every few seconds.
+- Colours follow the cover (the hour's colours when nothing plays), eased from song to song; the car takes a little of
+  them too.
+
+The car image is **not** in the repo (photos have their own licences). Put a cut-out at
+`~/.local/share/coucou-wallpaper/car/car_cut.png`, with its credit in `credits.txt` next to it. `tools/cut_car.py` makes
+the cut-out from a photo (GrabCut, needs `cv2`); the author's example uses a CC BY 2.0 photo of a Porsche Carrera GT from
+Wikimedia Commons (credit in that folder's `credits.txt`). Without the file, or with `?mode=classic`, the plain layout
+(clock, cover and text side by side) is used.
+
+The visualizer reads the default **output's monitor** with `parec` (a speaker's monitor, never a microphone), in memory, and
+only while the page asks for it. It needs `numpy`; without it (or without `parec`) there is simply no visualizer.
+
 ## Try it
 ```
 python3 server.py                 # http://127.0.0.1:8765/

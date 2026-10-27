@@ -19,6 +19,13 @@
 'use strict';
 const DEMO = new URLSearchParams(location.search).has('demo');
 const STILL = new URLSearchParams(location.search).has('still');
+const WANT_CAR = new URLSearchParams(location.search).get('mode') !== 'classic';   // the car layout, when the car image is there
+let carImg = null;
+if (WANT_CAR) {
+  const im = new Image();
+  im.onload = () => { carImg = im; clockKey = ''; carTintKey = ''; };
+  im.src = '/car.png';                                     // 404 when there is none: the classic layout is used
+}
 const cv = document.getElementById('c');
 const ctx = cv.getContext('2d');
 let W = 0, H = 0;
@@ -162,10 +169,11 @@ const tint = () => mix(saturate(dispA || [94, 234, 212]), [255, 255, 255], 0.25)
 const N = 60, dots = Array.from({ length: N }, (_, i) => ({ x: Math.random(), y: Math.random(), r: 1.5 + Math.random() * 4, v: .012 + Math.random() * .03, a: .15 + Math.random() * .4, p: Math.random() * 6.28, c: i % 2 }));
 function ensureClock() {
   const d = new Date(), h12 = d.getHours() % 12 || 12, text = `${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
-  const col = tint(), key = text + '|' + W + 'x' + H + '|' + col.map(v => v | 0).join(',');
+  const carOn = !!carImg && WANT_CAR;
+  const col = tint(), key = text + '|' + W + 'x' + H + '|' + col.map(v => v | 0).join(',') + carOn;
   if (key === clockKey) return;
   clockKey = key;
-  const cw = Math.min(W * 0.46, H * 0.95);
+  const cw = carOn ? W * 0.56 : Math.min(W * 0.46, H * 0.95);
   const probeC = document.createElement('canvas').getContext('2d');
   const face = '"Oswald","DejaVu Sans Condensed","Arial Narrow","Liberation Sans Narrow",sans-serif';
   probeC.font = `bold 100px ${face}`;
@@ -181,9 +189,9 @@ function ensureClock() {
     g.font = `bold ${size}px ${face}`; g.lineJoin = 'round';
     if (fill) {
       const gr = g.createLinearGradient(0, -asc / sy, 0, 0);
-      gr.addColorStop(0, rgb(mix(col, [255, 255, 255], .7), .88)); gr.addColorStop(.6, rgb(col, .5)); gr.addColorStop(1, rgb(col, .12));
+      gr.addColorStop(0, rgb(mix(col, [255, 255, 255], .75), .95)); gr.addColorStop(.6, rgb(col, .62)); gr.addColorStop(1, rgb(col, .30));
       g.fillStyle = gr; g.fillText(text, 0, 0);
-      g.lineWidth = 2.4 / sy; g.strokeStyle = rgb(col, .92); g.strokeText(text, 0, 0);
+      g.lineWidth = 3.4 / sy; g.strokeStyle = rgb(mix(col, [255, 255, 255], .25), .96); g.strokeText(text, 0, 0);
     } else { g.lineWidth = 1.8 / sy; g.strokeStyle = rgb(col, .32); g.strokeText(text, 0, 0); }
     return c;
   };
@@ -262,6 +270,157 @@ function drawGauge(cx, cy, d) {
   }
 }
 
+/* ---------- car layout ---------- */
+// frosted glass: what is behind the panel, blurred (drawn tiny and scaled back up), lightened, with a soft top
+// highlight and a thin bright edge
+const blurC = document.createElement('canvas'), blurX = blurC.getContext('2d');
+function glass(x, y, w, h, r, alpha = .10) {
+  blurC.width = Math.max(8, w * .06 | 0); blurC.height = Math.max(8, h * .06 | 0);
+  blurX.drawImage(cv, x, y, w, h, 0, 0, blurC.width, blurC.height);
+  ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.clip();
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(blurC, 0, 0, blurC.width, blurC.height, x, y, w, h);
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`; ctx.fillRect(x, y, w, h);
+  const g = ctx.createLinearGradient(0, y, 0, y + h); g.addColorStop(0, 'rgba(255,255,255,.14)'); g.addColorStop(.45, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  ctx.restore();
+  ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(255,255,255,.30)'; ctx.beginPath(); ctx.roundRect(x + .6, y + .6, w - 1.2, h - 1.2, r); ctx.stroke();
+}
+
+/* what the PC is playing: 32 bands from the server (it listens to the output's monitor, never a microphone) */
+let spec = { bands: new Array(32).fill(0), bass: 0 };
+const bars = new Array(32).fill(0);
+let bassS = 0;
+async function pollSpec() {
+  const p = st && st.player;
+  if (!DEMO && WANT_CAR && p && p.status === 'Playing') {
+    try { spec = await (await fetch('/spectrum', { cache: 'no-store' })).json(); } catch (e) { /* no analyser: no visualizer */ }
+    setTimeout(pollSpec, 60);
+  } else setTimeout(pollSpec, 1000);
+}
+pollSpec();
+
+let carTint = null, carRefl = null, carTintKey = '', carBox = null, carShine = null, carShineX = null;
+function ensureCarTint(cwid) {
+  const col = dispA || [94, 234, 212];
+  const key = Math.round(cwid) + '|' + [col[0] >> 3, col[1] >> 3, col[2] >> 3].join(',');
+  if (key === carTintKey) return;
+  carTintKey = key;
+  const cw = Math.round(cwid), ch = Math.round(carImg.height * cw / carImg.width);
+  carTint = document.createElement('canvas'); carTint.width = cw; carTint.height = ch;
+  const g = carTint.getContext('2d');
+  g.imageSmoothingQuality = 'high'; g.drawImage(carImg, 0, 0, cw, ch);
+  g.globalCompositeOperation = 'source-atop';                    // the car takes a little of the cover's colour
+  g.fillStyle = rgb(mix(col, [255, 255, 255], .15), .20); g.fillRect(0, 0, cw, ch);
+  const sh = g.createLinearGradient(0, 0, 0, ch); sh.addColorStop(0, 'rgba(255,255,255,.10)'); sh.addColorStop(1, 'rgba(0,0,0,.20)');
+  g.fillStyle = sh; g.fillRect(0, 0, cw, ch);
+  carRefl = document.createElement('canvas'); carRefl.width = cw; carRefl.height = Math.round(ch * .6);   // the floor's reflection, fading out
+  const r = carRefl.getContext('2d');
+  r.save(); r.scale(1, -1); r.drawImage(carTint, 0, -ch, cw, ch); r.restore();
+  r.globalCompositeOperation = 'destination-in';
+  const f = r.createLinearGradient(0, 0, 0, carRefl.height); f.addColorStop(0, 'rgba(0,0,0,.42)'); f.addColorStop(1, 'rgba(0,0,0,0)');
+  r.fillStyle = f; r.fillRect(0, 0, cw, carRefl.height);
+  carShine = document.createElement('canvas'); carShine.width = cw; carShine.height = ch; carShineX = carShine.getContext('2d');
+  carBox = { w: cw, h: ch };
+}
+
+function drawCarScene(now, t, p, recent, playing, pos) {
+  const cwid = W * .52, cx = W * .37, base = H * .84;
+  // no sensor to tilt the picture: a slow drift does it, and each layer moves by a different amount (the nearer, the more)
+  const dX = Math.sin(t / 7.3) * .7 + Math.sin(t / 2.9) * .3, dY = Math.sin(t / 9.1 + 1) * .6 + Math.sin(t / 3.7) * .2;
+  ensureCarTint(cwid);
+  // the floor: a faint sheen, and the lights' colour pooling under the car (it swells with the bass)
+  const fl = ctx.createLinearGradient(0, base, 0, H); fl.addColorStop(0, 'rgba(255,255,255,.07)'); fl.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = fl; ctx.fillRect(0, base, W, H - base);
+  ctx.save(); ctx.translate(cx + dX * 26, base + 10); ctx.scale(1, .16 + .04 * bassS);
+  const R = cwid * (.66 + .08 * bassS), pool = ctx.createRadialGradient(0, 0, 0, 0, 0, R);
+  pool.addColorStop(0, rgb(dispA, .55 + .3 * bassS)); pool.addColorStop(1, rgb(dispA, 0));
+  ctx.fillStyle = pool; ctx.fillRect(-R, -R, 2 * R, 2 * R); ctx.restore();
+
+  // the clock, behind the car: low enough that the roof hides the foot of the digits (about a fifth at the highest point, less
+  // at the sides) and for depth, but never so much that a 3 / 8 or a 6 / 0 could be mistaken
+  ensureClock();
+  const ex = cx - clockBox.w / 2 + dX * 10, ey = H * .19 + dY * 5;
+  ctx.drawImage(clockEcho, ex - 6 + dX * 5, ey + 7);
+  ctx.drawImage(clockFill, ex, ey);
+
+  // reflection, then the car, in front
+  const x = cx - carBox.w / 2 + dX * 26, ycar = base - carBox.h + dY * 4;
+  ctx.drawImage(carRefl, x, base + 3 + dY * 4);
+  ctx.drawImage(carTint, x, ycar);
+  // the car brightens with the bass, and a soft light slides over its body every few seconds
+  if (bassS > .02) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = .16 * bassS; ctx.drawImage(carTint, x, ycar); ctx.restore(); }
+  const sp = (t % 12) / 12;
+  if (sp < .3) {
+    const cw = carShine.width, ch = carShine.height, xs = -cw * .25 + (sp / .3) * cw * 1.5, g2 = carShineX;
+    g2.globalCompositeOperation = 'source-over'; g2.clearRect(0, 0, cw, ch);
+    const lg = g2.createLinearGradient(xs - 80, 0, xs + 80, ch * .35);
+    lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.55)'); lg.addColorStop(1, 'rgba(255,255,255,0)');
+    g2.fillStyle = lg; g2.fillRect(0, 0, cw, ch);
+    g2.globalCompositeOperation = 'destination-in'; g2.drawImage(carTint, 0, 0);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.drawImage(carShine, x, ycar); ctx.restore();
+  }
+
+  // the visualizer, on the glass floor in front of the car: low sounds in the middle, high ones to the sides
+  {
+    const N = 32, vw = carBox.w * 1.02, bw = vw / N * .5, y0 = base + H * .09, maxH = H * .085, col = mix(tint(), [255, 255, 255], .35);
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = bw;
+    ctx.shadowColor = rgb(dispA, .8); ctx.shadowBlur = 14;
+    for (let i = 0; i < N; i++) {
+      const b = bars[Math.min(N - 1, Math.floor(Math.abs(i - (N - 1) / 2) * 2))];
+      const hgt = (.035 + .965 * Math.pow(b, .8)) * maxH, vx = cx + (i - (N - 1) / 2) * (vw / (N - 1)) + dX * 26;
+      ctx.strokeStyle = rgb(mix(dispA, col, b), .45 + .45 * b);
+      ctx.beginPath(); ctx.moveTo(vx, y0 - hgt / 2); ctx.lineTo(vx, y0 + hgt / 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // the music card, in glass, on the right
+  const a = clamp(coverMix, 0, 1);
+  if (!(p && recent && a > .02 && coverImg)) return;
+  const cardW = W * .27, cardH = H * .70, cardX = W * .705 + (1 - a) * 60 + dX * 14, cardY = H * .17 + dY * 8, pad = cardW * .07, inner = cardW - pad * 2;
+  ctx.save(); ctx.globalAlpha = a;
+  glass(cardX, cardY, cardW, cardH, 32, .09);
+  const en = clamp((now - enterAt) / 600, 0, 1), ee = 1 - Math.pow(1 - en, 3);
+  const side = inner * .80 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .40;
+  ctx.save(); ctx.translate(mx, my); ctx.rotate((1.2 * Math.sin(t / 6)) * Math.PI / 180);
+  const rad = side * .08;
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(-side / 2 + side * .02, -side / 2 + side * .04, side, side, rad); ctx.fill();
+  ctx.save(); rr(-side / 2, -side / 2, side, side, rad); ctx.clip(); ctx.globalAlpha = a * (.3 + .7 * ee);
+  const sq = Math.min(coverImg.width, coverImg.height);
+  ctx.drawImage(coverImg, (coverImg.width - sq) / 2, (coverImg.height - sq) / 2, sq, sq, -side / 2, -side / 2, side, side);
+  ctx.restore();
+  ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.35)'; rr(-side / 2, -side / 2, side, side, rad); ctx.stroke();
+  ctx.restore();
+
+  const white = [255, 255, 255];
+  const tt = fit(p.title, H * .042, inner, 2, '600'), ar = fit(p.artist, H * .028, inner, 1, '400');
+  let y = my + inner * .40 + H * .03;
+  drawBlock(tt, mx, y, 'center', white, 1); y += tt.lines.length * tt.lh + H * .006;
+  drawBlock(ar, mx, y, 'center', [210, 218, 216], .68); y += ar.lines.length * ar.lh + H * .03;
+  if (lyr.length) {
+    const idx = lyricIdx(pos);
+    if (lyrCache.key !== lyrKey || lyrCache.idx !== idx || lyrCache.w !== (inner | 0)) {
+      const tx = i => (lyr[i] && lyr[i].text) || '';
+      lyrCache = { key: lyrKey, idx, w: inner | 0,
+        prev: tx(idx - 1) ? fit(tx(idx - 1), H * .026, inner, 2) : null,
+        cur: idx >= 0 ? fit(tx(idx) || '♪', H * .036, inner, 3) : null,
+        next: tx(idx + 1) ? fit(tx(idx + 1), H * .026, inner, 2) : null };
+      lyrAt = now;
+    }
+    const e = clamp((now - lyrAt) / 400, 0, 1), ease = 1 - Math.pow(1 - e, 3), gap = H * .016;
+    const curH = lyrCache.cur ? lyrCache.cur.lines.length * lyrCache.cur.lh : 0, col = mix(tint(), white, .55);
+    const mid = y + (cardY + cardH - pad - y) / 2, shift = (1 - ease) * (curH + gap);
+    const cl = lyr[idx], nx = lyr[idx + 1];
+    const span = clamp(((nx ? nx.ms : (cl ? cl.ms + 4000 : 0)) - (cl ? cl.ms : 0)), 600, 9000);
+    const prog = cl ? clamp((pos - cl.ms) / (span * .85), 0, 1) : 1;
+    if (lyrCache.cur) drawSwept(lyrCache.cur, mx, mid - curH / 2 + shift, 'center', col, .4 + .2 * ease, .7 + .3 * ease, prog);
+    if (lyrCache.prev) drawBlock(lyrCache.prev, mx, mid - curH / 2 + shift - gap - lyrCache.prev.lines.length * lyrCache.prev.lh, 'center', white, .38 + .5 * (1 - ease));
+    if (lyrCache.next) drawBlock(lyrCache.next, mx, mid - curH / 2 + shift + curH + gap, 'center', white, .5);
+  }
+  ctx.restore();
+}
+
 let lastFrame = 0;
 function frame(now) {
   requestAnimationFrame(frame);
@@ -281,9 +440,17 @@ function frame(now) {
   coverMix += (target - coverMix) * (STILL ? 1 : Math.min(1, dt * 2.5));
   const pos = p ? p.positionMs + (playing ? (performance.now() - stAt) : 0) : 0;
 
+  // the sound: bars rise fast and fall slowly, so they look like they have weight
+  if (DEMO) {
+    for (let i = 0; i < 32; i++) spec.bands[i] = clamp((.5 + .5 * Math.sin(t * 3 + i * .45) * Math.sin(t * 1.3 + i * .2)) * (1 - i / 48), 0, 1);
+    spec.bass = (spec.bands[1] + spec.bands[3] + spec.bands[5]) / 3;
+  }
+  for (let i = 0; i < 32; i++) { const tv = playing ? (spec.bands[i] || 0) : 0; bars[i] += (tv - bars[i]) * (tv > bars[i] ? .55 : .14); }
+  const bT = playing ? (spec.bass || 0) : 0; bassS += (bT - bassS) * (bT > bassS ? .5 : .12);
+
   // base, lights, motes
   ctx.fillStyle = '#071311'; ctx.fillRect(0, 0, W, H);
-  const R = Math.max(W, H) * .62, beat = playing ? 1 + .06 * Math.sin(t * 1.6) : 1;
+  const R = Math.max(W, H) * .62, beat = playing ? 1 + .06 * Math.sin(t * 1.6) + .10 * bassS : 1;
   const light = (x, y, c, a) => {
     const g = ctx.createRadialGradient(x, y, 0, x, y, R * beat);
     g.addColorStop(0, rgb(c, a)); g.addColorStop(1, rgb(c, 0));
@@ -298,6 +465,14 @@ function frame(now) {
   }
   const vg = ctx.createLinearGradient(0, H * .55, 0, H); vg.addColorStop(0, 'rgba(4,12,11,0)'); vg.addColorStop(1, 'rgba(4,12,11,.55)');
   ctx.fillStyle = vg; ctx.fillRect(0, H * .55, W, H * .45);
+
+  if (carImg && WANT_CAR) {                                  // the car layout
+    drawCarScene(now, t, p, recent, playing, pos);
+    const d = H * .085, gx = W - H * .09, gy = H * .075;
+    glass(gx - d * .72, gy - d * .72, d * 1.44, d * 1.44, d * .72, .08);
+    drawGauge(gx, gy, d);
+    return;
+  }
 
   // clock, centre of the left half
   ensureClock();
