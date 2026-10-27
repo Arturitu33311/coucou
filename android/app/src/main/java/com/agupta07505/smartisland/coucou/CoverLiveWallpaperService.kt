@@ -39,6 +39,9 @@ open class CoverLiveWallpaperService : WallpaperService() {
     /** The "car" variant: a photo with the clock BEHIND the car (cut-out in front), the music effects on the floor. */
     protected open val carMode: Boolean = false
 
+    /** The "home" variant: no cover or record, only the slow lights and motes, in the cover's colours and the hour's. */
+    protected open val homeMode: Boolean = false
+
     override fun onCreateEngine(): Engine = CoverEngine()
 
     private inner class CoverEngine : Engine(), Choreographer.FrameCallback {
@@ -139,7 +142,8 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (!visible) return
             choreographer.postFrameCallback(this)
             // 120 Hz panels would draw twice as often for nothing: keep ~60 fps
-            if (frameTimeNanos - lastFrameNs < 14_000_000L) return
+            // (the home screen is mostly looked past: 30 fps there saves battery)
+            if (frameTimeNanos - lastFrameNs < (if (homeMode) 30_000_000L else 14_000_000L)) return
             lastFrameNs = frameTimeNanos
             val a = System.nanoTime()
             draw((frameTimeNanos / 1_000_000L - t0) / 1000f)
@@ -157,6 +161,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             w = width; h = height
+            vignette.shader = null
             rebuildLights()
             clockKey = ""
             draw((SystemClock.uptimeMillis() - t0) / 1000f)
@@ -191,8 +196,11 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private fun rebuildLights() {
             if (w == 0) return
             val r = w * 0.75f
-            blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(c1, 150), withAlpha(c1, 0)), null, Shader.TileMode.CLAMP)
-            blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(c2, 130), withAlpha(c2, 0)), null, Shader.TileMode.CLAMP)
+            // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
+            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), 0.45f) else c1
+            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), 0.45f) else c2
+            blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l1, 150), withAlpha(l1, 0)), null, Shader.TileMode.CLAMP)
+            blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(l2, 130), withAlpha(l2, 0)), null, Shader.TileMode.CLAMP)
             val light = Color.WHITE
             for (i in 0 until nDots) dotColor[i] = ColorUtils.blendARGB(if (i % 2 == 0) c1 else accent, light, 0.35f)
         }
@@ -243,9 +251,82 @@ open class CoverLiveWallpaperService : WallpaperService() {
             }
         }
 
+        // ---- home variant -----------------------------------------------------------------------------------------
+
+        private var pageX = 0.5f                // home page scroll, 0..1 (the launcher tells us)
+        private var hourKey = -1L
+        private val vignette = Paint()
+
+        override fun onOffsetsChanged(xOffset: Float, yOffset: Float, xStep: Float, yStep: Float, xPixels: Int, yPixels: Int) {
+            pageX = xOffset
+        }
+
+        /** Two colours per hour of the day: dawn teal-blue, noon teal, evening violet-teal, deep blue at night. */
+        private fun hourTint(which: Int): Int {
+            val cal = java.util.Calendar.getInstance()
+            val hr = cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60f
+            val keys = floatArrayOf(0f, 5f, 8f, 13f, 18f, 21f, 24f)
+            val a = arrayOf(
+                intArrayOf(14, 40, 78), intArrayOf(40, 120, 150), intArrayOf(40, 170, 160), intArrayOf(30, 170, 140),
+                intArrayOf(110, 80, 170), intArrayOf(30, 60, 110), intArrayOf(14, 40, 78),
+            )
+            val b = arrayOf(
+                intArrayOf(10, 30, 60), intArrayOf(90, 120, 170), intArrayOf(60, 190, 170), intArrayOf(20, 130, 120),
+                intArrayOf(60, 130, 160), intArrayOf(20, 50, 90), intArrayOf(10, 30, 60),
+            )
+            val set = if (which == 0) a else b
+            var i = 0
+            while (i < keys.size - 2 && hr >= keys[i + 1]) i++
+            val f = ((hr - keys[i]) / (keys[i + 1] - keys[i])).coerceIn(0f, 1f)
+            return Color.rgb(
+                (set[i][0] + (set[i + 1][0] - set[i][0]) * f).toInt(),
+                (set[i][1] + (set[i + 1][1] - set[i][1]) * f).toInt(),
+                (set[i][2] + (set[i + 1][2] - set[i][2]) * f).toInt(),
+            )
+        }
+
+        /** Dark base, two slow lights that follow the music's colours and the hour, motes, and a little depth from tilt and page. */
+        private fun drawHome(c: Canvas, t: Float) {
+            val minute = System.currentTimeMillis() / 60_000L
+            if (minute != hourKey) { hourKey = minute; rebuildLights() }
+            val dt = (t - lastT).coerceIn(0f, 0.1f)
+            lastT = t
+            val playing = CoverBus.current().playing
+            val beat = if (playing) 1f + 0.06f * sin(t * 1.6f) else 1f     // the lights breathe a little with music
+            val px = tiltX * w * 0.045f + (0.5f - pageX) * w * 0.12f
+            val py = tiltY * w * 0.035f
+            blob1.alpha = 150; blob2.alpha = 135
+            c.save()
+            c.translate(w * (0.30f + 0.22f * sin(t / 9f)) + px, h * (0.26f + 0.12f * cos(t / 11f)) + py)
+            c.scale(beat, beat)
+            c.drawCircle(0f, 0f, w * 0.75f, blob1)
+            c.restore()
+            c.save()
+            c.translate(w * (0.72f + 0.20f * cos(t / 10f)) + px * 1.4f, h * (0.74f + 0.10f * sin(t / 12f)) + py * 1.4f)
+            c.scale(beat, beat)
+            c.drawCircle(0f, 0f, w * 0.75f, blob2)
+            c.restore()
+            for (i in 0 until nDots) {
+                val y = (((dy[i] - t * dv[i] * 0.7f) % 1f) + 1f) % 1f * h + py * (0.4f + dr[i] / 8f)
+                val x = (dx[i] + 0.03f * sin(t * 0.3f + dp[i])) * w + px * (0.4f + dr[i] / 8f)
+                dot.color = dotColor[i]
+                dot.alpha = (da[i] * 0.6f * (0.6f + 0.4f * sin(t * 1.1f + dp[i]))).toInt().coerceIn(0, 255)
+                c.drawCircle(x, y, dr[i], dot)
+            }
+            // darker toward the bottom, where the dock and the icons are
+            if (vignette.shader == null) {
+                vignette.shader = LinearGradient(
+                    0f, h * 0.45f, 0f, h.toFloat(),
+                    Color.argb(0, 4, 12, 11), Color.argb(150, 4, 12, 11), Shader.TileMode.CLAMP,
+                )
+            }
+            c.drawRect(0f, h * 0.45f, w.toFloat(), h.toFloat(), vignette)
+        }
+
         private fun paint2(c: Canvas, t: Float) {
             if (w == 0 || h == 0) return
             c.drawColor(Color.rgb(7, 19, 17))
+            if (homeMode) { drawHome(c, t); return }
             if (carMode) drawCarBehind(c, t)
 
             // blurred copy drifting slowly (Ken Burns)
@@ -557,7 +638,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         }
 
         private fun startTilt() {
-            if (!carMode) return
+            if (!carMode && !homeMode) return
             val m = sensors ?: return
             val s = m.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: m.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: return
             haveRef = false
@@ -592,6 +673,11 @@ open class CoverLiveWallpaperService : WallpaperService() {
         const val CUT_TOP = 600
         const val CLOCK_BASE_Y = 730f
     }
+}
+
+/** For the home screen: slow lights and motes in the colours of the music and the hour, dim enough for the icons. */
+class HomeAmbientWallpaperService : CoverLiveWallpaperService() {
+    override val homeMode: Boolean get() = true
 }
 
 /** The same animated wallpaper, with the photo of the car and the clock behind it. */
