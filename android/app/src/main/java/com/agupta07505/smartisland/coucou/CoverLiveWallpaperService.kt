@@ -420,7 +420,10 @@ open class CoverLiveWallpaperService : WallpaperService() {
         /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
         private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float, top: Float) {
             val sq = square
-            homeCoverMix += ((if (sq != null && CoverBus.current().playing) 1f else 0f) - homeCoverMix) * minOf(1f, dt * 2.5f)
+            // visible while playing, and (dimmer) for 90 s after pausing, so it can be tapped to resume
+            val cur = CoverBus.current()
+            val target = if (sq == null) 0f else if (cur.playing) 1f else if (System.currentTimeMillis() - cur.at < 90_000L) 0.7f else 0f
+            homeCoverMix += (target - homeCoverMix) * minOf(1f, dt * 2.5f)
             if (sq == null || homeCoverMix < 0.02f) return
             // a tap on the cover answers with a small slide (next: to the left, previous: to the right) or a press (play / pause);
             // a new track comes in from the side it was asked from
@@ -479,22 +482,9 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private val badge by lazy { HomeStatusBadge(this@CoverLiveWallpaperService) }
 
         private fun drawInfoRow(c: Canvas, px: Float) {
-            val now = System.currentTimeMillis()
-            if (infoText.isEmpty() || now - infoAt > 30_000L) {
-                infoAt = now
-                infoText = dateFmt.format(java.util.Date(now)).lowercase()
-            }
-            val d = w * 0.125f
-            val cx = w / 2f + px * 0.4f
-            val cy = h * 0.066f
-            val tint = tintColor()
-            badge.draw(c, cx, cy, d, tint)
-            // the date, to the left of the gauge
-            infoPaint.textSize = w * 0.036f
-            infoPaint.textAlign = Paint.Align.RIGHT
-            infoPaint.color = tint
-            infoPaint.alpha = 215
-            c.drawText(infoText, cx - d * 0.5f - w * 0.045f, cy + w * 0.013f, infoPaint)
+            // top right corner, where the system's own status icons are
+            val d = w * 0.115f
+            badge.draw(c, w - d * 0.5f - w * 0.045f + px * 0.3f, h * 0.034f, d, tintColor())
         }
 
         private var homeClockMin = -1L
@@ -574,7 +564,8 @@ open class CoverLiveWallpaperService : WallpaperService() {
         /** Title, artist and the line being sung, small, above the dock; fades in while music plays and out when it stops. */
         private fun drawNowPlaying(c: Canvas, t: Float, dt: Float, px: Float) {
             val now = CoverBus.current()
-            npMix += ((if (now.playing) 1f else 0f) - npMix) * minOf(1f, dt * 2.5f)
+            val npTarget = if (now.playing) 1f else if (System.currentTimeMillis() - now.at < 90_000L && now.key.isNotEmpty()) 0.7f else 0f
+            npMix += (npTarget - npMix) * minOf(1f, dt * 2.5f)
             if (npMix < 0.02f) return
             val width = (w * 0.86f).toInt()
             if (now.key != npKey || width != npW) {
