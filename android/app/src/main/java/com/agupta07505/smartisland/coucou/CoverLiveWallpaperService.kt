@@ -222,7 +222,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (w == 0) return
             // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
             // (mostly the hour's colour with no cover, mostly the cover's while one is shown: mixing the two gives mud)
-            val mix = if (square != null) 0.15f else 0.9f
+            val mix = if (square != null) 0f else 0.9f   // with a cover, only the cover's colours: the hour's tint made them untrue
             val vivid = homeMode && mix < 0.5f
             val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix).let { if (vivid) saturate(it) else it } else c1
             val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix).let { if (vivid) saturate(it) else it } else c2
@@ -1016,28 +1016,37 @@ open class CoverLiveWallpaperService : WallpaperService() {
             runCatching { sensors?.unregisterListener(tiltListener) }
         }
 
+        /**
+         * The cover's colour in x0..x1, weighted by how colourful each pixel is (saturation x brightness), so the colourful
+         * part of a mostly dark cover decides, and a cover with no colour at all averages out to a plain grey.
+         */
         private fun avg(b: Bitmap, x0: Int, x1: Int): Int {
-            var r = 0L; var g = 0L; var bl = 0L; var n = 0
+            var r = 0.0; var g = 0.0; var bl = 0.0; var ws = 0.0
+            val hsv = FloatArray(3)
             for (y in 0 until b.height) for (x in x0 until x1) {
-                val p = b.getPixel(x, y); r += Color.red(p); g += Color.green(p); bl += Color.blue(p); n++
+                val p = b.getPixel(x, y)
+                Color.colorToHSV(p, hsv)
+                val w = (hsv[1] * hsv[2] + 0.02f).toDouble()
+                r += Color.red(p) * w; g += Color.green(p) * w; bl += Color.blue(p) * w; ws += w
             }
-            n = n.coerceAtLeast(1)
-            return Color.rgb((r / n).toInt(), (g / n).toInt(), (bl / n).toInt())
+            ws = ws.coerceAtLeast(1e-6)
+            return Color.rgb((r / ws).toInt(), (g / ws).toInt(), (bl / ws).toInt())
         }
 
+        /** As colourful as the cover is, a touch more, and bright enough to glow: a grey cover stays grey (no invented hue). */
         private fun boost(color: Int): Int {
             val hsv = FloatArray(3)
             Color.colorToHSV(color, hsv)
-            hsv[1] = (hsv[1] * 1.25f).coerceIn(0.4f, 1f)
-            hsv[2] = hsv[2].coerceIn(0.55f, 0.95f)
+            hsv[1] = (hsv[1] * 1.3f).coerceIn(0f, 1f)
+            hsv[2] = (hsv[2] * 1.1f).coerceIn(0.5f, 0.95f)
             return Color.HSVToColor(hsv)
         }
 
-        /** More colour for the home lights while music plays: covers are often dark and the glow came out grey. */
+        /** More colour for the home lights while music plays; proportional, so a colourless cover gets none. */
         private fun saturate(color: Int): Int {
             val hsv = FloatArray(3)
             Color.colorToHSV(color, hsv)
-            hsv[1] = (hsv[1] * 1.45f + 0.12f).coerceIn(0f, 1f)
+            hsv[1] = (hsv[1] * 1.35f).coerceIn(0f, 1f)
             hsv[2] = (hsv[2] * 1.15f).coerceIn(0.65f, 1f)
             return Color.HSVToColor(hsv)
         }
