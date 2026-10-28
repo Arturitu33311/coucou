@@ -72,7 +72,16 @@ impl State {
 pub fn step(state: &State, ev: Event) -> (State, Vec<Action>) {
     let mut s = *state;
     match ev {
-        Event::Enabled(on) => s.enabled = on,
+        Event::Enabled(on) => {
+            s.enabled = on;
+            // Off means the phone is let go: when it is turned on again nothing is assumed about the phone
+            // until it connects and says where the headphones are.
+            if !on {
+                s.link_up = false;
+                s.headphones = Where::None;
+                s.call = false;
+            }
+        }
         Event::Headphones(at) => s.headphones = at,
         Event::Link(up) => s.link_up = up,
         Event::Call(on) => s.call = on,
@@ -111,11 +120,12 @@ pub fn step(state: &State, ev: Event) -> (State, Vec<Action>) {
             }
         }
     }
-    // Last one to start wins: what starts on one device pauses the other.
+    // Last one to start wins: what starts on one device pauses the other. Only a start counts (the device
+    // was not playing a moment ago), so a state line repeated by the phone never pauses anything twice.
     match (ev, s.mode) {
-        (Event::PhoneMedia(true), Mode::Relay) if s.pc_playing => out.push(Action::PausePc),
-        (Event::PcMedia(true), Mode::Relay) if s.phone_playing => out.push(Action::PausePhone),
-        (Event::PcMedia(true), Mode::Hold) => out.push(Action::PausePc),
+        (Event::PhoneMedia(true), Mode::Relay) if s.pc_playing && !state.phone_playing => out.push(Action::PausePc),
+        (Event::PcMedia(true), Mode::Relay) if s.phone_playing && !state.pc_playing => out.push(Action::PausePhone),
+        (Event::PcMedia(true), Mode::Hold) if !state.pc_playing => out.push(Action::PausePc),
         _ => {}
     }
     (s, out)

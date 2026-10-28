@@ -59,6 +59,32 @@ pub fn sink_index(short_sinks: &str, name: &str) -> Option<u32> {
     })
 }
 
+/// The sink PipeWire makes for a connected Bluetooth device: `bluez_output.AC_BF_71_A1_21_71.1` (the trailing
+/// number varies). `mac` is `AC:BF:71:A1:21:71`, in either case.
+pub fn bluez_sink_for(short_sinks: &str, mac: &str) -> Option<String> {
+    let prefix = format!("bluez_output.{}.", mac.replace(':', "_").to_uppercase());
+    short_sinks.lines().find_map(|l| {
+        let name = l.split('\t').nth(1)?;
+        name.to_uppercase().starts_with(&prefix.to_uppercase()).then(|| name.to_string())
+    })
+}
+
+/// Makes the Bluetooth headphones' sink the default output, waiting a few seconds for PipeWire to create it.
+/// Restoring the output after the relay writes the *speakers* as the default, so after moving the headphones
+/// to this computer the sound would stay on the speakers; this puts it where the person just asked for it.
+pub fn default_to_bluez(mac: &str) -> bool {
+    for _ in 0..10 {
+        let sinks = pactl(&["list", "short", "sinks"]).unwrap_or_default();
+        if let Some(name) = bluez_sink_for(&sinks, mac) {
+            if plain_sink_name(&name) && pactl(&["set-default-sink", &name]).is_ok() {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    false
+}
+
 /// The module that made our sink, in `pactl list short modules` (index, name, arguments), if it is loaded.
 pub fn module_with_sink(short_modules: &str) -> Option<u32> {
     short_modules
@@ -321,6 +347,17 @@ mod tests {
         assert_eq!(after, before);
         assert!(sink_index(&sinks_after, SINK).is_none(), "the silent sink must be gone");
         assert!(!marker_path().exists());
+    }
+
+    #[test]
+    fn bluez_sink_for_finds_the_headphones_sink_by_address() {
+        let sinks = "3\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tSUSPENDED\n\
+                     12\tbluez_output.AC_BF_71_A1_21_71.1\tPipeWire\ts16le 2ch 48000Hz\tIDLE\n\
+                     13\tbluez_output.11_22_33_44_55_66.1\tPipeWire\ts16le 2ch 48000Hz\tIDLE\n";
+        assert_eq!(bluez_sink_for(sinks, "AC:BF:71:A1:21:71").as_deref(), Some("bluez_output.AC_BF_71_A1_21_71.1"));
+        assert_eq!(bluez_sink_for(sinks, "ac:bf:71:a1:21:71").as_deref(), Some("bluez_output.AC_BF_71_A1_21_71.1"));
+        assert_eq!(bluez_sink_for(sinks, "99:99:99:99:99:99"), None);
+        assert_eq!(bluez_sink_for("", "AC:BF:71:A1:21:71"), None);
     }
 
     #[test]

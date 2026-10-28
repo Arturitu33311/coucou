@@ -135,9 +135,19 @@ fn send_event(ev: Event) {
     }
 }
 
-/// Writes one frame to the phone if one is connected. False when nobody is there or it is too slow.
+/// Writes one audio frame to the phone if one is connected. False when nobody is there or it is too slow
+/// (the frame is dropped: audio is never queued without bound, and never takes the slots kept for control).
 #[cfg(target_os = "linux")]
 pub fn send_frame(bytes: Vec<u8>) -> bool {
+    match CURRENT.lock().unwrap().current.as_ref() {
+        Some((_, c)) => try_audio(&c.out, bytes),
+        None => false,
+    }
+}
+
+/// Writes a control frame (pause, swap prompt). False only when nobody is connected or even the reserve is full.
+#[cfg(target_os = "linux")]
+pub fn send_control(bytes: Vec<u8>) -> bool {
     match CURRENT.lock().unwrap().current.as_ref() {
         Some((_, c)) => c.out.try_send(bytes).is_ok(),
         None => false,
@@ -189,6 +199,114 @@ pub fn needs_grace(prev: &State, next: &State) -> bool {
         && (prev.mode != Mode::Hold || prev.headphones == Where::Phone)
 }
 
+/// Tells grace timers apart: each wait that starts gets a number, and anything that ends the grace situation (the
+/// headphones came back, the relay went off) makes every earlier number stale, so an old timer firing late can
+/// never cut a newer blip short.
+#[cfg(target_os = "linux")]
+pub struct GraceClock {
+    gen: u64,
+}
+
+#[cfg(target_os = "linux")]
+impl GraceClock {
+    pub const fn new() -> Self {
+        GraceClock { gen: 0 }
+    }
+
+    /// Call after every step. `Some(n)` means: start a timer that, when it ends, asks `is_current(n)`.
+    pub fn update(&mut self, prev: &State, next: &State) -> Option<u64> {
+        use crate::audiolink_logic::{Mode, Where};
+        if needs_grace(prev, next) {
+            self.gen += 1;
+            return Some(self.gen);
+        }
+        // Still held with the headphones gone: the running wait stays valid. Anything else ends the situation.
+        let still_waiting = next.mode == Mode::Hold && !matches!(next.headphones, Where::Phone | Where::Pc);
+        if !still_waiting {
+            self.gen += 1;
+        }
+        None
+    }
+
+    /// True when timer `n` is still the one that counts.
+    pub fn is_current(&self, n: u64) -> bool {
+        self.gen == n
+    }
+}
+
+#[cfg(target_os = "linux")]
+static GRACE_CLOCK: Mutex<GraceClock> = Mutex::new(GraceClock::new());
+
+/// The events a phone's state line stands for, in the order that avoids a pointless flip: a call is applied
+/// before the headphones, so "headphones on the phone, call on" lands in `Hold` without first starting the relay.
+pub fn events_of(msg: &PhoneMsg) -> Vec<crate::audiolink_logic::Event> {
+    use crate::audiolink_logic::Event;
+    match msg {
+        PhoneMsg::Heartbeat => Vec::new(),
+        PhoneMsg::State { headphones, call, phone_playing } => {
+            vec![Event::Call(*call), Event::Headphones(*headphones), Event::PhoneMedia(*phone_playing)]
+        }
+    }
+}
+
+/// Room in the phone's queue. A part of it is kept for control frames (pause, swap prompt), which must not be
+/// lost when the network is slow and audio is piling up.
+pub const OUT_CAPACITY: usize = 64;
+pub const CONTROL_RESERVE: usize = 16;
+
+/// Queues an audio frame unless the queue is down to the control reserve.
+pub fn try_audio(tx: &tokio::sync::mpsc::Sender<Vec<u8>>, bytes: Vec<u8>) -> bool {
+    tx.capacity() > CONTROL_RESERVE && tx.try_send(bytes).is_ok()
+}
+
+/// Largest sample (absolute value) still counted as silence.
+pub const SILENCE_PEAK: i16 = 8;
+/// How many silent 20 ms chunks are still sent after the last loud one (one second).
+pub const SILENCE_TAIL: u32 = 50;
+
+/// True when every 16-bit little-endian sample in the chunk is within `SILENCE_PEAK`.
+pub fn is_silent(chunk: &[u8]) -> bool {
+    chunk.chunks_exact(2).all(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs() <= SILENCE_PEAK as u16)
+}
+
+/// Lets sound through, and a short tail of silence after it, so a quiet laptop costs the network nothing.
+pub struct SilenceGate {
+    quiet: u32,
+}
+
+impl SilenceGate {
+    pub const fn new() -> Self {
+        SilenceGate { quiet: 0 }
+    }
+
+    /// True when this chunk should be sent.
+    pub fn pass(&mut self, chunk: &[u8]) -> bool {
+        if is_silent(chunk) {
+            self.quiet = self.quiet.saturating_add(1);
+            self.quiet <= SILENCE_TAIL
+        } else {
+            self.quiet = 0;
+            true
+        }
+    }
+}
+
+/// What to tell the person when the phone could not be reached to ask it for its part of a swap.
+pub fn swap_note(to: &SwapTo, delivered: bool) -> Option<&'static str> {
+    if delivered {
+        return None;
+    }
+    Some(match to {
+        SwapTo::Pc => {
+            "The phone is not connected to the laptop, so it could not be asked: disconnect the headphones on the phone yourself. \
+             The laptop keeps trying to connect them for a minute."
+        }
+        SwapTo::Phone => {
+            "The headphones are let go, but the phone could not be asked: connect them on the phone yourself."
+        }
+    })
+}
+
 /// Where the headphones are being moved to by hand.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SwapTo {
@@ -212,12 +330,15 @@ static SWAPPING: AtomicBool = AtomicBool::new(false);
 
 /// Waits out the grace period (and any swap in progress), then says it is over.
 #[cfg(target_os = "linux")]
-fn wait_grace() {
+fn wait_grace(n: u64) {
     std::thread::sleep(GRACE);
     while SWAPPING.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(500));
     }
-    send_event(Event::GraceExpired);
+    // A wait that was cancelled or replaced in the meantime must not end anything.
+    if GRACE_CLOCK.lock().unwrap().is_current(n) {
+        send_event(Event::GraceExpired);
+    }
 }
 
 /// Moves the headphones by hand. To the computer: the phone is asked to let go (a notification, because Android
@@ -239,25 +360,33 @@ fn swap(to: &str) -> Result<(), String> {
             if SWAPPING.swap(true, Ordering::SeqCst) {
                 return Err("a swap is already in progress".into());
             }
-            send_frame(encode(FrameKind::SwapPrompt, &[SWAP_RELEASE]));
+            let delivered = send_control(encode(FrameKind::SwapPrompt, &[SWAP_RELEASE]));
             std::thread::spawn(move || {
                 for _ in 0..20 {
                     if bluez_connect(&mac).is_ok() {
                         log::line("audiolink: the headphones are on this computer");
                         send_event(Event::Headphones(crate::audiolink_logic::Where::Pc));
+                        // The relay's restore puts the speakers back as the default; the person asked for the
+                        // headphones, so give PipeWire a moment to make their sink, then point the sound at it.
+                        std::thread::sleep(Duration::from_millis(700));
+                        if !crate::audiolink_sink::default_to_bluez(&mac) {
+                            log::line("audiolink: the headphones' sink did not show up; the sound stays where it was");
+                        }
                         break;
                     }
                     std::thread::sleep(Duration::from_secs(3));
                 }
                 SWAPPING.store(false, Ordering::SeqCst);
             });
-            Ok(())
+            swap_note(&SwapTo::Pc, delivered).map_or(Ok(()), |n| Err(n.to_string()))
         }
         SwapTo::Phone => {
+            // Whatever is playing here would come out of the speakers the moment the headphones let go.
+            crate::audiolink_players::pause_all_playing();
             bluez_disconnect(&mac)?;
             send_event(Event::Headphones(crate::audiolink_logic::Where::None));
-            send_frame(encode(FrameKind::SwapPrompt, &[SWAP_CONNECT]));
-            Ok(())
+            let delivered = send_control(encode(FrameKind::SwapPrompt, &[SWAP_CONNECT]));
+            swap_note(&SwapTo::Phone, delivered).map_or(Ok(()), |n| Err(n.to_string()))
         }
     }
 }
@@ -286,8 +415,9 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
         if next.mode != state.mode {
             log::line(format!("audiolink: {:?} -> {:?}", state.mode, next.mode));
         }
-        if needs_grace(&state, &next) {
-            std::thread::spawn(wait_grace);
+        let wait = GRACE_CLOCK.lock().unwrap().update(&state, &next);
+        if let Some(n) = wait {
+            std::thread::spawn(move || wait_grace(n));
         }
         state = next;
         for a in actions {
@@ -328,7 +458,7 @@ fn apply(_app: &AppHandle, action: Action) {
         }
         // The phone cannot tell when the computer starts playing, so the computer asks it to pause.
         Action::PausePhone => {
-            send_frame(crate::audiolink_wire::encode(crate::audiolink_wire::FrameKind::PausePhone, &[]));
+            send_control(crate::audiolink_wire::encode(crate::audiolink_wire::FrameKind::PausePhone, &[]));
         }
     }
 }
@@ -353,9 +483,13 @@ fn start_capture() {
     *CAPTURE_PID.lock().unwrap() = Some(pid);
     std::thread::spawn(move || {
         let mut chunk = [0u8; CHUNK];
-        // A blocking read: it sleeps until parec has sound to give, and ends when parec is stopped.
+        let mut gate = SilenceGate::new();
+        // A blocking read: it sleeps until parec has sound to give, and ends when parec is stopped. Silence
+        // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
         while let Ok(true) = capture.read_chunk(&mut chunk) {
-            send_frame(encode(FrameKind::Audio, &chunk));
+            if gate.pass(&chunk) {
+                send_frame(encode(FrameKind::Audio, &chunk));
+            }
         }
         let mut current = CAPTURE_PID.lock().unwrap();
         if *current == Some(pid) {
@@ -434,7 +568,7 @@ async fn client(_app: AppHandle, stream: tokio::net::UnixStream) {
     let Ok(kill) = std_stream.try_clone() else { return };
     let Ok(stream) = tokio::net::UnixStream::from_std(std_stream) else { return };
     let (mut rd, mut wr) = stream.into_split();
-    let (out, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (out, mut out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(OUT_CAPACITY);
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let older = CURRENT.lock().unwrap().take_over(id, Conn { out, kill });
@@ -463,10 +597,8 @@ async fn client(_app: AppHandle, stream: tokio::net::UnixStream) {
 
     send_event(Event::Link(true));
     let end = pump(&mut rd, SILENCE, |msg| {
-        if let PhoneMsg::State { headphones, call, phone_playing } = msg {
-            send_event(Event::Headphones(headphones));
-            send_event(Event::Call(call));
-            send_event(Event::PhoneMedia(phone_playing));
+        for ev in events_of(&msg) {
+            send_event(ev);
         }
     })
     .await;
@@ -486,6 +618,82 @@ mod tests {
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap().block_on(f)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stale_grace_timer_cannot_cut_a_newer_blip_short() {
+        let mut clock = GraceClock::new();
+        let first = clock.update(&relaying(), &held(Where::None)).expect("a blip starts a wait");
+        // They come back: the wait no longer counts.
+        assert_eq!(clock.update(&held(Where::None), &relaying()), None);
+        assert!(!clock.is_current(first));
+        // They drop again: a new wait, and the first timer firing now is ignored.
+        let second = clock.update(&relaying(), &held(Where::None)).expect("a second blip starts a second wait");
+        assert_ne!(first, second);
+        assert!(!clock.is_current(first));
+        assert!(clock.is_current(second));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wait_stays_valid_while_the_headphones_stay_gone() {
+        let mut clock = GraceClock::new();
+        let n = clock.update(&relaying(), &held(Where::None)).unwrap();
+        assert_eq!(clock.update(&held(Where::None), &held(Where::None)), None);
+        assert!(clock.is_current(n));
+    }
+
+    #[test]
+    fn a_state_line_applies_the_call_before_the_headphones() {
+        use crate::audiolink_logic::Event;
+        let msg = PhoneMsg::State { headphones: Where::Phone, call: true, phone_playing: false };
+        assert_eq!(events_of(&msg), vec![Event::Call(true), Event::Headphones(Where::Phone), Event::PhoneMedia(false)]);
+        assert_eq!(events_of(&PhoneMsg::Heartbeat), vec![]);
+    }
+
+    #[test]
+    fn audio_cannot_use_the_slots_kept_for_control_frames() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<Vec<u8>>(OUT_CAPACITY);
+        let audio = (0..OUT_CAPACITY).take_while(|_| try_audio(&tx, vec![0])).count();
+        assert_eq!(audio, OUT_CAPACITY - CONTROL_RESERVE);
+        // A pause or a swap prompt still gets through while audio is backed up.
+        let control = (0..CONTROL_RESERVE).take_while(|_| tx.try_send(vec![1]).is_ok()).count();
+        assert_eq!(control, CONTROL_RESERVE);
+    }
+
+    #[test]
+    fn silence_is_samples_within_the_peak() {
+        assert!(is_silent(&[0u8; 3840]));
+        let faint: Vec<u8> = (0..1920).flat_map(|i| (if i % 2 == 0 { 3i16 } else { -3i16 }).to_le_bytes()).collect();
+        assert!(is_silent(&faint));
+        let loud: Vec<u8> = (0..1920).flat_map(|_| 1000i16.to_le_bytes()).collect();
+        assert!(!is_silent(&loud));
+        let mut one = vec![0u8; 3840];
+        one[1000..1002].copy_from_slice(&(-900i16).to_le_bytes());
+        assert!(!is_silent(&one), "a single loud sample is sound");
+    }
+
+    #[test]
+    fn the_gate_sends_a_tail_of_silence_then_nothing() {
+        let quiet = [0u8; 3840];
+        let loud: Vec<u8> = (0..1920).flat_map(|_| 1000i16.to_le_bytes()).collect();
+        let mut gate = SilenceGate::new();
+        assert!(gate.pass(&loud));
+        let sent = (0..200).filter(|_| gate.pass(&quiet)).count();
+        assert_eq!(sent as u32, SILENCE_TAIL);
+        assert!(!gate.pass(&quiet));
+        // Sound again: through, and the tail starts over.
+        assert!(gate.pass(&loud));
+        assert!(gate.pass(&quiet));
+    }
+
+    #[test]
+    fn a_swap_says_so_when_the_phone_could_not_be_asked() {
+        assert_eq!(swap_note(&SwapTo::Pc, true), None);
+        assert_eq!(swap_note(&SwapTo::Phone, true), None);
+        assert!(swap_note(&SwapTo::Pc, false).unwrap().contains("disconnect"));
+        assert!(swap_note(&SwapTo::Phone, false).unwrap().contains("connect"));
     }
 
     #[test]

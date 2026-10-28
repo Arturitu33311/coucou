@@ -48,7 +48,9 @@ object AudioLinkLogic {
     /** Takes one event in; returns the next state and what to do about it. */
     fun step(state: State, ev: Event): Pair<State, List<Action>> {
         var s = when (ev) {
-            is Event.Enabled -> state.copy(enabled = ev.on)
+            // Off means the phone is let go: turned on again, nothing is assumed until it says where the headphones are.
+            is Event.Enabled -> if (ev.on) state.copy(enabled = true)
+            else state.copy(enabled = false, linkUp = false, headphones = Where.None, call = false)
             is Event.Headphones -> state.copy(headphones = ev.at)
             is Event.Link -> state.copy(linkUp = ev.up)
             is Event.Call -> state.copy(call = ev.on)
@@ -92,11 +94,12 @@ object AudioLinkLogic {
                 }
             }
         }
-        // Last one to start wins: what starts on one device pauses the other.
+        // Last one to start wins: what starts on one device pauses the other. Only a start counts (the device
+        // was not playing a moment ago), so a state line repeated by the phone never pauses anything twice.
         when {
-            ev == Event.PhoneMedia(true) && s.mode == Mode.Relay && s.pcPlaying -> out += Action.PausePc
-            ev == Event.PcMedia(true) && s.mode == Mode.Relay && s.phonePlaying -> out += Action.PausePhone
-            ev == Event.PcMedia(true) && s.mode == Mode.Hold -> out += Action.PausePc
+            ev == Event.PhoneMedia(true) && s.mode == Mode.Relay && s.pcPlaying && !state.phonePlaying -> out += Action.PausePc
+            ev == Event.PcMedia(true) && s.mode == Mode.Relay && s.phonePlaying && !state.pcPlaying -> out += Action.PausePhone
+            ev == Event.PcMedia(true) && s.mode == Mode.Hold && !state.pcPlaying -> out += Action.PausePc
         }
         return s to out
     }
