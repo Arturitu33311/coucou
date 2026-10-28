@@ -73,7 +73,7 @@ State, per moment: the headphones are connected to **device H** (default: the ph
 
 - Linux PC with PipeWire; the audio source is a monitor of the output the apps play to (or a virtual sink they are moved to).
 - Android: phone-audio capture is not needed (phone plays its own audio). Playing the received stream needs a foreground service
-  (`AudioTrack`) and must keep running with the screen off. The Android version on the S22 is current; the S21 is older: check.
+  (`AudioTrack`) and must keep running with the screen off. Target: the S22 only.
 - Transport must work over Tailscale (outside home Wi-Fi) as well as on the home LAN.
 - Rust on the PC (Tauri app, existing crates; avoid new heavy dependencies), Kotlin on the phone. The codec should be Opus (or an
   equally common one) so neither side writes its own codec.
@@ -113,6 +113,13 @@ State, per moment: the headphones are connected to **device H** (default: the ph
 - Whether the manual "move headphones" is part of this project or the next one (my guess: include the PC `bluetoothctl connect` and a
   button, since the relay is incomplete without an escape hatch).
 - Settings placement and wording (follow the existing Hub / Phone settings style).
+
+## Decided by Alan, second round
+
+- **Phone playback that pauses the PC:** music and video (media sessions) only. Notifications, navigation voice and other short
+  sounds do nothing. (Calls and alarms were not discussed: my call is that they pause the relay while they last, and the PC stays
+  silent, never falling back to the speakers. Change if wrong.)
+- **Target phone:** the S22 only. The S21 is out of scope; no older-Android support work.
 
 ## Calls made by me after the builder check (not discussed with Alan; change any of them)
 
