@@ -4,6 +4,8 @@ mod activities;
 mod agents;
 mod audiolink;
 mod audiolink_logic;
+#[cfg(target_os = "linux")]
+mod audiolink_sink;
 mod audiolink_wire;
 mod bars;
 mod calendar;

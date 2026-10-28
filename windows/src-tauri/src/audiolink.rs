@@ -34,6 +34,8 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "linux")]
 static STARTED: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "linux")]
+static CHECKED: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "linux")]
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[cfg(target_os = "linux")]
 static EVENTS: OnceLock<Sender<Event>> = OnceLock::new();
@@ -145,6 +147,10 @@ pub fn send_frame(bytes: Vec<u8>) -> bool {
 /// Turns the audio relay on or off; the socket is served from the first time it is turned on.
 #[cfg(target_os = "linux")]
 pub fn sync_enabled(app: &AppHandle, on: bool) {
+    // Whatever the setting says now, a crash while it was on must not leave the computer silent.
+    if !CHECKED.swap(true, Ordering::SeqCst) {
+        crate::audiolink_sink::restore_if_stale();
+    }
     ENABLED.store(on, Ordering::Relaxed);
     if on && !STARTED.swap(true, Ordering::SeqCst) {
         let (tx, rx) = std::sync::mpsc::channel::<Event>();
@@ -182,10 +188,71 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
     }
 }
 
+/// Process id of the `parec` that is feeding the phone, if one is running.
+#[cfg(target_os = "linux")]
+static CAPTURE_PID: Mutex<Option<u32>> = Mutex::new(None);
+
 /// Carries out what the logic asked for.
 #[cfg(target_os = "linux")]
 fn apply(_app: &AppHandle, action: Action) {
-    crate::log::line(format!("audiolink: {action:?}"));
+    use crate::{audiolink_sink as sink, log};
+
+    log::line(format!("audiolink: {action:?}"));
+    match action {
+        Action::SinkVirtual => match sink::sink_virtual() {
+            Ok(()) => sink::spawn_watchdog(),
+            Err(e) => log::line(format!("audiolink: no silent sink ({e})")),
+        },
+        Action::SinkRestore => {
+            if let Err(e) = sink::sink_restore() {
+                log::line(format!("audiolink: restore: {e}"));
+            }
+            sink::stop_watchdog();
+        }
+        Action::RelayStart => start_capture(),
+        Action::RelayStop => stop_capture(),
+        // Pausing the players is Task 5; pausing the phone is the phone's own business.
+        Action::PausePc | Action::PausePhone => {}
+    }
+}
+
+/// Reads the silent sink's monitor and hands 20 ms chunks to the phone, on its own thread.
+#[cfg(target_os = "linux")]
+fn start_capture() {
+    use crate::audiolink_sink::{capture_start, CHUNK};
+    use crate::audiolink_wire::{encode, FrameKind};
+
+    if CAPTURE_PID.lock().unwrap().is_some() {
+        return;
+    }
+    let mut capture = match capture_start() {
+        Ok(c) => c,
+        Err(e) => {
+            crate::log::line(format!("audiolink: no capture ({e})"));
+            return;
+        }
+    };
+    let pid = capture.pid();
+    *CAPTURE_PID.lock().unwrap() = Some(pid);
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; CHUNK];
+        // A blocking read: it sleeps until parec has sound to give, and ends when parec is stopped.
+        while let Ok(true) = capture.read_chunk(&mut chunk) {
+            send_frame(encode(FrameKind::Audio, &chunk));
+        }
+        let mut current = CAPTURE_PID.lock().unwrap();
+        if *current == Some(pid) {
+            *current = None;
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn stop_capture() {
+    if let Some(pid) = CAPTURE_PID.lock().unwrap().take() {
+        // parec ends, the blocked read returns, the thread finishes.
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    }
 }
 
 /// The audio socket, next to the phone link's.

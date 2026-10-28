@@ -65,6 +65,11 @@ fn main() {
     if std::env::args().skip(1).any(|a| a == "--audio") {
         unix::run_audio();
     }
+    // Started by Coucou, not by a person or a hook: puts the sound back if Coucou dies with the relay on.
+    #[cfg(target_os = "linux")]
+    if std::env::args().skip(1).any(|a| a == "--audio-watchdog") {
+        unix::run_audio_watchdog();
+    }
     let Some(Event { payload, name: event, ask, agent }) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest" || ask.is_some();
