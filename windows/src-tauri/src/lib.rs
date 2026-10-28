@@ -3,6 +3,7 @@
 mod activities;
 mod agents;
 mod audiolink_logic;
+mod audiolink_wire;
 mod bars;
 mod calendar;
 mod clipboard;

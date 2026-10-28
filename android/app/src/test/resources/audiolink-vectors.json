@@ -615,5 +615,121 @@
       ]
     }
   ],
-  "wire_cases": []
+  "wire_cases": [
+    {
+      "name": "audio_two_bytes",
+      "hex": "0100020102",
+      "result": "audio",
+      "consumed": 5
+    },
+    {
+      "name": "heartbeat",
+      "hex": "020000",
+      "result": "heartbeat",
+      "consumed": 3
+    },
+    {
+      "name": "hello_ok",
+      "hex": "0300297b2272617465223a34383030302c226368616e6e656c73223a322c22666d74223a227331366c65227d",
+      "result": "hello",
+      "consumed": 44
+    },
+    {
+      "name": "empty_buffer",
+      "hex": "",
+      "result": "need_more",
+      "consumed": 0
+    },
+    {
+      "name": "split_header",
+      "hex": "0100",
+      "result": "need_more",
+      "consumed": 0
+    },
+    {
+      "name": "split_payload",
+      "hex": "01000401",
+      "result": "need_more",
+      "consumed": 0
+    },
+    {
+      "name": "two_frames_back_to_back_reads_the_first",
+      "hex": "020000020000",
+      "result": "heartbeat",
+      "consumed": 3
+    },
+    {
+      "name": "too_long",
+      "hex": "01ffff",
+      "result": "error",
+      "consumed": 0
+    },
+    {
+      "name": "audio_8193_is_too_long",
+      "hex": "012001",
+      "result": "error",
+      "consumed": 0
+    },
+    {
+      "name": "hello_257_is_too_long",
+      "hex": "030101",
+      "result": "error",
+      "consumed": 0
+    },
+    {
+      "name": "unknown_type",
+      "hex": "090000",
+      "result": "error",
+      "consumed": 0
+    },
+    {
+      "name": "heartbeat_with_payload",
+      "hex": "020001ff",
+      "result": "error",
+      "consumed": 0
+    }
+  ],
+  "line_cases": [
+    {
+      "name": "heartbeat",
+      "line": "{\"op\":\"hb\"}",
+      "result": "heartbeat"
+    },
+    {
+      "name": "state",
+      "line": "{\"op\":\"state\",\"headphones\":\"phone\",\"call\":false,\"phone_playing\":true}",
+      "result": "state",
+      "headphones": "phone",
+      "call": false,
+      "phone_playing": true
+    },
+    {
+      "name": "state_in_call_no_headphones",
+      "line": "{\"op\":\"state\",\"headphones\":\"none\",\"call\":true,\"phone_playing\":false}",
+      "result": "state",
+      "headphones": "none",
+      "call": true,
+      "phone_playing": false
+    },
+    {
+      "name": "unknown_op",
+      "line": "{\"op\":\"format_disk\"}",
+      "result": "error"
+    },
+    {
+      "name": "not_json",
+      "line": "hello",
+      "result": "error"
+    },
+    {
+      "name": "bad_headphones_value",
+      "line": "{\"op\":\"state\",\"headphones\":\"moon\",\"call\":false,\"phone_playing\":false}",
+      "result": "error"
+    },
+    {
+      "name": "missing_field",
+      "line": "{\"op\":\"state\",\"headphones\":\"phone\"}",
+      "result": "error"
+    }
+  ]
 }
