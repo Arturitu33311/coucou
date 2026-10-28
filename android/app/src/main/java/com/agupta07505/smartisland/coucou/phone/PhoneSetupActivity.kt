@@ -59,6 +59,9 @@ import com.agupta07505.smartisland.coucou.ui.MochiGlyph
 import com.agupta07505.smartisland.coucou.ui.MochiMood
 import com.agupta07505.smartisland.coucou.ui.Outfit
 import com.agupta07505.smartisland.coucou.ui.Wardrobe
+import com.agupta07505.smartisland.coucou.audiolink.AudioLinkService
+import com.agupta07505.smartisland.coucou.audiolink.AudioLinkSetup
+import com.agupta07505.smartisland.coucou.phone.PhoneSettings.audioLink
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followClaude
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followJinx
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.jinxSync
@@ -216,6 +219,7 @@ private fun Setup() {
                 },
             )
             PresenceCard()
+            AudioLinkCard()
         }
         error?.let { Text(it, color = Color(0xFFF5A524), fontSize = 12.sp) }
         Spacer(Modifier.padding(20.dp))
@@ -250,6 +254,68 @@ private fun PresenceCard() {
             label = { Text("Inbox key") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
             visualTransformation = PasswordVisualTransformation())
         Text(status, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+    }
+}
+
+/**
+ * The laptop's sound through the headphones that stay on this phone. It has a key of its own, separate from
+ * the Claude Code one: that key may run only `coucou-hook --audio`, so losing it loses the audio and nothing else.
+ */
+@Composable
+private fun AudioLinkCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var on by remember { mutableStateOf(context.audioLink) }
+    var audioLine by remember { mutableStateOf(PhoneKey.publicLine(context, AudioLinkSetup.KEY)) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val status by AudioLinkService.status.collectAsState()
+    val user = PhoneSettings.profile(context, PhoneSettings.LAPTOP).user
+
+    Card("5 · Laptop audio through the headphones") {
+        Text(
+            "Keep the Bluetooth headphones on this phone and hear the laptop through them: what plays on the laptop is " +
+                "sent here, and whichever device starts playing pauses the other. Turn it on in the laptop's settings too " +
+                "(Settings → Phone → Phone headphones). It needs the laptop paired above.",
+            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+        )
+        val line = audioLine
+        if (line == null) {
+            Button(onClick = {
+                scope.launch {
+                    error = runCatching { withContext(Dispatchers.Default) { PhoneKey.create(context, AudioLinkSetup.KEY) } }
+                        .fold({ audioLine = it; null }, { it.message })
+                }
+            }) { Text("Make the audio key") }
+        } else if (user.isBlank()) {
+            Text("Fill in the laptop's user above to get the line to paste.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+        } else {
+            val authorized = AudioLinkSetup.authorizedLine(user, line)
+            Text("Paste this second line in ~/.ssh/authorized_keys on the laptop:", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+            SelectionContainer {
+                Text(
+                    authorized, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.06f)).padding(8.dp),
+                )
+            }
+            OutlinedButton(onClick = { copy(context, "authorized_keys line", authorized) }) { Text("Copy the line") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = on, onCheckedChange = { on = it; context.audioLink = it; CoucouRuntime.apply(context) })
+            Spacer(Modifier.width(10.dp))
+            Text("Hear the laptop through the headphones", color = Color.White, fontSize = 14.sp)
+        }
+        Text(
+            when (status) {
+                AudioLinkService.Status.Off -> "off"
+                AudioLinkService.Status.Idle -> "waiting for the headphones to connect to this phone"
+                AudioLinkService.Status.NeedsSetup -> "pair the laptop and paste the line above"
+                AudioLinkService.Status.Connecting -> "connecting…"
+                AudioLinkService.Status.Streaming -> "connected to the laptop"
+                AudioLinkService.Status.Reconnecting -> "reconnecting…"
+            },
+            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+        )
+        error?.let { Text(it, color = Color(0xFFF5A524), fontSize = 12.sp) }
     }
 }
 

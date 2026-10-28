@@ -10,6 +10,8 @@ import com.agupta07505.smartisland.coucou.agents.AgentUi
 import com.agupta07505.smartisland.coucou.agents.SessionState
 import com.agupta07505.smartisland.coucou.phone.JinxSync
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
+import com.agupta07505.smartisland.coucou.audiolink.AudioLinkService
+import com.agupta07505.smartisland.coucou.phone.PhoneSettings.audioLink
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followClaude
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followJinx
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.jinxSync
@@ -112,6 +114,9 @@ object CoucouRuntime {
             agents = null
             _agentUi.value = AgentUi()
         }
+
+        // The laptop's sound through the headphones kept on this phone
+        if (app.audioLink) AudioLinkService.start(app) else AudioLinkService.stop(app)
 
         // Jinx's texts on this phone, through presence (no voice: text only)
         if (app.followJinx) {

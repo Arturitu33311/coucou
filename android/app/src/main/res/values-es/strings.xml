@@ -66,4 +66,8 @@
     <string name="coucou_phrase_morning">Buenos días ☀️</string>
     <string name="coucou_phrase_afternoon">¿Un cafecito? ☕</string>
     <string name="coucou_phrase_evening">Ya casi a descansar 🌙</string>
+    <!-- Relay de audio: el sonido de la laptop por los audífonos que se quedan en este celular -->
+    <string name="audiolink_channel">Audio de la laptop</string>
+    <string name="audiolink_notification_title">Audio de la laptop</string>
+    <string name="audiolink_notification_text">Listo para oír tu laptop por los audífonos</string>
 </resources>

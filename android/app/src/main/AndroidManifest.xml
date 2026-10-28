@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:ignore="ProtectedPermissions" />
@@ -100,6 +101,12 @@
                 android:value="Floating Dynamic Island overlay"
                 tools:targetApi="upsidedowncake" />
         </service>
+
+        <!-- The laptop's sound through the headphones that stay on this phone (off until turned on). -->
+        <service
+            android:name=".coucou.audiolink.AudioLinkService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <service
             android:name=".service.SmartIslandNotificationListenerService"
