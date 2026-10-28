@@ -5,6 +5,8 @@ mod agents;
 mod audiolink;
 mod audiolink_logic;
 #[cfg(target_os = "linux")]
+mod audiolink_players;
+#[cfg(target_os = "linux")]
 mod audiolink_sink;
 mod audiolink_wire;
 mod bars;

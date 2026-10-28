@@ -157,6 +157,8 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
         let _ = EVENTS.set(tx);
         let engine_app = app.clone();
         std::thread::spawn(move || engine(engine_app, rx));
+        // Told only when "something plays here" changes; the logic decides whether that matters.
+        crate::audiolink_players::start(|playing| send_event(Event::PcMedia(playing)));
         let app = app.clone();
         tauri::async_runtime::spawn(async move { serve(app).await });
     }
@@ -211,8 +213,15 @@ fn apply(_app: &AppHandle, action: Action) {
         }
         Action::RelayStart => start_capture(),
         Action::RelayStop => stop_capture(),
-        // Pausing the players is Task 5; pausing the phone is the phone's own business.
-        Action::PausePc | Action::PausePhone => {}
+        // Off the engine thread: a player that does not answer must not hold up the stream.
+        Action::PausePc => {
+            std::thread::spawn(|| {
+                let n = crate::audiolink_players::pause_all_playing();
+                crate::log::line(format!("audiolink: paused {n} player(s) here"));
+            });
+        }
+        // Pausing the phone is the phone's own business: it runs the same logic and pauses itself.
+        Action::PausePhone => {}
     }
 }
 
