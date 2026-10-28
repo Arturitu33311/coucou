@@ -27,6 +27,10 @@ Linux laptop + Android phone only (the S22). The phone must be able to reach the
 | Link lost, or a phone call | Laptop goes silent and pauses; **never** falls back to the speakers; no auto-resume |
 | Headphones leave the phone (blip) | Silent for 5 s; if they come back the stream resumes, otherwise the speakers are given back |
 | Headphones not on the phone, or setting off | Laptop plays on its own speakers as always |
+| Nothing plays on the laptop | Nothing is sent (a one-second tail of silence at most), so an idle laptop costs the network and the phone nothing |
+| Sound reaches the phone | The phone takes audio focus then (not when the link opens), and lets it go after about 2 s of quiet |
+
+A blip of the headphones keeps the ssh session open for up to 7 s, so the stream resumes at once when they come back.
 
 Notification sounds and navigation voice on the phone do **not** pause the laptop: only media sessions in `PLAYING` count.
 
@@ -43,7 +47,9 @@ Notification sounds and navigation voice on the phone do **not** pause the lapto
 
 Settings → Phone → **Headphones**: *To this computer* / *Back to the phone*. Android does not let an app connect or
 disconnect Bluetooth audio by itself, so the phone shows a notification that opens Bluetooth settings: one tap. The laptop
-keeps trying to connect the headphones for a minute and does not give its speakers back during that time.
+keeps trying to connect the headphones (every few seconds, up to 20 attempts) and does not give its speakers back during that
+time. *Back to the phone* pauses what plays on the laptop first, so it does not come out of the speakers. If the phone is not
+connected to the laptop it cannot be asked; Settings says so and you do that part on the phone by hand.
 
 ## If something goes wrong
 

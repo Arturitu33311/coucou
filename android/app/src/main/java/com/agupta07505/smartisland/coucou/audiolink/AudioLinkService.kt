@@ -18,6 +18,7 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.agupta07505.smartisland.R
@@ -56,8 +57,9 @@ class AudioLinkService : Service(), PhoneSignals {
     private val headphones = MutableStateFlow(Where.None)
     @Volatile private var call = false
     @Volatile private var media = false
-    private val outLock = Any()
-    private var out: OutputStream? = null
+
+    /** The current session's writer. Changes are only ever queued on it: they are reported on the main thread. */
+    @Volatile private var outbox: Outbox? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -96,13 +98,7 @@ class AudioLinkService : Service(), PhoneSignals {
     }
 
     private fun sendLine(line: String) {
-        synchronized(outLock) {
-            val o = out ?: return
-            runCatching {
-                o.write((line + "\n").toByteArray())
-                o.flush()
-            }
-        }
+        outbox?.post(line)
     }
 
     private fun sendState() = sendLine(AudioLinkWire.stateLine(headphones.value, call, media))
@@ -135,7 +131,7 @@ class AudioLinkService : Service(), PhoneSignals {
             } catch (_: Exception) {
                 // Unreachable laptop, refused key, hung-up pipe: all the same to the phone, try again.
             }
-            synchronized(outLock) { out = null }
+            outbox = null
             _status.value = if (headphones.value == Where.Phone) Status.Reconnecting else Status.Idle
             delay(wait)
             wait = (wait * 2).coerceAtMost(30_000L)
@@ -178,23 +174,35 @@ class AudioLinkService : Service(), PhoneSignals {
             } catch (_: Exception) {
             }
         }
-        synchronized(outLock) { out = stream.output }
+        // Everything written to the laptop goes through this one thread (see Outbox).
+        val writer = Outbox { line ->
+            stream.output.write((line + "\n").toByteArray())
+            stream.output.flush()
+        }
+        outbox = writer
         sendState()
         _status.value = Status.Streaming
         reader.start()
+        var goneSince: Long? = null
         try {
             while (scope.isActive && reader.isAlive) {
-                sendLine(AudioLinkWire.heartbeatLine())
-                if (System.currentTimeMillis() - lastHeard.get() > SILENCE_MS) break
-                if (headphones.value != Where.Phone) {
-                    sendState() // tell the laptop they are gone before leaving
-                    break
-                }
+                writer.post(AudioLinkWire.heartbeatLine())
+                val now = System.currentTimeMillis()
+                if (now - lastHeard.get() > SILENCE_MS) break
+                // A short Bluetooth blip keeps the session (a new one would take seconds to open, longer than the
+                // laptop waits before giving its speakers back); a long absence ends it.
+                goneSince = if (headphones.value == Where.Phone) null else goneSince ?: now
+                if (shouldLeave(goneSince, now)) break
+                player.idle(SystemClock.elapsedRealtime())
                 delay(1_000)
             }
         } finally {
-            player.release()
+            // In this order: stop writing, close the link, wait for the reader, and only then free the speaker.
+            outbox = null
+            writer.close()
             runCatching { stream.close() }
+            runCatching { reader.join(2_000) }
+            player.release()
         }
     }
 
@@ -216,6 +224,9 @@ class AudioLinkService : Service(), PhoneSignals {
         private var written = 0L
         private var baseHead = 0L
         private val focus: AudioFocusRequest
+        private val gate = PlayerGate()
+        private var holdsFocus = false
+        private var lastFeedAt = 0L
 
         init {
             val min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
@@ -231,11 +242,39 @@ class AudioLinkService : Service(), PhoneSignals {
                 .setOnAudioFocusChangeListener { change ->
                     // A call or another app took the speaker: stop and start over cleanly when it is ours again.
                     if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        synchronized(this) { restart() }
+                        synchronized(this) {
+                            holdsFocus = false
+                            gate.focusLost()
+                            restart()
+                        }
                     }
                 }
                 .build()
-            audio.requestAudioFocus(focus)
+            // No focus yet: it is taken when sound arrives, so opening the link never pauses the phone's own music.
+        }
+
+        private fun takeFocus(): Boolean {
+            val granted = audio.requestAudioFocus(focus) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            if (granted) {
+                holdsFocus = true
+                gate.focusGranted()
+            }
+            return granted
+        }
+
+        private fun giveFocusBack() {
+            audio.abandonAudioFocusRequest(focus)
+            holdsFocus = false
+            gate.focusLost()
+        }
+
+        /** Called about once a second: after a couple of seconds without sound, stop holding the speaker. */
+        @Synchronized
+        fun idle(nowMs: Long) {
+            if (holdsFocus && lastFeedAt > 0 && nowMs - lastFeedAt > IDLE_MS) {
+                restart()
+                giveFocusBack()
+            }
         }
 
         private fun head(): Long = track.playbackHeadPosition.toLong() and 0xffffffffL
@@ -254,6 +293,18 @@ class AudioLinkService : Service(), PhoneSignals {
 
         @Synchronized
         fun feed(pcm: ByteArray) {
+            val now = SystemClock.elapsedRealtime()
+            lastFeedAt = now
+            when (gate.next(now)) {
+                GateStep.Reset -> {
+                    // The sound stopped for a while and is back: start the speaker over and ask again.
+                    restart()
+                    giveFocusBack()
+                    if (!takeFocus()) return
+                }
+                GateStep.AskFocus -> if (!takeFocus()) return // refused (a call, say): the chunk is dropped
+                GateStep.Play -> {}
+            }
             when (playbackPlan(queuedMs(), started)) {
                 PlaybackAction.Drop -> return
                 PlaybackAction.Wait -> {}
@@ -270,7 +321,7 @@ class AudioLinkService : Service(), PhoneSignals {
         fun release() {
             runCatching { track.stop() }
             track.release()
-            audio.abandonAudioFocusRequest(focus)
+            giveFocusBack()
         }
     }
 
@@ -335,6 +386,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private const val RATE = 48_000
         private const val BYTES_PER_FRAME = 4
         private const val SILENCE_MS = 3_000L
+        private const val IDLE_MS = 2_000L
 
         private val _status = MutableStateFlow(Status.Off)
         val status: StateFlow<Status> = _status.asStateFlow()
