@@ -189,6 +189,93 @@ pub fn needs_grace(prev: &State, next: &State) -> bool {
         && (prev.mode != Mode::Hold || prev.headphones == Where::Phone)
 }
 
+/// Where the headphones are being moved to by hand.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SwapTo {
+    Pc,
+    Phone,
+}
+
+impl SwapTo {
+    pub fn parse(s: &str) -> Option<SwapTo> {
+        match s {
+            "pc" => Some(SwapTo::Pc),
+            "phone" => Some(SwapTo::Phone),
+            _ => None,
+        }
+    }
+}
+
+/// True while a manual swap is in progress: the speakers must not take over in the middle of it.
+#[cfg(target_os = "linux")]
+static SWAPPING: AtomicBool = AtomicBool::new(false);
+
+/// Waits out the grace period (and any swap in progress), then says it is over.
+#[cfg(target_os = "linux")]
+fn wait_grace() {
+    std::thread::sleep(GRACE);
+    while SWAPPING.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    send_event(Event::GraceExpired);
+}
+
+/// Moves the headphones by hand. To the computer: the phone is asked to let go (a notification, because Android
+/// will not do it silently) and the computer keeps trying to connect them for a minute. Back to the phone: the
+/// computer lets go and the phone is asked to connect them.
+#[cfg(target_os = "linux")]
+fn swap(to: &str) -> Result<(), String> {
+    use crate::audiolink_bt::{bluez_connect, bluez_disconnect, find_headphones_mac};
+    use crate::audiolink_wire::{encode, FrameKind, SWAP_CONNECT, SWAP_RELEASE};
+    use crate::log;
+
+    if !ENABLED.load(Ordering::Relaxed) {
+        return Err("turn on Phone headphones first".into());
+    }
+    let target = SwapTo::parse(to).ok_or("unknown target")?;
+    let mac = find_headphones_mac().ok_or("no paired Bluetooth headphones found (is Bluetooth on?)")?;
+    match target {
+        SwapTo::Pc => {
+            if SWAPPING.swap(true, Ordering::SeqCst) {
+                return Err("a swap is already in progress".into());
+            }
+            send_frame(encode(FrameKind::SwapPrompt, &[SWAP_RELEASE]));
+            std::thread::spawn(move || {
+                for _ in 0..20 {
+                    if bluez_connect(&mac).is_ok() {
+                        log::line("audiolink: the headphones are on this computer");
+                        send_event(Event::Headphones(crate::audiolink_logic::Where::Pc));
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_secs(3));
+                }
+                SWAPPING.store(false, Ordering::SeqCst);
+            });
+            Ok(())
+        }
+        SwapTo::Phone => {
+            bluez_disconnect(&mac)?;
+            send_event(Event::Headphones(crate::audiolink_logic::Where::None));
+            send_frame(encode(FrameKind::SwapPrompt, &[SWAP_CONNECT]));
+            Ok(())
+        }
+    }
+}
+
+/// "Headphones to this computer" / "back to the phone", from Settings.
+#[tauri::command]
+pub async fn audiolink_swap(to: String) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        tauri::async_runtime::spawn_blocking(move || swap(&to)).await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = to;
+        Err("the audio relay is only on Linux".into())
+    }
+}
+
 /// The one thread that owns the state: events in, actions out, in order.
 #[cfg(target_os = "linux")]
 fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
@@ -200,10 +287,7 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
             log::line(format!("audiolink: {:?} -> {:?}", state.mode, next.mode));
         }
         if needs_grace(&state, &next) {
-            std::thread::spawn(|| {
-                std::thread::sleep(GRACE);
-                send_event(Event::GraceExpired);
-            });
+            std::thread::spawn(wait_grace);
         }
         state = next;
         for a in actions {
@@ -402,6 +486,15 @@ mod tests {
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap().block_on(f)
+    }
+
+    #[test]
+    fn swap_target_is_pc_or_phone_and_nothing_else() {
+        assert_eq!(SwapTo::parse("pc"), Some(SwapTo::Pc));
+        assert_eq!(SwapTo::parse("phone"), Some(SwapTo::Phone));
+        assert_eq!(SwapTo::parse("PC"), None);
+        assert_eq!(SwapTo::parse("pc; reboot"), None);
+        assert_eq!(SwapTo::parse(""), None);
     }
 
     #[cfg(target_os = "linux")]

@@ -5,6 +5,8 @@ mod agents;
 mod audiolink;
 mod audiolink_logic;
 #[cfg(target_os = "linux")]
+mod audiolink_bt;
+#[cfg(target_os = "linux")]
 mod audiolink_players;
 #[cfg(target_os = "linux")]
 mod audiolink_sink;
@@ -1002,6 +1004,7 @@ pub fn run() {
             question_answer,
             music::music_state,
             music::music_control,
+            audiolink::audiolink_swap,
             music::music_art,
             music::music_lyrics,
             bars::music_bars,
