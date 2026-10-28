@@ -123,9 +123,19 @@ fn server_is_same_user(stream: &UnixStream) -> bool {
 /// does nothing else: no shell, no arguments, no file. If Coucou is closed, or the phone link is
 /// off, it says so in one line and ends.
 pub fn run_remote() -> ! {
+    pipe_to("coucou-remote.sock")
+}
+
+/// `coucou-hook --audio`: what the phone's second ssh key (audio only) is allowed to run. Same pipe as
+/// `--remote`, to the audio relay's own socket, so losing that key loses the audio and nothing else.
+pub fn run_audio() -> ! {
+    pipe_to("coucou-audio.sock")
+}
+
+fn pipe_to(socket_name: &str) -> ! {
     use std::io::{Read, Write};
 
-    let path = private_runtime_dir().map(|d| d.join("coucou-remote.sock"));
+    let path = private_runtime_dir().map(|d| d.join(socket_name));
     let stream = path.and_then(|p| UnixStream::connect(p).ok()).filter(server_is_same_user);
     let Some(stream) = stream else {
         println!("{{\"t\":\"offline\"}}");

@@ -60,6 +60,11 @@ fn main() {
     if std::env::args().skip(1).any(|a| a == "--remote") {
         unix::run_remote();
     }
+    // The only thing the phone's audio-only key may run: the same pipe, to the audio relay's socket.
+    #[cfg(target_os = "linux")]
+    if std::env::args().skip(1).any(|a| a == "--audio") {
+        unix::run_audio();
+    }
     let Some(Event { payload, name: event, ask, agent }) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest" || ask.is_some();

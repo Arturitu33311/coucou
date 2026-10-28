@@ -643,6 +643,12 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Let your phone follow Claude Code and answer its permission requests and questions. It listens to a private " +
         "socket that only an ssh key restricted to `coucou-hook --remote` can reach; nothing is opened on the network." })),
+    h("div", { class: "row" }, h("label", { text: "Phone headphones" }),
+      toggle(settings.audiolinkEnabled === true, (v) => { settings.audiolinkEnabled = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Keep your Bluetooth headphones on the phone and hear this computer through it. What plays here is sent to the phone " +
+        "(the computer goes silent while it is on). It listens to a second private socket that only an ssh key restricted to " +
+        "`coucou-hook --audio` can reach; nothing is opened on the network." })),
     h("div", { class: "row" }, h("label", { text: "Server activity" }),
       toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
       h("span", { class: "hint", text:
