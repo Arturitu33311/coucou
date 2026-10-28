@@ -4,6 +4,7 @@
 //   1 audio      PCM s16le, 48000 Hz, 2 channels; at most `MAX_AUDIO` bytes
 //   2 heartbeat  no payload
 //   3 hello      JSON describing the audio; at most `MAX_HELLO` bytes
+//   4 pause      the computer asks the phone to pause its media; no payload
 // Phone → laptop: one JSON object per line, at most `MAX_LINE` bytes:
 //   {"op":"hb"}
 //   {"op":"state","headphones":"phone"|"pc"|"none","call":bool,"phone_playing":bool}
@@ -25,6 +26,8 @@ pub enum FrameKind {
     Audio = 1,
     Heartbeat = 2,
     Hello = 3,
+    /// The computer asks the phone to pause what it is playing. No payload.
+    PausePhone = 4,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,11 +69,12 @@ pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, WireError> {
         1 => (FrameKind::Audio, MAX_AUDIO),
         2 => (FrameKind::Heartbeat, 0),
         3 => (FrameKind::Hello, MAX_HELLO),
+        4 => (FrameKind::PausePhone, 0),
         other => return Err(WireError::UnknownType(other)),
     };
     let len = u16::from_be_bytes([buf[1], buf[2]]) as usize;
     if len > max {
-        return Err(if kind == FrameKind::Heartbeat { WireError::HeartbeatWithPayload } else { WireError::TooLong });
+        return Err(if max == 0 { WireError::HeartbeatWithPayload } else { WireError::TooLong });
     }
     if buf.len() < 3 + len {
         return Ok(None);
@@ -124,6 +128,7 @@ mod tests {
             match (c["result"].as_str().unwrap(), got) {
                 ("audio", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::Audio, consumed), "{name}"),
                 ("heartbeat", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::Heartbeat, consumed), "{name}"),
+                ("pause_phone", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::PausePhone, consumed), "{name}"),
                 ("hello", Ok(Some((f, n)))) => {
                     assert_eq!((f.kind, n), (FrameKind::Hello, consumed), "{name}");
                     assert_eq!(f.payload, HELLO_JSON.as_bytes(), "{name}");

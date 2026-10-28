@@ -22,10 +22,16 @@ class AudioLinkWireTest {
             val name = c.getString("name")
             val got = AudioLinkWire.decode(unhex(c.getString("hex")))
             when (c.getString("result")) {
-                "audio", "heartbeat", "hello" -> {
+                "audio", "heartbeat", "hello", "pause_phone" -> {
                     assertTrue("$name: $got", got is Decoded.Got)
                     got as Decoded.Got
-                    assertEquals(name, c.getString("result"), got.frame.kind.name.lowercase())
+                    val kind = when (got.frame.kind) {
+                        FrameKind.Audio -> "audio"
+                        FrameKind.Heartbeat -> "heartbeat"
+                        FrameKind.Hello -> "hello"
+                        FrameKind.PausePhone -> "pause_phone"
+                    }
+                    assertEquals(name, c.getString("result"), kind)
                     assertEquals(name, c.getInt("consumed"), got.consumed)
                 }
                 "need_more" -> assertEquals(name, Decoded.NeedMore, got)

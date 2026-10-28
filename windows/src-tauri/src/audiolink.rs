@@ -220,8 +220,10 @@ fn apply(_app: &AppHandle, action: Action) {
                 crate::log::line(format!("audiolink: paused {n} player(s) here"));
             });
         }
-        // Pausing the phone is the phone's own business: it runs the same logic and pauses itself.
-        Action::PausePhone => {}
+        // The phone cannot tell when the computer starts playing, so the computer asks it to pause.
+        Action::PausePhone => {
+            send_frame(crate::audiolink_wire::encode(crate::audiolink_wire::FrameKind::PausePhone, &[]));
+        }
     }
 }
 

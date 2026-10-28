@@ -635,6 +635,18 @@
       "consumed": 44
     },
     {
+      "name": "pause_phone",
+      "hex": "040000",
+      "result": "pause_phone",
+      "consumed": 3
+    },
+    {
+      "name": "pause_phone_with_payload",
+      "hex": "040001ff",
+      "result": "error",
+      "consumed": 0
+    },
+    {
       "name": "empty_buffer",
       "hex": "",
       "result": "need_more",

@@ -11,7 +11,7 @@ package com.agupta07505.smartisland.coucou.audiolink
  * Laptop → phone: frames `[type: u8][len: u16 big-endian][payload]` (1 audio, 2 heartbeat, 3 hello).
  * Phone → laptop: one JSON object per line.
  */
-enum class FrameKind(val id: Int) { Audio(1), Heartbeat(2), Hello(3) }
+enum class FrameKind(val id: Int) { Audio(1), Heartbeat(2), Hello(3), PausePhone(4) }
 
 class Frame(val kind: FrameKind, val payload: ByteArray)
 
@@ -33,6 +33,7 @@ object AudioLinkWire {
             1 -> FrameKind.Audio to MAX_AUDIO
             2 -> FrameKind.Heartbeat to 0
             3 -> FrameKind.Hello to MAX_HELLO
+            4 -> FrameKind.PausePhone to 0
             else -> return Decoded.Bad("unknown type $t")
         }
         val len = ((buf[1].toInt() and 0xff) shl 8) or (buf[2].toInt() and 0xff)
