@@ -5,6 +5,7 @@
 //   2 heartbeat  no payload
 //   3 hello      JSON describing the audio; at most `MAX_HELLO` bytes
 //   4 pause      the computer asks the phone to pause its media; no payload
+//   5 swap       the computer asks the phone to prompt about the headphones; one byte (1 release, 2 connect)
 // Phone → laptop: one JSON object per line, at most `MAX_LINE` bytes:
 //   {"op":"hb"}
 //   {"op":"state","headphones":"phone"|"pc"|"none","call":bool,"phone_playing":bool}
@@ -28,7 +29,14 @@ pub enum FrameKind {
     Hello = 3,
     /// The computer asks the phone to pause what it is playing. No payload.
     PausePhone = 4,
+    /// The computer asks the phone to prompt the person about the headphones: one byte, `SWAP_RELEASE` or `SWAP_CONNECT`.
+    SwapPrompt = 5,
 }
+
+/// Prompt: "let go of the headphones" (they are about to move to the computer).
+pub const SWAP_RELEASE: u8 = 1;
+/// Prompt: "connect the headphones to this phone" (they are coming back).
+pub const SWAP_CONNECT: u8 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
@@ -70,6 +78,7 @@ pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, WireError> {
         2 => (FrameKind::Heartbeat, 0),
         3 => (FrameKind::Hello, MAX_HELLO),
         4 => (FrameKind::PausePhone, 0),
+        5 => (FrameKind::SwapPrompt, 1),
         other => return Err(WireError::UnknownType(other)),
     };
     let len = u16::from_be_bytes([buf[1], buf[2]]) as usize;
@@ -128,6 +137,10 @@ mod tests {
             match (c["result"].as_str().unwrap(), got) {
                 ("audio", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::Audio, consumed), "{name}"),
                 ("heartbeat", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::Heartbeat, consumed), "{name}"),
+                ("swap_prompt", Ok(Some((f, n)))) => {
+                    assert_eq!((f.kind, n), (FrameKind::SwapPrompt, consumed), "{name}");
+                    assert_eq!(f.payload.len(), 1, "{name}");
+                }
                 ("pause_phone", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::PausePhone, consumed), "{name}"),
                 ("hello", Ok(Some((f, n)))) => {
                     assert_eq!((f.kind, n), (FrameKind::Hello, consumed), "{name}");

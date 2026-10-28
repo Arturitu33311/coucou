@@ -70,4 +70,9 @@
     <string name="audiolink_channel">Audio de la laptop</string>
     <string name="audiolink_notification_title">Audio de la laptop</string>
     <string name="audiolink_notification_text">Listo para oír tu laptop por los audífonos</string>
+    <string name="audiolink_swap_channel">Cambio de audífonos</string>
+    <string name="audiolink_release_title">Suelta los audífonos</string>
+    <string name="audiolink_release_text">La laptop los quiere. Toca para abrir Bluetooth y desconectarlos de este celular.</string>
+    <string name="audiolink_connect_title">Conecta los audífonos</string>
+    <string name="audiolink_connect_text">La laptop los soltó. Toca para abrir Bluetooth y conectarlos a este celular.</string>
 </resources>

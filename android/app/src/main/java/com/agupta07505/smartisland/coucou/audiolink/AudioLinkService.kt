@@ -162,6 +162,7 @@ class AudioLinkService : Service(), PhoneSignals {
                                 when (d.frame.kind) {
                                     FrameKind.Audio -> player.feed(d.frame.payload)
                                     FrameKind.PausePhone -> watchers.pausePhoneMedia()
+                                    FrameKind.SwapPrompt -> swapAskOf(d.frame.payload)?.let { notifySwap(it) }
                                     FrameKind.Hello, FrameKind.Heartbeat -> {}
                                 }
                                 at += d.consumed
@@ -273,6 +274,38 @@ class AudioLinkService : Service(), PhoneSignals {
         }
     }
 
+    // ── Moving the headphones by hand ──────────────────────────────────────────
+
+    /**
+     * Android does not let an app disconnect or connect Bluetooth audio by itself, so the laptop's request to
+     * move the headphones becomes a notification that opens Bluetooth settings: the person does the one tap.
+     */
+    private fun notifySwap(ask: SwapAsk) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(
+            NotificationChannel(SWAP_CHANNEL, getString(R.string.audiolink_swap_channel), NotificationManager.IMPORTANCE_HIGH),
+        )
+        val open = android.app.PendingIntent.getActivity(
+            this, 0, Intent(android.provider.Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val (title, text) = when (ask) {
+            SwapAsk.Release -> R.string.audiolink_release_title to R.string.audiolink_release_text
+            SwapAsk.Connect -> R.string.audiolink_connect_title to R.string.audiolink_connect_text
+        }
+        nm.notify(
+            SWAP_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, SWAP_CHANNEL)
+                .setSmallIcon(android.R.drawable.stat_sys_headset)
+                .setContentTitle(getString(title))
+                .setContentText(getString(text))
+                .setContentIntent(open)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build(),
+        )
+    }
+
     // ── Foreground notification ────────────────────────────────────────────────
 
     private fun startInForeground() {
@@ -297,6 +330,8 @@ class AudioLinkService : Service(), PhoneSignals {
     companion object {
         private const val CHANNEL = "audiolink"
         private const val NOTIFICATION_ID = 4107
+        private const val SWAP_CHANNEL = "audiolink-swap"
+        private const val SWAP_NOTIFICATION_ID = 4108
         private const val RATE = 48_000
         private const val BYTES_PER_FRAME = 4
         private const val SILENCE_MS = 3_000L

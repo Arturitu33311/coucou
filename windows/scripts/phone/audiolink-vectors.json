@@ -647,6 +647,24 @@
       "consumed": 0
     },
     {
+      "name": "swap_prompt_release",
+      "hex": "05000101",
+      "result": "swap_prompt",
+      "consumed": 4
+    },
+    {
+      "name": "swap_prompt_connect",
+      "hex": "05000102",
+      "result": "swap_prompt",
+      "consumed": 4
+    },
+    {
+      "name": "swap_prompt_too_long",
+      "hex": "0500020102",
+      "result": "error",
+      "consumed": 0
+    },
+    {
       "name": "empty_buffer",
       "hex": "",
       "result": "need_more",
