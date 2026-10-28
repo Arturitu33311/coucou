@@ -173,6 +173,22 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
 #[cfg(not(target_os = "linux"))]
 pub fn sync_enabled(_app: &AppHandle, _on: bool) {}
 
+/// How long the headphones may be missing from the phone (a Bluetooth blip) before the computer gives its
+/// speakers back. The sound stays on the silent sink meanwhile.
+#[cfg(target_os = "linux")]
+pub const GRACE: Duration = Duration::from_secs(5);
+
+/// True when the wait before giving the speakers back must start now: the relay just fell into `Hold` (or was
+/// already held while the phone still had the headphones) and the headphones are neither on the phone nor on
+/// the computer.
+#[cfg(target_os = "linux")]
+pub fn needs_grace(prev: &State, next: &State) -> bool {
+    use crate::audiolink_logic::{Mode, Where};
+    next.mode == Mode::Hold
+        && !matches!(next.headphones, Where::Phone | Where::Pc)
+        && (prev.mode != Mode::Hold || prev.headphones == Where::Phone)
+}
+
 /// The one thread that owns the state: events in, actions out, in order.
 #[cfg(target_os = "linux")]
 fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
@@ -182,6 +198,12 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
         let (next, actions) = step(&state, ev);
         if next.mode != state.mode {
             log::line(format!("audiolink: {:?} -> {:?}", state.mode, next.mode));
+        }
+        if needs_grace(&state, &next) {
+            std::thread::spawn(|| {
+                std::thread::sleep(GRACE);
+                send_event(Event::GraceExpired);
+            });
         }
         state = next;
         for a in actions {
@@ -380,6 +402,42 @@ mod tests {
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap().block_on(f)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn held(headphones: Where) -> State {
+        State { mode: crate::audiolink_logic::Mode::Hold, headphones, ..State::default() }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn relaying() -> State {
+        State { mode: crate::audiolink_logic::Mode::Relay, headphones: Where::Phone, ..State::default() }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wait_starts_when_the_headphones_leave_the_phone() {
+        assert!(needs_grace(&relaying(), &held(Where::None)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wait_is_not_started_twice() {
+        // Already held with the headphones gone: another event in the same state must not stack a second timer.
+        assert!(!needs_grace(&held(Where::None), &held(Where::None)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hold_with_the_headphones_still_on_the_phone_has_no_wait() {
+        // A lost link or a call: the speakers stay silent for as long as it lasts.
+        assert!(!needs_grace(&relaying(), &held(Where::Phone)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_wait_starts_when_a_held_relay_loses_the_headphones() {
+        assert!(needs_grace(&held(Where::Phone), &held(Where::None)));
     }
 
     #[test]
