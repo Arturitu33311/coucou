@@ -1,0 +1,619 @@
+{
+  "_doc": "Pure state machine and wire framing of the audio relay (audiolink). Same file, byte for byte, as android/app/src/test/resources/audiolink-vectors.json. Every state case starts from the default state (mode off, nothing connected, nothing playing); `mode` and `actions` are what must hold after that step. See docs/superpowers/specs/2026-10-27-audio-relay-design.md.",
+  "state_cases": [
+    {
+      "name": "starts_relaying",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "phone_video_pauses_pc",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "pc_media",
+            "playing": true
+          },
+          "mode": "relay",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "phone_media",
+            "playing": true
+          },
+          "mode": "relay",
+          "actions": [
+            "pause_pc"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pc_music_pauses_phone",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "phone_media",
+            "playing": true
+          },
+          "mode": "relay",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "pc_media",
+            "playing": true
+          },
+          "mode": "relay",
+          "actions": [
+            "pause_phone"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "link_lost_holds_silent",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": false
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "relay",
+          "actions": [
+            "relay_start"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "call_holds",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "call",
+            "on": true
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "call",
+            "on": false
+          },
+          "mode": "relay",
+          "actions": [
+            "relay_start"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "headphones_blip",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "none"
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "relay_start"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "headphones_gone_for_good",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "none"
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "grace_expired"
+          },
+          "mode": "off",
+          "actions": [
+            "sink_restore"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "swap_to_pc",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "pc"
+          },
+          "mode": "off",
+          "actions": [
+            "relay_stop",
+            "sink_restore"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "disabled_stops",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "enabled",
+            "on": false
+          },
+          "mode": "off",
+          "actions": [
+            "relay_stop",
+            "sink_restore"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "held_pc_start_is_paused",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": false
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "pc_media",
+            "playing": true
+          },
+          "mode": "hold",
+          "actions": [
+            "pause_pc"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "off_does_not_coordinate",
+      "steps": [
+        {
+          "event": {
+            "t": "phone_media",
+            "playing": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "pc_media",
+            "playing": true
+          },
+          "mode": "off",
+          "actions": []
+        }
+      ]
+    },
+    {
+      "name": "call_before_headphones_holds_from_off",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "call",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "hold",
+          "actions": [
+            "sink_virtual",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "call",
+            "on": false
+          },
+          "mode": "relay",
+          "actions": [
+            "relay_start"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "grace_expired_is_ignored_when_headphones_are_back",
+      "steps": [
+        {
+          "event": {
+            "t": "enabled",
+            "on": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "link",
+            "up": true
+          },
+          "mode": "off",
+          "actions": []
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "sink_virtual",
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "none"
+          },
+          "mode": "hold",
+          "actions": [
+            "relay_stop",
+            "pause_pc"
+          ]
+        },
+        {
+          "event": {
+            "t": "headphones",
+            "at": "phone"
+          },
+          "mode": "relay",
+          "actions": [
+            "relay_start"
+          ]
+        },
+        {
+          "event": {
+            "t": "grace_expired"
+          },
+          "mode": "relay",
+          "actions": []
+        }
+      ]
+    }
+  ],
+  "wire_cases": []
+}
