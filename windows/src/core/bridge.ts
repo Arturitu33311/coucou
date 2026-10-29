@@ -86,6 +86,18 @@ export const Bridge = {
   questionAnswer: (requestId: string, answers: Record<string, string | string[]>) =>
     call<void>("question_answer", { requestId, answers }),
 
+  // ── Phone headphones (audio relay) ────────────────────────────────────────
+  /** Moves the Bluetooth headphones to this computer ("pc") or back to the phone. Resolves to an error message, or null when it worked. */
+  audiolinkSwap: async (to: "pc" | "phone"): Promise<string | null> => {
+    if (!IS_TAURI) return "not running in the app";
+    try {
+      await invoke("audiolink_swap", { to });
+      return null;
+    } catch (err) {
+      return String(err);
+    }
+  },
+
   // ── Music (MPRIS) ─────────────────────────────────────────────────────────
   /** What the last `music` event said, for a page that has just loaded. */
   musicState: () => call<MusicTrack | null>("music_state"),

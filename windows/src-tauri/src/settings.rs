@@ -93,6 +93,9 @@ pub struct Settings {
     /// Let a phone follow Claude Code and answer its requests, through ssh (off until turned on).
     #[serde(default)]
     pub remote_enabled: bool,
+    /// Send what plays here to the phone's headphones through a second, audio-only ssh key (off until turned on).
+    #[serde(default)]
+    pub audiolink_enabled: bool,
     /// What Mochi wears: "auto", "none", or one of headphones / nightcap / party / shades / bow.
     #[serde(default = "default_outfit")]
     pub mochi_outfit: String,
@@ -198,6 +201,7 @@ impl Default for Settings {
             weather_city2: String::new(),
             notification_peek: false,
             remote_enabled: false,
+            audiolink_enabled: false,
             mochi_outfit: default_outfit(),
             mic_indicator: true,
             clipboard_history: false,
