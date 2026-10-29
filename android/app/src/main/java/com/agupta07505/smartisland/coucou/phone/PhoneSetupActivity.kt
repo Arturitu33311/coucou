@@ -73,6 +73,9 @@ import com.agupta07505.smartisland.coucou.ui.MochiGlyph
 import com.agupta07505.smartisland.coucou.ui.MochiMood
 import com.agupta07505.smartisland.coucou.ui.Outfit
 import com.agupta07505.smartisland.coucou.ui.Wardrobe
+import com.agupta07505.smartisland.coucou.audiolink.AudioLinkService
+import com.agupta07505.smartisland.coucou.audiolink.AudioLinkSetup
+import com.agupta07505.smartisland.coucou.phone.PhoneSettings.audioLink
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followClaude
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followJinx
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.jinxSync
@@ -278,6 +281,7 @@ internal fun Setup(modifier: Modifier = Modifier) {
                 },
             )
             PresenceCard()
+            AudioLinkCard()
         }
         error?.let { Text(it, color = CoucouColors.Warning, fontSize = 12.5.sp) }
         Spacer(Modifier.padding(12.dp))
@@ -323,6 +327,67 @@ private fun presenceLabel(status: String): Pair<String, Tone> = when {
     status == "presencia en otro dispositivo" -> status to Tone.Neutral
     status.startsWith("error") || status.startsWith("no screen events") -> status to Tone.Bad
     else -> status to Tone.Warn
+}
+
+/**
+ * El sonido de la laptop por los audífonos que se quedan en este celular. Tiene una llave propia, aparte de la de
+ * Claude Code: esa llave solo puede ejecutar `coucou-hook --audio`, así que perderla pierde el audio y nada más.
+ */
+@Composable
+private fun AudioLinkCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var on by remember { mutableStateOf(context.audioLink) }
+    var audioLine by remember { mutableStateOf(PhoneKey.publicLine(context, AudioLinkSetup.KEY)) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val status by AudioLinkService.status.collectAsState()
+    val user = PhoneSettings.profile(context, PhoneSettings.LAPTOP).user
+
+    SectionCard(
+        title = "5 · El audio de la laptop por los audífonos",
+        subtitle = "Los audífonos Bluetooth se quedan en este celular y la laptop suena por ellos: lo que se reproduce allá se " +
+            "manda aquí, y el que empieza a sonar pausa al otro. Actívalo también en la laptop (Ajustes → Teléfono → Audífonos del " +
+            "teléfono). Necesita la laptop emparejada arriba.",
+    ) {
+        val line = audioLine
+        if (line == null) {
+            Button(colors = primaryButton, onClick = {
+                scope.launch {
+                    error = runCatching { withContext(Dispatchers.Default) { PhoneKey.create(context, AudioLinkSetup.KEY) } }
+                        .fold({ audioLine = it; null }, { it.message })
+                }
+            }) { Text("Crear la llave de audio") }
+        } else if (user.isBlank()) {
+            Text("Rellena el usuario de la laptop arriba para obtener la línea que se pega.", color = CoucouColors.TextSecondary, fontSize = 12.5.sp)
+        } else {
+            val authorized = AudioLinkSetup.authorizedLine(user, line)
+            Text("Pega esta segunda línea en ~/.ssh/authorized_keys de la laptop:", color = CoucouColors.TextSecondary, fontSize = 12.5.sp)
+            SelectionContainer {
+                Text(
+                    authorized, color = CoucouColors.Text.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CoucouColors.SurfaceHigh).padding(10.dp),
+                )
+            }
+            TextButton(onClick = { copy(context, "authorized_keys line", authorized) }) {
+                Text("Copiar la línea", color = CoucouColors.Accent)
+            }
+        }
+        SwitchRow(
+            title = "Oír la laptop por los audífonos",
+            checked = on,
+            onChange = { on = it; context.audioLink = it; CoucouRuntime.apply(context) },
+        )
+        val (text, tone) = when (status) {
+            AudioLinkService.Status.Off -> "apagado" to Tone.Neutral
+            AudioLinkService.Status.Idle -> "esperando a que los audífonos se conecten a este celular" to Tone.Neutral
+            AudioLinkService.Status.NeedsSetup -> "empareja la laptop y pega la línea de arriba" to Tone.Warn
+            AudioLinkService.Status.Connecting -> "conectando…" to Tone.Warn
+            AudioLinkService.Status.Streaming -> "conectado a la laptop" to Tone.Good
+            AudioLinkService.Status.Reconnecting -> "reconectando…" to Tone.Warn
+        }
+        StatusLine(text, tone)
+        error?.let { StatusLine(it, Tone.Bad) }
+    }
 }
 
 @Composable

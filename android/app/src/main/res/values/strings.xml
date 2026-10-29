@@ -673,4 +673,13 @@
     <string name="coucou_phrase_morning">Good morning ☀️</string>
     <string name="coucou_phrase_afternoon">Fancy a coffee? ☕</string>
     <string name="coucou_phrase_evening">Almost time to rest 🌙</string>
+    <!-- Audio relay: the laptop's sound through the headphones kept on this phone -->
+    <string name="audiolink_channel">Laptop audio</string>
+    <string name="audiolink_notification_title">Laptop audio</string>
+    <string name="audiolink_notification_text">Ready to play your laptop through the headphones</string>
+    <string name="audiolink_swap_channel">Moving the headphones</string>
+    <string name="audiolink_release_title">Let go of the headphones</string>
+    <string name="audiolink_release_text">The laptop wants them. Tap to open Bluetooth and disconnect them from this phone.</string>
+    <string name="audiolink_connect_title">Connect the headphones</string>
+    <string name="audiolink_connect_text">The laptop let them go. Tap to open Bluetooth and connect them to this phone.</string>
 </resources>

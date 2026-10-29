@@ -67,6 +67,11 @@ object PhoneSettings {
         get() = prefs(this).getBoolean("followClaude", false)
         set(v) = prefs(this).edit().putBoolean("followClaude", v).apply()
 
+    /** Play the laptop's sound through the headphones kept on this phone (over the laptop profile, audio-only key). */
+    var Context.audioLink: Boolean
+        get() = prefs(this).getBoolean("audioLink", false)
+        set(v) = prefs(this).edit().putBoolean("audioLink", v).apply()
+
     /** Hear Jinx's texts on this phone through presence (text only, no voice). */
     var Context.followJinx: Boolean
         get() = prefs(this).getBoolean("followJinx", false)

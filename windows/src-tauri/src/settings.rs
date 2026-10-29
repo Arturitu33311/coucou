@@ -110,6 +110,9 @@ pub struct Settings {
     /// Let a phone follow Claude Code and answer its requests, through ssh (off until turned on).
     #[serde(default)]
     pub remote_enabled: bool,
+    /// Send what plays here to the phone's headphones through a second, audio-only ssh key (off until turned on).
+    #[serde(default)]
+    pub audiolink_enabled: bool,
     /// A dot on the island, with the program's name, while something records the microphone.
     #[serde(default = "default_true")]
     pub mic_indicator: bool,
@@ -310,6 +313,7 @@ impl Default for Settings {
             weather_city2: String::new(),
             notification_peek: false,
             remote_enabled: false,
+            audiolink_enabled: false,
             mic_indicator: true,
             clipboard_history: false,
             activities_on: false,
