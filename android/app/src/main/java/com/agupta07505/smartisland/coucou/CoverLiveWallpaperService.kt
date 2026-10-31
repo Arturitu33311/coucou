@@ -1,0 +1,1072 @@
+/*
+ * Coucou for Android — part of this SmartIsland fork (GNU GPL v3).
+ */
+
+package com.agupta07505.smartisland.coucou
+
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.SweepGradient
+import android.os.SystemClock
+import android.service.wallpaper.WallpaperService
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.util.Log
+import android.view.Choreographer
+import android.view.SurfaceHolder
+import androidx.core.graphics.ColorUtils
+import kotlin.math.cos
+import kotlin.math.sin
+
+/**
+ * Animated cover wallpaper: the cover of what is playing, sharp and breathing, over a blurred copy that drifts slowly,
+ * with two soft lights in the cover's own colours, a record that turns with the music and motes that drift up.
+ * No network. The car variant reads the gravity sensor (no permission) only while visible.
+ *
+ * Drawing is done on the GPU (hardware canvas) once per vsync, capped at ~60 fps, and only while visible. Nothing
+ * expensive is done per frame: the clock is rendered into two bitmaps once a minute, shaders are built once, and the
+ * cover is only re-processed when it changes.
+ */
+open class CoverLiveWallpaperService : WallpaperService() {
+    /** The "car" variant: a photo with the clock BEHIND the car (cut-out in front), the music effects on the floor. */
+    protected open val carMode: Boolean = false
+
+    /** The "home" variant: no cover or record, only the slow lights and motes, in the cover's colours and the hour's. */
+    protected open val homeMode: Boolean = false
+
+    override fun onCreateEngine(): Engine = CoverEngine()
+
+    private inner class CoverEngine : Engine(), Choreographer.FrameCallback {
+        private val choreographer: Choreographer by lazy { Choreographer.getInstance() }
+        private val t0 = SystemClock.uptimeMillis()
+        private var visible = false
+        private var w = 0
+        private var h = 0
+
+        // frame pacing and a measurement of it (logged every 2 s as "CoverFps")
+        private var lastFrameNs = 0L
+        private var statFrames = 0
+        private var statDrawNs = 0L
+        private var statWorstNs = 0L
+        private var statSince = 0L
+
+        private var lastNow: CoverBus.Now? = null
+        private var lastIdle = false
+        private var shownKey: String? = null
+        private var square: Bitmap? = null      // the cover, square, ready to draw
+        private var backdrop: Bitmap? = null    // tiny copy, upscaled = blur
+        private var c1 = Color.rgb(20, 120, 110)
+        private var c2 = Color.rgb(30, 90, 70)
+        private var accent = Color.argb(150, 94, 234, 212)
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val blob1 = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val blob2 = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val clip = Path()
+        private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
+        /** Only for bitmaps and never recoloured: a colour with alpha on [paint] would make the pictures translucent. */
+        private val bmp = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        private val rectA = RectF()
+        private val rectB = RectF()
+        private val srcA = Rect()
+
+        // car variant: photo, cut-out of the car (rows [CUT_TOP, CUT_TOP + height) of the photo) and the big clock
+        private var carBg: Bitmap? = null
+        private var carCut: Bitmap? = null
+        private val clockPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.BOLD)
+            textAlign = Paint.Align.LEFT
+            textSize = 420f
+        }
+        private val timeBounds = Rect()
+        private val textPath = Path()
+        private val mergedPath = Path()
+        private val pathBounds = RectF()
+        private val pathMatrix = android.graphics.Matrix()
+        private val clockFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val clockStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            color = Color.rgb(94, 234, 212)
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val timeFmt = java.text.SimpleDateFormat("h:mm", java.util.Locale.US)
+        private var clockKey = ""
+        private var clockFillBmp: Bitmap? = null
+        private var clockEchoBmp: Bitmap? = null
+        private val clockBox = RectF()     // where the two bitmaps go, in the photo's units, relative to [clockOriginX]
+        private var clockOriginX = 0f
+        private var refW = 0f
+        private var refH = 0f
+
+        // vinyl: turns while music plays, slows down when it pauses
+        private var spin = 0f
+        private var spinSpeed = 0f
+        private var lastT = 0f
+        private val sheen = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = SweepGradient(
+                0f, 0f,
+                intArrayOf(0x00FFFFFF, 0x34FFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x34FFFFFF, 0x00FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.08f, 0.16f, 0.5f, 0.58f, 0.66f, 1f),
+            )
+        }
+        private val spinMark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            shader = SweepGradient(
+                0f, 0f,
+                intArrayOf(0x00FFFFFF, 0x2CFFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x00FFFFFF, 0x1CFFFFFF, 0x00FFFFFF, 0x00FFFFFF),
+                floatArrayOf(0f, 0.04f, 0.10f, 0.25f, 0.5f, 0.54f, 0.60f, 1f),
+            )
+        }
+
+        // particles: soft motes drifting up, in the cover's colours
+        private val nDots = 44
+        private val rnd = java.util.Random(7)
+        private val dx = FloatArray(nDots) { rnd.nextFloat() }
+        private val dy = FloatArray(nDots) { rnd.nextFloat() }
+        private val dr = FloatArray(nDots) { 2f + rnd.nextFloat() * 6f }
+        private val dv = FloatArray(nDots) { 0.012f + rnd.nextFloat() * 0.03f }
+        private val da = FloatArray(nDots) { 40f + rnd.nextFloat() * 100f }
+        private val dp = FloatArray(nDots) { rnd.nextFloat() * 6.28f }
+        private val dotColor = IntArray(nDots)
+
+        // ---- frame loop -------------------------------------------------------------------------------------------
+
+        override fun doFrame(frameTimeNanos: Long) {
+            if (!visible) return
+            choreographer.postFrameCallback(this)
+            // 120 Hz panels would draw twice as often for nothing: keep ~60 fps
+            // (the home screen is mostly looked past: 30 fps there saves battery)
+            if (frameTimeNanos - lastFrameNs < (if (homeMode) 30_000_000L else 14_000_000L)) return
+            lastFrameNs = frameTimeNanos
+            val a = System.nanoTime()
+            draw((frameTimeNanos / 1_000_000L - t0) / 1000f)
+            val d = System.nanoTime() - a
+            statFrames++; statDrawNs += d; if (d > statWorstNs) statWorstNs = d
+            val now = frameTimeNanos / 1_000_000L
+            if (statSince == 0L) statSince = now
+            if (now - statSince >= 2000L) {
+                Log.d("CoverFps", "fps=${"%.1f".format(statFrames * 1000f / (now - statSince))} " +
+                    "avgDrawMs=${"%.2f".format(statDrawNs / 1e6f / statFrames)} worstMs=${"%.1f".format(statWorstNs / 1e6f)} " +
+                    "car=$carMode ${w}x$h")
+                statFrames = 0; statDrawNs = 0; statWorstNs = 0; statSince = now
+            }
+        }
+
+        override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+            w = width; h = height
+            vignette.shader = null
+            rebuildLights(snap = true)
+            clockKey = ""
+            draw((SystemClock.uptimeMillis() - t0) / 1000f)
+        }
+
+        override fun onVisibilityChanged(v: Boolean) {
+            visible = v
+            choreographer.removeFrameCallback(this)
+            if (v) {
+                startTilt()
+                statSince = 0L; statFrames = 0; statDrawNs = 0; statWorstNs = 0
+                choreographer.postFrameCallback(this)
+            } else stopTilt()
+        }
+
+        override fun onSurfaceDestroyed(holder: SurfaceHolder) {
+            visible = false
+            stopTilt()
+            choreographer.removeFrameCallback(this)
+        }
+
+        override fun onDestroy() {
+            visible = false
+            stopTilt()
+            choreographer.removeFrameCallback(this)
+            clockFillBmp?.recycle(); clockEchoBmp?.recycle()
+            super.onDestroy()
+        }
+
+        // ---- what is playing --------------------------------------------------------------------------------------
+
+        // the colours the lights are showing, easing toward where [rebuildLights] says they should be
+        private var dispA = 0
+        private var dispB = 0
+        private var targetA = 0
+        private var targetB = 0
+        private var lastFadeT = 0f
+
+        private fun buildShaders(a: Int, b: Int) {
+            val r = w * 0.75f
+            blob1.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(a, 150), withAlpha(a, 0)), null, Shader.TileMode.CLAMP)
+            blob2.shader = RadialGradient(0f, 0f, r, intArrayOf(withAlpha(b, 130), withAlpha(b, 0)), null, Shader.TileMode.CLAMP)
+        }
+
+        /** Eases the lights' colours toward their targets (a second or so), so a new song or the idle base does not snap. */
+        private fun fadeLights(t: Float) {
+            val dt = (t - lastFadeT).coerceIn(0f, 0.1f)
+            lastFadeT = t
+            if (w == 0 || (dispA == targetA && dispB == targetB)) return
+            val k = minOf(1f, dt * 3f)
+            fun near(a: Int, b: Int) = kotlin.math.abs(Color.red(a) - Color.red(b)) + kotlin.math.abs(Color.green(a) - Color.green(b)) + kotlin.math.abs(Color.blue(a) - Color.blue(b)) < 6
+            dispA = if (near(dispA, targetA)) targetA else ColorUtils.blendARGB(dispA, targetA, k)
+            dispB = if (near(dispB, targetB)) targetB else ColorUtils.blendARGB(dispB, targetB, k)
+            buildShaders(dispA, dispB)
+        }
+
+        private fun rebuildLights(snap: Boolean = false) {
+            if (w == 0) return
+            // home: the hour's colour is mixed in, so the wallpaper changes through the day even without music
+            // (mostly the hour's colour with no cover, mostly the cover's while one is shown: mixing the two gives mud)
+            val mix = if (square != null) 0f else 0.9f   // with a cover, only the cover's colours: the hour's tint made them untrue
+            val vivid = homeMode && mix < 0.5f
+            val l1 = if (homeMode) ColorUtils.blendARGB(c1, hourTint(0), mix).let { if (vivid) saturate(it) else it } else c1
+            val l2 = if (homeMode) ColorUtils.blendARGB(c2, hourTint(1), mix).let { if (vivid) saturate(it) else it } else c2
+            if (homeMode && (l1 != lightA || l2 != lightB)) {
+                lightA = l1; lightB = l2
+                // tell the system (and the launcher's accent / icon tint) what colour the wallpaper is now
+                if (android.os.Build.VERSION.SDK_INT >= 27) notifyColorsChanged()
+            }
+            targetA = l1; targetB = l2
+            if (snap || dispA == 0) { dispA = l1; dispB = l2 }
+            buildShaders(dispA, dispB)
+            val light = Color.WHITE
+            for (i in 0 until nDots) dotColor[i] = ColorUtils.blendARGB(if (i % 2 == 0) c1 else accent, light, 0.35f)
+        }
+
+        private var noCoverSince = 0L
+
+        private fun refresh() {
+            val now = CoverBus.current()
+            val nowMs = System.currentTimeMillis()
+            // paused for a while: back to the dark base, like the still wallpaper puts the old one back
+            val idle = !now.playing && nowMs - now.at > 90_000L
+            val stale = noCoverSince != 0L && nowMs - noCoverSince > 6000L
+            if (now === lastNow && idle == lastIdle && !stale) return
+            lastNow = now; lastIdle = idle
+            val cover = if (idle) null else now.cover
+            val missing = cover == null || cover.isRecycled || cover.width < 32
+            if (missing && !idle && !stale && square != null) {
+                // a new track whose cover has not arrived yet (players send the title first): keep the last cover and
+                // colours instead of dipping to the idle base; if it never comes, give up after 6 s
+                if (noCoverSince == 0L) noCoverSince = nowMs
+                return
+            }
+            noCoverSince = 0L
+            val id = if (idle) "idle" else now.key + "#" + CoverBus.signature(cover)
+            if (id == shownKey) return
+            shownKey = id
+            if (cover == null || cover.isRecycled || cover.width < 32) {
+                square = null; backdrop = null
+                // nothing to show: the lights go back to Mochi's teal
+                c1 = Color.rgb(20, 120, 110); c2 = Color.rgb(30, 90, 70)
+                accent = Color.argb(150, 94, 234, 212)
+                rebuildLights()
+                return
+            }
+            val sq = minOf(cover.width, cover.height)
+            val cropped = Bitmap.createBitmap(cover, (cover.width - sq) / 2, (cover.height - sq) / 2, sq, sq)
+            square = Bitmap.createScaledBitmap(cropped, 720, 720, true)
+            backdrop = Bitmap.createScaledBitmap(cropped, 24, 24, true)
+            val left = avg(backdrop!!, 0, 12)
+            val right = avg(backdrop!!, 12, 24)
+            c1 = boost(left); c2 = boost(right)
+            accent = withAlpha(boost(avg(backdrop!!, 0, 24)), 150)
+            rebuildLights()
+        }
+
+        // ---- drawing ----------------------------------------------------------------------------------------------
+
+        private fun draw(t: Float) {
+            val holder = surfaceHolder ?: return
+            refresh()
+            fadeLights(t)
+            val c = try {
+                holder.lockHardwareCanvas()
+            } catch (_: Throwable) {
+                try { holder.lockCanvas() } catch (_: Throwable) { null }
+            } ?: return
+            try {
+                paint2(c, t)
+            } finally {
+                holder.unlockCanvasAndPost(c)
+            }
+        }
+
+        // ---- home variant -----------------------------------------------------------------------------------------
+
+        private var lightA = 0
+        private var lightB = 0
+
+        /** The home wallpaper's own colours, for the system palette: the two lights, which follow the music and the hour. */
+        @androidx.annotation.RequiresApi(27)
+        override fun onComputeColors(): android.app.WallpaperColors? {
+            if (!homeMode || lightA == 0) return null
+            return android.app.WallpaperColors(Color.valueOf(lightA), Color.valueOf(lightB), null)
+        }
+
+        private var pageX = 0.5f               // home page scroll, 0..1 (the launcher tells us)
+        private var hourKey = -1L
+        private val vignette = Paint()
+
+        override fun onOffsetsChanged(xOffset: Float, yOffset: Float, xStep: Float, yStep: Float, xPixels: Int, yPixels: Int) {
+            pageX = xOffset
+        }
+
+        /** Two colours per hour of the day: dawn teal-blue, noon teal, evening violet-teal, deep blue at night. */
+        private fun hourTint(which: Int): Int {
+            val cal = java.util.Calendar.getInstance()
+            val hr = cal.get(java.util.Calendar.HOUR_OF_DAY) + cal.get(java.util.Calendar.MINUTE) / 60f
+            val keys = floatArrayOf(0f, 5f, 8f, 13f, 18f, 21f, 24f)
+            val a = arrayOf(
+                intArrayOf(14, 40, 78), intArrayOf(40, 120, 150), intArrayOf(40, 170, 160), intArrayOf(30, 170, 140),
+                intArrayOf(110, 80, 170), intArrayOf(30, 60, 110), intArrayOf(14, 40, 78),
+            )
+            val b = arrayOf(
+                intArrayOf(10, 30, 60), intArrayOf(90, 120, 170), intArrayOf(60, 190, 170), intArrayOf(20, 130, 120),
+                intArrayOf(60, 130, 160), intArrayOf(20, 50, 90), intArrayOf(10, 30, 60),
+            )
+            val set = if (which == 0) a else b
+            var i = 0
+            while (i < keys.size - 2 && hr >= keys[i + 1]) i++
+            val f = ((hr - keys[i]) / (keys[i + 1] - keys[i])).coerceIn(0f, 1f)
+            return Color.rgb(
+                (set[i][0] + (set[i + 1][0] - set[i][0]) * f).toInt(),
+                (set[i][1] + (set[i + 1][1] - set[i][1]) * f).toInt(),
+                (set[i][2] + (set[i + 1][2] - set[i][2]) * f).toInt(),
+            )
+        }
+
+        /** Dark base, two slow lights that follow the music's colours and the hour, motes, and a little depth from tilt and page. */
+        private fun drawHome(c: Canvas, t: Float) {
+            val minute = System.currentTimeMillis() / 60_000L
+            val mode = (minute shl 1) + (if (CoverBus.current().playing) 1 else 0)   // minute passed, or music started/stopped
+            if (mode != hourKey) { hourKey = mode; rebuildLights() }
+            val dt = (t - lastT).coerceIn(0f, 0.1f)
+            lastT = t
+            val playing = CoverBus.current().playing
+            val beat = if (playing) 1f + 0.06f * sin(t * 1.6f) else 1f     // the lights breathe a little with music
+            val px = tiltX * w * 0.045f + (0.5f - pageX) * w * 0.12f
+            val py = tiltY * w * 0.035f
+            blob1.alpha = 215; blob2.alpha = 195
+            c.save()
+            c.translate(w * (0.30f + 0.22f * sin(t / 9f)) + px, h * (0.26f + 0.12f * cos(t / 11f)) + py)
+            c.scale(beat, beat)
+            c.drawCircle(0f, 0f, w * 0.75f, blob1)
+            c.restore()
+            c.save()
+            c.translate(w * (0.72f + 0.20f * cos(t / 10f)) + px * 1.4f, h * (0.74f + 0.10f * sin(t / 12f)) + py * 1.4f)
+            c.scale(beat, beat)
+            c.drawCircle(0f, 0f, w * 0.75f, blob2)
+            c.restore()
+            for (i in 0 until nDots) {
+                val y = (((dy[i] - t * dv[i] * 0.7f) % 1f) + 1f) % 1f * h + py * (0.4f + dr[i] / 8f)
+                val x = (dx[i] + 0.03f * sin(t * 0.3f + dp[i])) * w + px * (0.4f + dr[i] / 8f)
+                dot.color = dotColor[i]
+                dot.alpha = (da[i] * 0.6f * (0.6f + 0.4f * sin(t * 1.1f + dp[i]))).toInt().coerceIn(0, 255)
+                c.drawCircle(x, y, dr[i], dot)
+            }
+            // darker toward the bottom, where the dock and the icons are
+            if (vignette.shader == null) {
+                vignette.shader = LinearGradient(
+                    0f, h * 0.45f, 0f, h.toFloat(),
+                    Color.argb(0, 4, 12, 11), Color.argb(150, 4, 12, 11), Shader.TileMode.CLAMP,
+                )
+            }
+            c.drawRect(0f, h * 0.45f, w.toFloat(), h.toFloat(), vignette)
+
+            // the clock (top left, where the widget was) and what is playing (above the dock)
+            ensureHomeClock()
+            val fb = homeClockFill
+            val ex = (w - (fb?.width ?: 0)) / 2f + px * 0.6f
+            val ey = h * 0.105f + py * 0.6f
+            homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
+            fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
+            // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
+            drawInfoRow(c, px)
+            drawHomeCover(c, t, dt, px, py, ey + (fb?.height ?: 0) * 0.72f)
+            drawNowPlaying(c, t, dt, px)
+        }
+
+        private var homeCoverMix = 0f
+        private var coverKeySeen: String? = null
+        private var enterAt = 0f
+        private var enterFrom = 0f
+        private val coverHit = RectF()
+        private val clockHit = RectF()
+
+        /** The launcher reports taps on empty home-screen space to the wallpaper: the cover opens the player, the clock the clock app. */
+        override fun onCommand(action: String?, x: Int, y: Int, z: Int, extras: android.os.Bundle?, resultRequested: Boolean): android.os.Bundle? {
+            if (homeMode && action == android.app.WallpaperManager.COMMAND_TAP) {
+                val fx = x.toFloat(); val fy = y.toFloat()
+                when {
+                    homeCoverMix > 0.3f && coverHit.contains(fx, fy) -> coverTap(fx)
+                    npMix > 0.3f && npHit.contains(fx, fy) -> openPlayer()
+                    clockHit.contains(fx, fy) -> openClock()
+                }
+            }
+            return null
+        }
+
+        private var nudgeAt = -10f
+        private var nudgeDir = 0
+        private val npHit = RectF()
+
+        /** Taps on the cover are the player's controls: left third previous, right third next, middle play / pause. */
+        private fun coverTap(fx: Float) {
+            val f = (fx - coverHit.left) / coverHit.width()
+            nudgeAt = (SystemClock.uptimeMillis() - t0) / 1000f
+            when {
+                f < 0.34f -> { nudgeDir = 1; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+                f > 0.66f -> { nudgeDir = -1; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT) }
+                else -> { nudgeDir = 0; mediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
+            }
+        }
+
+        /** A media key, as the headset button sends it: goes to whichever player is active, no permission needed. */
+        private fun mediaKey(code: Int) {
+            runCatching {
+                val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+                am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code))
+                am.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, code))
+            }.onFailure { Log.w("HomeTap", "media key failed", it) }
+        }
+
+        private fun launch(intent: android.content.Intent?, what: String) {
+            if (intent == null) { Log.i("HomeTap", "no app for $what"); return }
+            runCatching { startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                .onFailure { Log.w("HomeTap", "could not open $what", it) }
+        }
+
+        /** The app that is playing (its package is the first part of the track key); Spotify if that is not known. */
+        private fun openPlayer() {
+            val pkg = CoverBus.current().key.substringBefore("|").takeIf { it.contains('.') && it != "debug" } ?: "com.spotify.music"
+            launch(packageManager.getLaunchIntentForPackage(pkg), pkg)
+        }
+
+        private fun openClock() {
+            // by launcher entry (the "show alarms" intent needs the SET_ALARM permission): Samsung Clock, then Google's, then AOSP's
+            val intent = listOf("com.sec.android.app.clockpackage", "com.google.android.deskclock", "com.android.deskclock")
+                .firstNotNullOfOrNull { packageManager.getLaunchIntentForPackage(it) }
+            launch(intent, "clock")
+        }
+
+        /** The cover, no record, in front of the clock's last digits: closer than the clock, so it moves more with the tilt. */
+        private fun drawHomeCover(c: Canvas, t: Float, dt: Float, px: Float, py: Float, top: Float) {
+            val sq = square
+            // visible while playing, and (dimmer) for 90 s after pausing, so it can be tapped to resume
+            val cur = CoverBus.current()
+            val target = if (sq == null) 0f else if (cur.playing) 1f else if (System.currentTimeMillis() - cur.at < 90_000L) 0.7f else 0f
+            homeCoverMix += (target - homeCoverMix) * minOf(1f, dt * 2.5f)
+            if (sq == null || homeCoverMix < 0.02f) return
+            // a tap on the cover answers with a small slide (next: to the left, previous: to the right) or a press (play / pause);
+            // a new track comes in from the side it was asked from
+            val n = (t - nudgeAt) / 0.45f
+            var nx = 0f
+            var press = 1f
+            if (n in 0f..1f) {
+                val k = sin(Math.PI.toFloat() * n) * (1f - n * 0.5f)
+                if (nudgeDir == 0) press = 1f - 0.07f * k else nx = nudgeDir * w * 0.07f * k
+            }
+            if (shownKey !== coverKeySeen) {
+                coverKeySeen = shownKey
+                enterAt = t
+                enterFrom = if (t - nudgeAt < 4f && nudgeDir != 0) -nudgeDir.toFloat() else 0f
+            }
+            val en = ((t - enterAt) / 0.5f).coerceIn(0f, 1f)
+            val ee = 1f - (1f - en) * (1f - en) * (1f - en)
+            val side = w * 0.46f * (0.92f + 0.08f * homeCoverMix) * (1f + 0.012f * sin(t / 3f)) * press
+            val cx = w * 0.5f + px * 1.5f + nx + enterFrom * w * 0.16f * (1f - ee)
+            val cy = top + w * 0.23f + py * 1.3f + 5f * sin(t / 4f)
+            val alpha = homeCoverMix * (0.3f + 0.7f * ee)
+            val layer = if (alpha < 0.98f) c.saveLayerAlpha(cx - side, cy - side, cx + side, cy + side, (255 * alpha).toInt()) else c.save()
+            c.rotate(5f + 1.2f * sin(t / 6f) + tiltX * 3f, cx, cy)
+            rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+            coverHit.set(cx - side * 0.55f, cy - side * 0.55f, cx + side * 0.55f, cy + side * 0.55f)
+            val r = side * 0.07f
+            paint.style = Paint.Style.FILL
+            paint.color = Color.argb(120, 0, 0, 0)
+            c.drawRoundRect(rectA.left + side * 0.02f, rectA.top + side * 0.04f, rectA.right + side * 0.02f, rectA.bottom + side * 0.04f, r, r, paint)
+            clip.reset(); clip.addRoundRect(rectA, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            srcA.set(0, 0, sq.width, sq.height)
+            c.drawBitmap(sq, srcA, rectA, bmp)
+            c.restore()
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            paint.color = accent
+            c.drawRoundRect(rectA, r, r, paint)
+            paint.style = Paint.Style.FILL
+            c.restoreToCount(layer)
+        }
+
+        // ---- home clock and now playing ----------------------------------------------------------------------------
+
+        private val infoPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+            letterSpacing = 0.06f
+            setShadowLayer(6f, 0f, 2f, Color.argb(150, 0, 0, 0))
+        }
+        private var infoText = ""
+        private var infoAt = 0L
+        private val dateFmt = java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.getDefault())
+
+        /** The essentials of the status bar, in the wallpaper, under it: the date and the battery (⚡ while charging). */
+        private val badge by lazy { HomeStatusBadge(this@CoverLiveWallpaperService) }
+
+        /** The same status gauge, in the same corner, on the lock screen; coloured by the cover's accent (teal with no cover). */
+        private fun drawLockStatus(c: Canvas) {
+            val d = w * 0.115f
+            val base = if (square != null) withAlpha(accent, 255) else Color.rgb(94, 234, 212)
+            badge.draw(c, w - d * 0.5f - w * 0.10f + tiltX * w * 0.01f, h * 0.052f, d, ColorUtils.blendARGB(base, Color.WHITE, 0.25f))
+        }
+
+        private fun drawInfoRow(c: Canvas, px: Float) {
+            // top right corner, where the system's own status icons are
+            val d = w * 0.115f
+            // (a little in from the corner and lower: a screen protector's edge cut the gauge off)
+            badge.draw(c, w - d * 0.5f - w * 0.10f + px * 0.3f, h * 0.052f, d, tintColor())
+        }
+
+        private var homeClockMin = -1L
+        private var homeClockW = 0
+        private var homeClockA = 0
+        private var homeClockFill: Bitmap? = null
+        private var homeClockEcho: Bitmap? = null
+
+        /** "h:mm" in the lock screen's style (outline, dissolving fill, echo), in the colour of the lights; rebuilt once a minute. */
+        private fun ensureHomeClock() {
+            val min = System.currentTimeMillis() / 60_000L
+            if (min == homeClockMin && w == homeClockW && lightA == homeClockA) return
+            homeClockMin = min; homeClockW = w; homeClockA = lightA
+            val time = timeFmt.format(java.util.Date())
+            if (refW == 0f) {
+                clockPaint.getTextBounds("00:00", 0, 5, timeBounds)
+                refW = timeBounds.width().toFloat(); refH = timeBounds.height().toFloat()
+            }
+            val fit = w * 0.80f / refW
+            textPath.reset()
+            clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
+            textPath.transform(pathMatrix.apply { setScale(fit, fit * 1.9f) })   // tall and narrow, like the lock screen's
+            mergedPath.reset()
+            if (!mergedPath.op(textPath, textPath, Path.Op.UNION)) { mergedPath.reset(); mergedPath.addPath(textPath) }
+            mergedPath.computeBounds(pathBounds, true)
+            val tint = tintColor()
+            val bw = kotlin.math.ceil(pathBounds.width() + 2 * HOME_PAD).toInt().coerceAtLeast(1)
+            val bh = kotlin.math.ceil(pathBounds.height() + 2 * HOME_PAD).toInt().coerceAtLeast(1)
+            homeClockFill?.recycle(); homeClockEcho?.recycle()
+            val fillBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            val echoBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            clockFill.shader = LinearGradient(
+                0f, pathBounds.top, 0f, pathBounds.bottom,
+                intArrayOf(withAlpha(ColorUtils.blendARGB(tint, Color.WHITE, 0.7f), 225), withAlpha(tint, 130), withAlpha(tint, 30)),
+                floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP,
+            )
+            clockStroke.color = tint
+            Canvas(fillBmp).apply {
+                translate(HOME_PAD - pathBounds.left, HOME_PAD - pathBounds.top)
+                drawPath(mergedPath, clockFill)
+                clockStroke.alpha = 235; clockStroke.strokeWidth = 2.6f
+                drawPath(mergedPath, clockStroke)
+            }
+            Canvas(echoBmp).apply {
+                translate(HOME_PAD - pathBounds.left, HOME_PAD - pathBounds.top)
+                clockStroke.alpha = 80; clockStroke.strokeWidth = 1.8f
+                drawPath(mergedPath, clockStroke)
+            }
+            homeClockFill = fillBmp; homeClockEcho = echoBmp
+        }
+
+        /** The glow's colour, brightened, for text and lines that should belong to it. */
+        private fun tintColor(): Int = if (lightA == 0) Color.rgb(94, 234, 212) else ColorUtils.blendARGB(saturate(lightA), Color.WHITE, 0.25f)
+
+        private val npPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setShadowLayer(8f, 0f, 2f, Color.argb(170, 0, 0, 0))
+        }
+        private var npMix = 0f
+        private var npKey = ""
+        private var npW = 0
+        private var npTitle: StaticLayout? = null
+        private var npArtist: StaticLayout? = null
+        private var npLyricFor: List<Lyrics.Line>? = null
+        private var npLyricIdx = -2
+        private var npLyric: StaticLayout? = null
+        private var npLyricAt = 0f
+
+        /** Title and artist stay on one line (they are short; "…" is fine there). */
+        private fun oneLine(text: String, size: Float, width: Int): StaticLayout {
+            npPaint.textSize = size
+            return StaticLayout.Builder.obtain(text, 0, text.length, npPaint, width)
+                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                .setMaxLines(1).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+        }
+
+        /** Title, artist and the line being sung, small, above the dock; fades in while music plays and out when it stops. */
+        private fun drawNowPlaying(c: Canvas, t: Float, dt: Float, px: Float) {
+            val now = CoverBus.current()
+            val npTarget = if (now.playing) 1f else if (System.currentTimeMillis() - now.at < 90_000L && now.key.isNotEmpty()) 0.7f else 0f
+            npMix += (npTarget - npMix) * minOf(1f, dt * 2.5f)
+            if (npMix < 0.02f) return
+            val width = (w * 0.86f).toInt()
+            if (now.key != npKey || width != npW) {
+                npKey = now.key; npW = width
+                val parts = now.key.split("|", limit = 3)
+                npTitle = parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.046f, width) }
+                npArtist = parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.034f, width) }
+                npLyricFor = null
+            }
+            val ly = Lyrics.lines
+            val idx = if (ly.isEmpty()) -1 else Lyrics.indexAt(ly, Lyrics.positionMs())
+            if (ly !== npLyricFor || idx != npLyricIdx) {
+                npLyricFor = ly; npLyricIdx = idx; npLyricAt = t
+                npLyric = ly.getOrNull(idx)?.text?.takeIf { it.isNotBlank() }?.let { fitText(it, npPaint, w * 0.042f, width, 2, 3, true) }
+            }
+            val gap = w * 0.012f
+            // with lyrics on, a fixed two-line slot is kept under the artist so the title does not jump when a line wraps
+            val slot = if (ly.isNotEmpty()) 2.4f * w * 0.042f * 1.25f else 0f
+            val head = listOfNotNull(npTitle, npArtist)
+            val total = head.sumOf { it.height } + gap * 2 + slot
+            var y = h * 0.785f - total
+            npHit.set(w * 0.07f, y - gap, w * 0.93f, h * 0.785f + gap)
+            val a = (255 * npMix)
+            val tint = tintColor()
+            c.save()
+            c.translate(w * 0.07f + px * 0.3f, 0f)   // the column is 86% wide, centred, and its lines are centred in it
+            for (l in head) {
+                npPaint.color = if (l === npTitle) Color.WHITE else Color.argb(255, 200, 210, 208)
+                npPaint.alpha = (a * (if (l === npArtist) 0.62f else 1f)).toInt()
+                c.save(); c.translate(0f, y); l.draw(c); c.restore()
+                y += l.height + gap
+            }
+            npLyric?.let { l ->
+                val e = ((t - npLyricAt) / 0.4f).coerceIn(0f, 1f)
+                val ease = 1f - (1f - e) * (1f - e) * (1f - e)
+                npPaint.color = tint
+                c.save()
+                c.translate(0f, y + gap + (slot - l.height) / 2f + (1f - ease) * w * 0.035f)   // glides up into place
+                drawSwept(c, l, npPaint, (a * (0.4f + 0.2f * ease)).toInt(), (a * (0.7f + 0.3f * ease)).toInt(), sweep(ly, idx))
+                c.restore()
+            }
+            c.restore()
+        }
+
+        private fun paint2(c: Canvas, t: Float) {
+            if (w == 0 || h == 0) return
+            c.drawColor(Color.rgb(7, 19, 17))
+            if (homeMode) { drawHome(c, t); return }
+            if (carMode) { drawCarBehind(c, t); drawLockStatus(c) }
+
+            // blurred copy drifting slowly (Ken Burns)
+            if (!carMode) backdrop?.let { b ->
+                val k = maxOf(w.toFloat() / b.width, h.toFloat() / b.height) * (1.18f + 0.05f * sin(t / 9f))
+                c.save()
+                c.translate(w / 2f + 40f * sin(t / 13f), h / 2f + 40f * cos(t / 11f))
+                c.scale(k, k)
+                c.drawBitmap(b, -b.width / 2f, -b.height / 2f, bmp)
+                c.restore()
+            }
+            if (!carMode && backdrop != null) c.drawColor(Color.argb(168, 7, 19, 17))
+
+            // two soft lights in the cover's colours
+            blob1.alpha = if (carMode) 70 else 255
+            blob2.alpha = if (carMode) 70 else 255
+            c.save()
+            c.translate(w * (0.30f + 0.22f * sin(t / 7f)), h * (0.28f + 0.12f * cos(t / 9f)))
+            c.drawCircle(0f, 0f, w * 0.75f, blob1)
+            c.restore()
+            c.save()
+            c.translate(w * (0.72f + 0.20f * cos(t / 8f)), h * (0.78f + 0.10f * sin(t / 10f)))
+            c.drawCircle(0f, 0f, w * 0.75f, blob2)
+            c.restore()
+
+            // spin of the record: speeds up with the music, coasts to a stop when it pauses
+            val dt = (t - lastT).coerceIn(0f, 0.1f)
+            lastT = t
+            val target = if (CoverBus.current().playing) 70f else 0f
+            spinSpeed += (target - spinSpeed) * minOf(1f, dt * 1.5f)
+            spin = (spin + spinSpeed * dt) % 360f
+
+            // lyrics: when there are some, the cover and record slide a little to the left to leave a column for them
+            val ly = if (carMode) Lyrics.lines else emptyList()
+            lyricMix += ((if (ly.isNotEmpty()) 1f else 0f) - lyricMix) * minOf(1f, dt * 3f)
+
+            // particles, under everything that is solid
+            for (i in 0 until nDots) {
+                val y = (((dy[i] - t * dv[i]) % 1f) + 1f) % 1f * h
+                val x = (dx[i] + 0.03f * sin(t * 0.4f + dp[i])) * w
+                val a = da[i] * (0.6f + 0.4f * sin(t * 1.3f + dp[i]))
+                dot.color = dotColor[i]
+                dot.alpha = a.toInt().coerceIn(0, 255)
+                c.drawCircle(x, y, dr[i], dot)
+            }
+
+            // the cover itself, breathing a little
+            val sq = square ?: return
+            val side = w * (if (carMode) 0.38f else 0.64f) * (1f + 0.012f * sin(t / 3f))
+            val cx = w * (if (carMode) 0.36f - 0.085f * lyricMix else 0.40f) +(if (carMode) tiltX * w * 0.050f else 0f)
+            val cy = h * (if (carMode) 0.735f else 0.60f) + 6f * sin(t / 4f) + (if (carMode) tiltY * w * 0.040f else 0f)
+            rectA.set(cx - side / 2, cy - side / 2, cx + side / 2, cy + side / 2)
+
+            // cover and record turn together: in the car variant they lean like the car in the photo (it points up and to
+            // the left), and follow the tilt a little, so the group sits in the composition and not square to the screen
+            c.save()
+            c.rotate(if (carMode) -8f + 1.5f * sin(t / 6f) + tiltX * 3f else 0f, cx, cy)
+
+            // the record sliding out from behind the cover
+            val vr = side * 0.485f
+            val vx = cx + side * 0.34f
+            c.save()
+            c.translate(vx, cy)
+            dot.color = Color.argb(90, 0, 0, 0)
+            c.drawCircle(side * 0.02f, side * 0.02f, vr, dot)
+            dot.color = Color.rgb(11, 11, 12)
+            c.drawCircle(0f, 0f, vr, dot)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f
+            paint.color = Color.argb(20, 255, 255, 255)
+            for (k in 0..9) c.drawCircle(0f, 0f, vr * (0.40f + 0.058f * k), paint)
+            c.drawCircle(0f, 0f, vr * 0.99f, sheen)
+            // a faint wedge that turns with the record, so the spin shows even with the label behind the cover
+            c.save()
+            c.rotate(spin)
+            c.drawCircle(0f, 0f, vr * 0.99f, spinMark)
+            c.restore()
+            val rl = vr * 0.34f
+            c.save()
+            c.rotate(spin)
+            clip.reset(); clip.addCircle(0f, 0f, rl, Path.Direction.CW)
+            c.clipPath(clip)
+            val q = (sq.width * 0.30f).toInt()
+            srcA.set(sq.width / 2 - q, sq.height / 2 - q, sq.width / 2 + q, sq.height / 2 + q)
+            rectB.set(-rl, -rl, rl, rl)
+            c.drawBitmap(sq, srcA, rectB, bmp)
+            c.restore()
+            paint.color = accent
+            paint.strokeWidth = 2f
+            c.drawCircle(0f, 0f, rl, paint)
+            paint.style = Paint.Style.FILL
+            dot.color = Color.rgb(11, 11, 12)
+            c.drawCircle(0f, 0f, vr * 0.035f, dot)
+            c.restore()
+            val r = side * 0.07f
+            c.save()
+            c.rotate(1.0f * sin(t / 7f), cx, cy)
+            paint.style = Paint.Style.FILL
+            paint.color = Color.argb(90, 0, 0, 0)
+            c.drawRoundRect(rectA.left, rectA.top + side * 0.025f, rectA.right, rectA.bottom + side * 0.025f, r, r, paint)
+            clip.reset(); clip.addRoundRect(rectA, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            srcA.set(0, 0, sq.width, sq.height)
+            c.drawBitmap(sq, srcA, rectA, bmp)
+            c.restore()
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            paint.color = accent
+            c.drawRoundRect(rectA, r, r, paint)
+            paint.style = Paint.Style.FILL
+            c.restore()
+            if (ly.isNotEmpty()) drawLyrics(c, ly, t, cx + side * 0.825f + w * 0.025f, cy)
+            c.restore() // the lean of the whole group
+        }
+
+        // ---- lyrics beside the record ---------------------------------------------------------------------------
+
+        private val lyricPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+            setShadowLayer(10f, 0f, 2f, Color.argb(170, 0, 0, 0))
+        }
+        private var lyricMix = 0f
+        private var lyricFor: List<Lyrics.Line>? = null
+        private var lyricIdx = -2
+        private var lyricW = 0
+        private var lyricAt = 0f
+        private val lyricLayouts = arrayOfNulls<StaticLayout>(3)   // previous, current, next
+
+        /**
+         * Wraps [text] in [width]. A line that needs more than [goodLines] lines gets smaller type (down to 62%) before
+         * anything is cut; only past [maxLines] at the smallest size does it end in "…".
+         */
+        private fun fitText(text: String, paint: TextPaint, base: Float, width: Int, goodLines: Int, maxLines: Int, centered: Boolean): StaticLayout {
+            var size = base
+            while (true) {
+                paint.textSize = size
+                val l = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+                    .setAlignment(if (centered) android.text.Layout.Alignment.ALIGN_CENTER else android.text.Layout.Alignment.ALIGN_NORMAL)
+                    .setMaxLines(maxLines).setEllipsize(android.text.TextUtils.TruncateAt.END).build()
+                if (l.lineCount <= goodLines || size <= base * 0.62f) return l
+                size *= 0.92f
+            }
+        }
+
+        /** How much of the line at [idx] has been sung, 0..1: its own time up to the next line's (capped, so a long gap is not a crawl). */
+        private fun sweep(ly: List<Lyrics.Line>, idx: Int): Float {
+            val cur = ly.getOrNull(idx) ?: return 1f
+            val span = ((ly.getOrNull(idx + 1)?.ms ?: (cur.ms + 4000L)) - cur.ms).coerceIn(600L, 9000L)
+            return ((Lyrics.positionMs() - cur.ms) / (span * 0.85f)).coerceIn(0f, 1f)
+        }
+
+        /** The line dim, then the sung part of it drawn over in full brightness (a karaoke fill that follows the wrapped lines). */
+        private fun drawSwept(c: Canvas, l: StaticLayout, paint: TextPaint, dimAlpha: Int, brightAlpha: Int, progress: Float) {
+            paint.alpha = dimAlpha
+            l.draw(c)
+            if (progress <= 0f) return
+            val reveal = progress * l.text.length
+            for (i in 0 until l.lineCount) {
+                if (reveal <= l.getLineStart(i)) break
+                val right = if (reveal >= l.getLineEnd(i)) l.getLineRight(i) + 6f
+                else l.getPrimaryHorizontal(reveal.toInt().coerceAtMost(l.text.length))
+                c.save()
+                c.clipRect(l.getLineLeft(i) - 6f, l.getLineTop(i).toFloat(), right, l.getLineBottom(i).toFloat())
+                paint.alpha = brightAlpha
+                l.draw(c)
+                c.restore()
+            }
+        }
+
+        /** The line being sung (filling in as it goes), the one before and the one after (dim), in a column from [x0] to the right edge. */
+        private fun drawLyrics(c: Canvas, ly: List<Lyrics.Line>, t: Float, x0: Float, cy: Float) {
+            val width = (w * 0.965f - x0).toInt()
+            if (width < w * 0.18f) return
+            val idx = Lyrics.indexAt(ly, Lyrics.positionMs())
+            if (ly !== lyricFor || idx != lyricIdx || width != lyricW) {
+                if (ly !== lyricFor || idx != lyricIdx) lyricAt = t
+                lyricFor = ly; lyricIdx = idx; lyricW = width
+                fun text(i: Int) = ly.getOrNull(i)?.text.orEmpty()
+                val big = w * 0.050f
+                val small = w * 0.034f
+                lyricLayouts[0] = text(idx - 1).takeIf { it.isNotBlank() }?.let { fitText(it, lyricPaint, small, width, 2, 3, false) }
+                lyricLayouts[1] = if (idx >= 0) fitText(text(idx).ifBlank { "♪" }, lyricPaint, big, width, 4, 6, false) else null
+                lyricLayouts[2] = text(idx + 1).takeIf { it.isNotBlank() }?.let { fitText(it, lyricPaint, small, width, 2, 3, false) }
+            }
+            val e = ((t - lyricAt) / 0.4f).coerceIn(0f, 1f)
+            val ease = 1f - (1f - e) * (1f - e) * (1f - e)
+            val gap = w * 0.022f
+            val cur = lyricLayouts[1]
+            val curH = cur?.height?.toFloat() ?: 0f
+            val a = (255 * lyricMix).toInt()
+            c.save()
+            // the three lines glide up together when the line changes
+            c.translate(x0, cy - curH / 2f + (1f - ease) * (curH + gap))
+            lyricPaint.color = Color.WHITE
+            cur?.let { drawSwept(c, it, lyricPaint, (a * (0.4f + 0.2f * ease)).toInt(), (a * (0.7f + 0.3f * ease)).toInt(), sweep(ly, idx)) }
+            lyricLayouts[0]?.let { p ->
+                c.save(); c.translate(0f, -gap - p.height); lyricPaint.alpha = (a * (0.38f + 0.5f * (1f - ease))).toInt(); p.draw(c); c.restore()
+            }
+            lyricLayouts[2]?.let { n ->
+                c.save(); c.translate(0f, curH + gap); lyricPaint.alpha = (a * 0.5f).toInt(); n.draw(c); c.restore()
+            }
+            c.restore()
+        }
+
+        // ---- car variant ------------------------------------------------------------------------------------------
+
+        private fun loadCar() {
+            if (carBg != null) return
+            // The photo and its cut-out are the user's own picture (copyrighted, so not part of the app): they are read from
+            // Android/data/<app>/files/car/car_bg.jpg and car_cut.png. Without them only the dark base and the clock show.
+            runCatching {
+                val dir = getExternalFilesDir("car") ?: return@runCatching
+                carBg = android.graphics.BitmapFactory.decodeFile(java.io.File(dir, "car_bg.jpg").path)
+                carCut = android.graphics.BitmapFactory.decodeFile(java.io.File(dir, "car_cut.png").path)
+            }.onFailure { Log.w("CoverLive", "car layers missing", it) }
+        }
+
+        /**
+         * The clock, rendered into two bitmaps (fill + outline, and the "echo" outline) once a minute. The digits are a
+         * Path so the stroke keeps one width however much they are stretched; the font's glyphs overlap, so their
+         * contours are merged first (otherwise the inner joins of "4" and "9" show). 12-hour "h:mm", always laid out as
+         * if it were "00:00" wide so 9:52 and 10:52 have the same digit size.
+         */
+        private fun ensureClock(k: Float, photoW: Float) {
+            val key = "${System.currentTimeMillis() / 60_000L}|$w|$h"
+            if (key == clockKey) return
+            clockKey = key
+            val time = timeFmt.format(java.util.Date())
+            if (refW == 0f) {
+                clockPaint.getTextBounds("00:00", 0, 5, timeBounds)
+                refW = timeBounds.width().toFloat(); refH = timeBounds.height().toFloat()
+            }
+            val visibleW = (w - 2f * w * 0.075f) / k   // leaves room for the parallax shift without touching the edges
+            val fit = visibleW / refW
+            val tall = 550f / (refH * fit)             // tall and narrow, to fill the free band above the car
+            textPath.reset()
+            clockPaint.getTextPath(time, 0, time.length, 0f, 0f, textPath)
+            textPath.transform(pathMatrix.apply { setScale(fit, fit * tall) })
+            mergedPath.reset()
+            if (!mergedPath.op(textPath, textPath, Path.Op.UNION)) { mergedPath.reset(); mergedPath.addPath(textPath) }
+            mergedPath.computeBounds(pathBounds, true)
+            val pad = 14f
+            clockBox.set(pathBounds.left - pad, pathBounds.top - pad, pathBounds.right + pad, pathBounds.bottom + pad)
+            clockOriginX = photoW / 2f - (pathBounds.left + pathBounds.right) / 2f
+            val bw = kotlin.math.ceil(clockBox.width() * k).toInt().coerceAtLeast(1)
+            val bh = kotlin.math.ceil(clockBox.height() * k).toInt().coerceAtLeast(1)
+            clockFillBmp?.recycle(); clockEchoBmp?.recycle()
+            val fillBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            val echoBmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+            clockFill.shader = LinearGradient(
+                0f, pathBounds.top, 0f, 0f,
+                intArrayOf(Color.argb(205, 236, 246, 243), Color.argb(150, 190, 235, 228), Color.argb(14, 94, 234, 212)),
+                floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP,
+            )
+            Canvas(fillBmp).apply {
+                scale(k, k); translate(-clockBox.left, -clockBox.top)
+                drawPath(mergedPath, clockFill)
+                clockStroke.alpha = 235; clockStroke.strokeWidth = 3.2f
+                drawPath(mergedPath, clockStroke)
+            }
+            Canvas(echoBmp).apply {
+                scale(k, k); translate(-clockBox.left, -clockBox.top)
+                clockStroke.alpha = 85; clockStroke.strokeWidth = 2.2f
+                drawPath(mergedPath, clockStroke)
+            }
+            clockFillBmp = fillBmp; clockEchoBmp = echoBmp
+        }
+
+        /**
+         * Photo, then the big clock, then the car in front of it, each layer shifted by the tilt by a different amount
+         * (the farther, the less), so the phone behaves like a window onto a small 3D scene. The photo is fitted to the
+         * width (the car must not be cropped), anchored to the bottom, and the dark band above it is the photo's own top row.
+         */
+        private fun drawCarBehind(c: Canvas, t: Float) {
+            loadCar()
+            val bg = carBg ?: return
+            val k = w * 1.06f / bg.width
+            val ox = (w - bg.width * k) / 2f
+            val oy = h - bg.height * k
+            val sway = if (tiltLive) 0f else 1f   // no sensor: a very slow idle sway keeps the depth readable
+            val tx = tiltX + sway * 0.35f * sin(t / 5f)
+            val ty = tiltY + sway * 0.20f * cos(t / 6f)
+
+            c.save()
+            c.translate(ox + tx * w * 0.012f, oy + ty * w * 0.010f)
+            c.scale(k, k)
+            if (oy > 0f) {
+                srcA.set(0, 0, bg.width, 2)
+                rectB.set(-w.toFloat(), -oy / k - 2f, bg.width + w.toFloat(), 2f)
+                c.drawBitmap(bg, srcA, rectB, bmp)
+            }
+            c.drawBitmap(bg, 0f, 0f, bmp)
+            c.restore()
+
+            ensureClock(k, bg.width.toFloat())
+            val fillBmp = clockFillBmp
+            val echoBmp = clockEchoBmp
+            if (fillBmp != null && echoBmp != null) {
+                c.save()
+                c.translate(ox + tx * w * 0.022f, oy + ty * w * 0.018f)
+                c.scale(k, k)
+                c.translate(clockOriginX, CLOCK_BASE_Y)
+                c.save()
+                c.translate(-tx * 20f, -ty * 14f + 10f)            // the echo, a little behind and apart
+                c.drawBitmap(echoBmp, null, clockBox, bmp)
+                c.restore()
+                c.drawBitmap(fillBmp, null, clockBox, bmp)
+                c.restore()
+            }
+
+            c.save()
+            c.translate(ox + tx * w * 0.036f, oy + ty * w * 0.030f)
+            c.scale(k, k)
+            carCut?.let { c.drawBitmap(it, 0f, CUT_TOP.toFloat(), bmp) }
+            c.restore()
+        }
+
+        // ---- tilt (gravity sensor: no permission), smoothed, relative to how the phone is usually held --------------
+
+        private var tiltX = 0f
+        private var tiltY = 0f
+        private var tiltLive = false
+        private var fx = 0f
+        private var fy = 0f
+        private var refX = 0f
+        private var refY = 5f
+        private var haveRef = false
+        private val sensors by lazy { getSystemService(SENSOR_SERVICE) as? android.hardware.SensorManager }
+        private val tiltListener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val gx = e.values[0]
+                val gy = e.values[1]
+                if (!haveRef) { refX = gx; refY = gy; fx = gx; fy = gy; haveRef = true }
+                fx += (gx - fx) * 0.10f
+                fy += (gy - fy) * 0.10f
+                refX += (fx - refX) * 0.0015f     // the way the phone is held becomes the neutral position, slowly
+                refY += (fy - refY) * 0.0015f
+                tiltX = ((fx - refX) / 4.5f).coerceIn(-1f, 1f) * -1f
+                tiltY = ((fy - refY) / 4.5f).coerceIn(-1f, 1f)
+                tiltLive = true
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+
+        private fun startTilt() {
+            if (!carMode && !homeMode) return
+            val m = sensors ?: return
+            val s = m.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: m.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) ?: return
+            haveRef = false
+            m.registerListener(tiltListener, s, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+        }
+
+        private fun stopTilt() {
+            runCatching { sensors?.unregisterListener(tiltListener) }
+        }
+
+        /**
+         * The cover's colour in x0..x1, weighted by how colourful each pixel is (saturation x brightness), so the colourful
+         * part of a mostly dark cover decides, and a cover with no colour at all averages out to a plain grey.
+         */
+        private fun avg(b: Bitmap, x0: Int, x1: Int): Int {
+            var r = 0.0; var g = 0.0; var bl = 0.0; var ws = 0.0
+            val hsv = FloatArray(3)
+            for (y in 0 until b.height) for (x in x0 until x1) {
+                val p = b.getPixel(x, y)
+                Color.colorToHSV(p, hsv)
+                val w = (hsv[1] * hsv[2] + 0.02f).toDouble()
+                r += Color.red(p) * w; g += Color.green(p) * w; bl += Color.blue(p) * w; ws += w
+            }
+            ws = ws.coerceAtLeast(1e-6)
+            return Color.rgb((r / ws).toInt(), (g / ws).toInt(), (bl / ws).toInt())
+        }
+
+        /** As colourful as the cover is, a touch more, and bright enough to glow: a grey cover stays grey (no invented hue). */
+        private fun boost(color: Int): Int {
+            val hsv = FloatArray(3)
+            Color.colorToHSV(color, hsv)
+            hsv[1] = (hsv[1] * 1.3f).coerceIn(0f, 1f)
+            hsv[2] = (hsv[2] * 1.1f).coerceIn(0.5f, 0.95f)
+            return Color.HSVToColor(hsv)
+        }
+
+        /** More colour for the home lights while music plays; proportional, so a colourless cover gets none. */
+        private fun saturate(color: Int): Int {
+            val hsv = FloatArray(3)
+            Color.colorToHSV(color, hsv)
+            hsv[1] = (hsv[1] * 1.35f).coerceIn(0f, 1f)
+            hsv[2] = (hsv[2] * 1.15f).coerceIn(0.65f, 1f)
+            return Color.HSVToColor(hsv)
+        }
+
+        private fun withAlpha(color: Int, a: Int) = Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+    }
+
+    private companion object {
+        const val CUT_TOP = 600
+        const val CLOCK_BASE_Y = 730f
+        const val HOME_PAD = 10f
+    }
+}
+
+/** For the home screen: slow lights and motes in the colours of the music and the hour, dim enough for the icons. */
+class HomeAmbientWallpaperService : CoverLiveWallpaperService() {
+    override val homeMode: Boolean get() = true
+}
+
+/** The same animated wallpaper, with the photo of the car and the clock behind it. */
+class CarClockWallpaperService : CoverLiveWallpaperService() {
+    override val carMode: Boolean get() = true
+}

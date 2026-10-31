@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Coucou for Android — part of this SmartIsland fork (GNU GPL v3). Animated cover wallpaper (prototype). -->
+<wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
+    android:thumbnail="@drawable/ic_launcher_foreground_v2" />

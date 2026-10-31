@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Coucou themed-icon layer (Android 13+, Lawnchair themed icons): same drawing as the foreground, single colour. GPL-3.0, see android/LICENSE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M34,43.5h40a10.5,10.5 0,0 1,0 21h-40a10.5,10.5 0,0 1,0 -21z"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M34.5,54m-4.4,0a4.4,4.4 0,1 1,8.8 0a4.4,4.4 0,1 1,-8.8 0" />
+    <path
+        android:pathData="M62.5,51v6M68.5,47.5v13M74.5,50v8"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.8" />
+</vector>

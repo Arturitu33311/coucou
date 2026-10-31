@@ -119,6 +119,50 @@ private fun Setup() {
             Text("A small Mochi that is always there: asleep when nothing is open, looking up when something is overdue. Open the island to see the tasks and add one.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
         }
 
+        Card("Cover on the lock screen") {
+            var cover by remember { mutableStateOf(with(PhoneSettings) { context.lockCover }) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = cover,
+                    onCheckedChange = {
+                        cover = it
+                        with(PhoneSettings) { context.lockCover = it }
+                        if (!it) com.agupta07505.smartisland.coucou.LockCoverWallpaper.restore(context)
+                    },
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Show the cover of what's playing", color = Color.White, fontSize = 14.sp)
+            }
+            Text(
+                "While music plays the lock screen shows the cover itself, centred over a blurred copy. " +
+                    "It replaces your lock wallpaper meanwhile and puts it back about 90 seconds after the music stops. " +
+                    "Nothing leaves the phone.",
+                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+            )
+        }
+
+        Card("Lyrics on the lock screen") {
+            var on by remember { mutableStateOf(with(PhoneSettings) { context.lyricsOn }) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(
+                    checked = on,
+                    onCheckedChange = {
+                        on = it
+                        with(PhoneSettings) { context.lyricsOn = it }
+                        if (!it) com.agupta07505.smartisland.coucou.Lyrics.clear()
+                    },
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Show the lyrics beside the record", color = Color.White, fontSize = 14.sp)
+            }
+            Text(
+                "In the Coucou car wallpaper, the line being sung shows next to the record, in time with the song. " +
+                    "To find them, the artist, title and album of each song are sent once to lrclib.net, a free community " +
+                    "lyrics database (no account, nothing else is sent). Off by default.",
+                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+            )
+        }
+
         Card("Mochi's outfit") {
             var choice by remember { mutableStateOf(with(PhoneSettings) { context.mochiOutfit }) }
             Text(

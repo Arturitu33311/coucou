@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- debug builds only: fake "now playing" for testing the wallpaper on an emulator without a music app -->
+        <receiver
+            android:name="com.agupta07505.smartisland.coucou.DebugNowPlayingReceiver"
+            android:exported="true" />
+    </application>
+</manifest>
