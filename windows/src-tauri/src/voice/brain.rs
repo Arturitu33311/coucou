@@ -17,12 +17,15 @@ pub struct Brain {
     messages: Vec<Value>,
     /// The same conversation in chat-completions format (used with an OpenRouter key).
     or_messages: Vec<Value>,
+    /// Text from outside (a web search, the user's services) has entered this conversation: it could carry
+    /// instructions, so the tools that act on the house or hand work to Jinx are refused until it is forgotten.
+    tainted: bool,
     last: Instant,
 }
 
 impl Default for Brain {
     fn default() -> Self {
-        Self { messages: Vec::new(), or_messages: Vec::new(), last: Instant::now() }
+        Self { messages: Vec::new(), or_messages: Vec::new(), tainted: false, last: Instant::now() }
     }
 }
 
@@ -112,6 +115,7 @@ impl Brain {
         if self.last.elapsed() > FORGET_AFTER {
             self.messages.clear();
             self.or_messages.clear();
+            self.tainted = false;
         }
         self.last = Instant::now();
         // OpenRouter first when its key is set; Claude otherwise.
@@ -152,6 +156,9 @@ impl Brain {
                 }
             };
             let content = turn["content"].as_array().cloned().unwrap_or_default();
+            if content.iter().any(|b| b["type"].as_str().is_some_and(|t| t == "server_tool_use" || t.ends_with("_tool_result"))) {
+                self.tainted = true;
+            }
             self.messages.push(json!({ "role": "assistant", "content": content.clone() }));
             let text: String = content.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(" ");
             if !text.trim().is_empty() {
@@ -167,7 +174,7 @@ impl Brain {
             }
             let mut results = Vec::new();
             for u in uses {
-                let (result, did) = super::run_tool(app, u["name"].as_str().unwrap_or(""), &u["input"]);
+                let (result, did) = self.run(app, u["name"].as_str().unwrap_or(""), &u["input"]);
                 acted |= did;
                 results.push(json!({ "type": "tool_result", "tool_use_id": u["id"], "content": result }));
             }
@@ -176,6 +183,18 @@ impl Brain {
         }
         self.repair();
         Some(Reply { text: spoken_text(&spoken), acted })
+    }
+
+    /// Runs a tool, unless it acts for the user after outside text entered the conversation.
+    fn run(&mut self, app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
+        if self.tainted && is_acting(name) {
+            crate::log::line(format!("voice: {name} refused after outside text entered the conversation"));
+            return ("Refused: this conversation has read outside text, so it cannot act on the house or hand work to Jinx. Ask the user to say it again.".into(), false);
+        }
+        if name == "service_info" {
+            self.tainted = true;
+        }
+        super::run_tool(app, name, input)
     }
 
     /// The same conversation through OpenRouter (chat-completions format, function tools).
@@ -215,7 +234,7 @@ impl Brain {
                 break;
             }
             for c in &turn.calls {
-                let (result, did) = super::run_tool(app, &c.name, &c.input);
+                let (result, did) = self.run(app, &c.name, &c.input);
                 acted |= did;
                 self.or_messages.push(json!({ "role": "tool", "tool_call_id": c.id, "content": result }));
             }
@@ -250,6 +269,11 @@ impl Brain {
     }
 }
 
+/// The tools whose effect reaches beyond the island.
+fn is_acting(name: &str) -> bool {
+    matches!(name, "casa" | "jinx")
+}
+
 /// What Claude wrote, ready to be said: citations and markdown left out.
 pub fn spoken_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -274,6 +298,12 @@ mod tests {
     fn markdown_and_citations_are_not_read_aloud() {
         assert_eq!(spoken_text("**Done** — Stripe [1] is in the island."), "Done — Stripe is in the island.");
         assert_eq!(spoken_text("  Il fait  20 °C à Bordeaux. "), "Il fait 20 °C à Bordeaux.");
+    }
+
+    #[test]
+    fn only_the_tools_that_reach_outside_are_acting() {
+        assert!(is_acting("casa") && is_acting("jinx"));
+        assert!(!is_acting("music") && !is_acting("service_info") && !is_acting("pills"));
     }
 
     #[test]
