@@ -225,19 +225,28 @@ class AudioLinkService : Service(), PhoneSignals {
         private var written = 0L
         private var baseHead = 0L
         private val focus: AudioFocusRequest
+        private val bufferMs: Int
+        private val maxQueueMs: Int
         private val gate = PlayerGate()
         private var holdsFocus = false
         private var lastFeedAt = 0L
 
         init {
-            val min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+            val minBytes = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+            // The system mixes a streaming track only once its buffer is completely full, so the buffer must be one the
+            // queue limit allows to fill (see trackBufferMs); a short one also keeps the delay low.
+            val minMs = (minBytes.toLong() * 1000 / (RATE * BYTES_PER_FRAME)).toInt()
+            bufferMs = trackBufferMs(minMs)
+            maxQueueMs = queueLimitMs(bufferMs)
+            val bufferBytes = max(minBytes, RATE * bufferMs / 1000 * BYTES_PER_FRAME)
             track = AudioTrack.Builder()
                 .setAudioAttributes(attrs)
                 .setAudioFormat(format)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .setBufferSizeInBytes(max(min, RATE * BYTES_PER_FRAME * (MAX_QUEUE_MS + 100) / 1000))
+                .setBufferSizeInBytes(bufferBytes)
                 .build()
+            Log.d(TAG, "track buffer ${bufferBytes / BYTES_PER_FRAME * 1000 / RATE} ms (system minimum $minMs ms), queue limit $maxQueueMs ms")
             focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
                 .setOnAudioFocusChangeListener { change ->
@@ -337,7 +346,7 @@ class AudioLinkService : Service(), PhoneSignals {
                 GateStep.AskFocus -> if (!takeFocus()) { nNoFocus++; return } // refused (a call, say): the chunk is dropped
                 GateStep.Play -> {}
             }
-            when (playbackPlan(queuedMs(), started)) {
+            when (playbackPlan(queuedMs(), started, maxQueueMs)) {
                 PlaybackAction.Drop -> { nDrop++; return }
                 PlaybackAction.Wait -> nWait++
                 PlaybackAction.Play -> {
@@ -348,9 +357,13 @@ class AudioLinkService : Service(), PhoneSignals {
                     }
                 }
             }
-            val n = track.write(pcm, 0, pcm.size)
+            // Never block the reader thread: what does not fit in the buffer is dropped, which also keeps the delay bounded.
+            val n = track.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING)
             lastWrite = n
-            if (n > 0) written += n / BYTES_PER_FRAME else nWriteErr++
+            if (n > 0) written += n / BYTES_PER_FRAME
+            if (n < pcm.size) {
+                if (n < 0) nWriteErr++ else nDrop++
+            }
         }
 
         @Synchronized
