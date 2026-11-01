@@ -12,11 +12,25 @@ No matar `gnome-shell`. No tocar `~/.claude/settings.json`.
 - Música del celular en la PC: el espejo de KDE Connect vuelve a aparecer porque el S22 se agregó por IP Tailscale
   (`customDevices=100.118.153.16` en `~/.config/kdeconnect/config`). Título/artista/álbum/letra funcionan.
 
+## Ya resuelto 2026-11-01
+- Un reproductor MPRIS colgado (Sonora) bloqueaba la isla (25 s por propiedad) y dejaba el fondo sin música: ahora
+  `music.rs` lee cada reproductor en su hilo con tope de 1,5 s y `server.py` pregunta uno por uno (1 s).
+- Música del celular en el fondo: `/state` trae `remote: true` y la página anima un espectro sintético.
+- OJO al compilar la app de la laptop (línea ccr): `cargo build --release --features tauri/custom-protocol` (sin eso la
+  isla apunta a localhost:1420 y sale "Could not connect to localhost"). En esta sesión el comando `coucou-island` necesita
+  `DISPLAY=:0 XAUTHORITY=<la de gnome-shell>`.
+
 ## Falta, en orden
-1. **Portada del celular en fondo e isla.** KDE Connect 23.08.5 (Ubuntu) no publica `mpris:artUrl` en el espejo.
-   Opciones: (a) instalar un KDE Connect más nuevo (flatpak/PPA) y comprobar con
-   `playerctl -p kdeconnect.mpris_* metadata`; (b) que la app Coucou del celular mande la portada por el canal ssh/relay
-   y la PC la guarde en un archivo para `server.py` (`/art`) y `music.rs`. Empezar por (a), es lo barato.
+1. **Portada y espectro REAL del celular en fondo e isla (propuesta de Alan: el celular, que siempre sabe qué suena,
+   manda la info a la PC, y viceversa).** KDE Connect 23.08.5 no publica `mpris:artUrl`. Diseño: nuevo frame del
+   canal audiolink (tipo 6, celular→PC, JSON `{title,artist,album,status,positionMs,lengthMs}` + portada JPEG ≤64 KB y
+   bandas de espectro si se quiere) en `AudioLinkWire.kt`/`audiolink_wire.rs` con casos nuevos en
+   `audiolink-vectors.json` (copiar a ambos lados, `scripts/check-contracts.sh`); el celular lo saca de la sesión de
+   medios (`Watchers`, ya excluye espejos). En la PC: publicar un reproductor MPRIS `coucou.phone` (zbus) con `artUrl`
+   a un archivo local, así isla (`music.rs`), fondo (`server.py`, ya trata `coucou.phone*` como remoto) y cualquier
+   cliente lo ven sin más cambios; ocultar el espejo de kdeconnect para no duplicar. Sentido inverso (PC→celular):
+   mismo frame por el canal de la PC con lo que suena en la laptop, para que el fondo del celular reaccione.
+   Alternativa barata: KDE Connect más nuevo (flatpak/PPA), comprobar con `playerctl -p kdeconnect.mpris_* metadata`.
 2. **Persistencia del fondo estático.** Comprobar tras un login que Hidamari no regenera `static-947648.png`
    (si lo hace, mover la captura a `apply-profile.sh`). Regenerar con
    `chromium --headless=new --no-sandbox --user-data-dir=$HOME/coucou-shot/p --screenshot=... "http://127.0.0.1:8765/?still=1&noclock=1"`
