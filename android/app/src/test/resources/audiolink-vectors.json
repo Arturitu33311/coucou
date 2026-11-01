@@ -876,9 +876,9 @@
     },
     {
       "name": "hello_ok",
-      "hex": "0300297b2272617465223a34383030302c226368616e6e656c73223a322c22666d74223a227331366c65227d",
+      "hex": "0300317b2272617465223a34383030302c226368616e6e656c73223a322c22666d74223a227331366c65222c226e6f77223a317d",
       "result": "hello",
-      "consumed": 44
+      "consumed": 52
     },
     {
       "name": "pause_phone",
@@ -1005,6 +1005,58 @@
     {
       "name": "missing_field",
       "line": "{\"op\":\"state\",\"headphones\":\"phone\"}",
+      "result": "error"
+    },
+    {
+      "name": "now_playing",
+      "line": "{\"op\":\"now\",\"title\":\"Song\",\"artist\":\"Band\",\"album\":\"LP\",\"status\":\"Playing\",\"pos\":1500,\"len\":200000}",
+      "result": "now",
+      "status": "Playing",
+      "title": "Song",
+      "pos": 1500,
+      "len": 200000
+    },
+    {
+      "name": "now_nothing",
+      "line": "{\"op\":\"now\",\"title\":\"\",\"artist\":\"\",\"album\":\"\",\"status\":\"Stopped\",\"pos\":0,\"len\":0}",
+      "result": "now",
+      "status": "Stopped",
+      "title": "",
+      "pos": 0,
+      "len": 0
+    },
+    {
+      "name": "now_bad_status",
+      "line": "{\"op\":\"now\",\"title\":\"a\",\"artist\":\"\",\"album\":\"\",\"status\":\"Dancing\",\"pos\":0,\"len\":0}",
+      "result": "error"
+    },
+    {
+      "name": "now_negative_position",
+      "line": "{\"op\":\"now\",\"title\":\"a\",\"artist\":\"\",\"album\":\"\",\"status\":\"Paused\",\"pos\":-5,\"len\":0}",
+      "result": "error"
+    },
+    {
+      "name": "art_three_bytes",
+      "line": "{\"op\":\"art\",\"hash\":\"ab12\",\"b64\":\"/9j/\"}",
+      "result": "art",
+      "hash": "ab12",
+      "bytes": 3
+    },
+    {
+      "name": "art_none",
+      "line": "{\"op\":\"art\",\"hash\":\"none\",\"b64\":\"\"}",
+      "result": "art",
+      "hash": "none",
+      "bytes": 0
+    },
+    {
+      "name": "art_bad_base64",
+      "line": "{\"op\":\"art\",\"hash\":\"ab12\",\"b64\":\"/9j\"}",
+      "result": "error"
+    },
+    {
+      "name": "art_hash_with_a_slash",
+      "line": "{\"op\":\"art\",\"hash\":\"../x\",\"b64\":\"\"}",
       "result": "error"
     }
   ]

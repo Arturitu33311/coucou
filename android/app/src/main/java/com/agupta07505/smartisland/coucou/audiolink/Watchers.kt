@@ -9,6 +9,7 @@ import android.content.Context
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
@@ -23,6 +24,12 @@ interface PhoneSignals {
     fun onHeadphones(at: Where)
     fun onCall(on: Boolean)
     fun onPhoneMedia(playing: Boolean)
+
+    /** Some app (not a mirror of the laptop) has a media session, playing or not. */
+    fun onMediaSession(present: Boolean)
+
+    /** What the phone is playing now (`Stopped` and no title when nothing), with its cover if the app gave one. */
+    fun onNowPlaying(now: NowPlaying, art: android.graphics.Bitmap?)
 }
 
 /** The decisions the watchers make, with no Android objects, so they can be tested on the JVM. */
@@ -132,11 +139,47 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
         signals.onHeadphones(WatchersLogic.headphonesWhere(types))
     }
 
+    /** The session the person is dealing with: the one playing, else the first that has a track. */
+    private fun reportNow() {
+        val c = controllers.keys.firstOrNull { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+            ?: controllers.keys.firstOrNull { it.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrEmpty().not() }
+        val m = c?.metadata
+        val title = m?.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty()
+        if (c == null || m == null || title.isEmpty()) {
+            signals.onNowPlaying(NowPlaying("", "", "", "Stopped", 0, 0), null)
+            return
+        }
+        val st = c.playbackState
+        val playing = st?.state == PlaybackState.STATE_PLAYING || st?.state == PlaybackState.STATE_BUFFERING
+        val status = when {
+            playing -> "Playing"
+            st?.state == PlaybackState.STATE_PAUSED -> "Paused"
+            else -> "Stopped"
+        }
+        var pos = st?.position?.takeIf { it >= 0 } ?: 0L
+        if (st != null && st.state == PlaybackState.STATE_PLAYING) {
+            pos += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
+        }
+        val now = NowPlaying(
+            title = title,
+            artist = m.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: m.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST).orEmpty(),
+            album = m.getString(MediaMetadata.METADATA_KEY_ALBUM).orEmpty(),
+            status = status,
+            positionMs = pos.coerceAtLeast(0),
+            lengthMs = m.getLong(MediaMetadata.METADATA_KEY_DURATION).coerceAtLeast(0),
+        )
+        val art = m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: m.getBitmap(MediaMetadata.METADATA_KEY_ART)
+            ?: m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+        signals.onNowPlaying(now, art)
+    }
+
     private fun reportMedia() {
         val states = controllers.keys.mapNotNull { it.playbackState?.state }
         val playing = WatchersLogic.mediaPlaying(states)
         Log.d(TAG, "phone media playing=$playing from ${controllers.keys.map { "${it.packageName}:${it.playbackState?.state}" }}")
         signals.onPhoneMedia(playing)
+        reportNow()
     }
 
     /**
@@ -153,10 +196,12 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
             if (controllers.keys.any { it.sessionToken == c.sessionToken }) continue
             val cb = object : MediaController.Callback() {
                 override fun onPlaybackStateChanged(state: PlaybackState?) = reportMedia()
+                override fun onMetadataChanged(metadata: MediaMetadata?) = reportNow()
             }
             c.registerCallback(cb, main)
             controllers[c] = cb
         }
+        signals.onMediaSession(controllers.isNotEmpty())
         reportMedia()
     }
 }

@@ -32,6 +32,72 @@ fun swapAskOf(payload: ByteArray): SwapAsk? = when {
     else -> null
 }
 
+/** What the phone is playing, as it goes to the laptop. */
+data class NowPlaying(
+    val title: String,
+    val artist: String,
+    val album: String,
+    /** "Playing", "Paused" or "Stopped". */
+    val status: String,
+    val positionMs: Long,
+    val lengthMs: Long,
+)
+
+/**
+ * The now-playing lines (laptop twin: `audiolink_wire.rs`). `op` is always the first key: the laptop tells how long a
+ * line may be from its first bytes.
+ */
+object NowWire {
+    const val MAX_TEXT_BYTES = 200
+    const val MAX_ART = 65536
+
+    /** The laptop says in its hello that it reads `now` and `art` lines; an older one would drop the link at them. */
+    fun helloAllowsNow(hello: ByteArray): Boolean = String(hello, Charsets.UTF_8).replace(" ", "").contains("\"now\":1")
+
+    /** Control characters become spaces and the text is cut to `MAX_TEXT_BYTES` of UTF-8 without splitting a character. */
+    fun clean(s: String): String {
+        val flat = s.map { if (it.code < 0x20 || it.code == 0x7f) ' ' else it }.joinToString("")
+        var bytes = 0
+        val out = StringBuilder()
+        var i = 0
+        while (i < flat.length) {
+            val cp = flat.codePointAt(i)
+            val n = when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            if (bytes + n > MAX_TEXT_BYTES) break
+            bytes += n
+            out.appendCodePoint(cp)
+            i += Character.charCount(cp)
+        }
+        return out.toString()
+    }
+
+    private fun quoted(s: String) = buildString {
+        append('"')
+        for (c in s) when (c) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            else -> append(c)
+        }
+        append('"')
+    }
+
+    fun nowLine(n: NowPlaying): String =
+        """{"op":"now","title":${quoted(clean(n.title))},"artist":${quoted(clean(n.artist))},"album":${quoted(clean(n.album))},""" +
+            """"status":"${n.status}","pos":${n.positionMs.coerceAtLeast(0)},"len":${n.lengthMs.coerceAtLeast(0)}}"""
+
+    /** The cover, or no cover at all when `image` is empty. `hash` is letters and digits only. */
+    fun artLine(hash: String, image: ByteArray): String {
+        require(image.size <= MAX_ART) { "cover too big" }
+        require(hash.length <= 64 && hash.all { it.isLetterOrDigit() && it.code < 128 }) { "bad hash" }
+        return """{"op":"art","hash":"$hash","b64":"${java.util.Base64.getEncoder().encodeToString(image)}"}"""
+    }
+}
+
 object AudioLinkWire {
     const val MAX_AUDIO = 8192
     const val MAX_HELLO = 256

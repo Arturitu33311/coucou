@@ -35,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -104,15 +105,68 @@ class AudioLinkService : Service(), PhoneSignals {
 
     private fun sendState() = sendLine(AudioLinkWire.stateLine(headphones.value, call, media))
 
+    // ── What the phone is playing, for the laptop's island and wallpaper ──────
+
+    private val mediaSession = MutableStateFlow(false)
+
+    /** True once the laptop's hello says it reads `now`/`art` lines. */
+    @Volatile private var laptopReadsNow = false
+    private var lastNow: NowPlaying? = null
+    private var lastArt: android.graphics.Bitmap? = null
+    private var sentArtKey: String? = null
+    private var sentArtHash: String? = null
+    private val nowWorker = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "coucou-audiolink-now").apply { isDaemon = true } }
+
+    override fun onMediaSession(present: Boolean) {
+        mediaSession.value = present
+    }
+
+    override fun onNowPlaying(now: NowPlaying, art: android.graphics.Bitmap?) {
+        lastNow = now
+        lastArt = art
+        pushNow()
+    }
+
+    /** A new link starts from nothing sent: the laptop has forgotten the last cover. */
+    private fun resetNowSent() {
+        sentArtKey = null
+        sentArtHash = null
+    }
+
+    /** Sends the cover when it changed and then the track, off the main thread (compressing a cover takes a moment). */
+    private fun pushNow() {
+        if (!laptopReadsNow) return
+        val now = lastNow ?: return
+        val art = lastArt
+        nowWorker.execute {
+            try {
+                val key = "${now.title}|${now.artist}|${now.album}|${art != null}"
+                if (key != sentArtKey) {
+                    val jpeg = if (now.title.isEmpty() || art == null) null else NowArt.encode(art)
+                    val hash = if (jpeg == null) "none" else NowArt.hash(jpeg)
+                    if (hash != sentArtHash) sendLine(NowWire.artLine(hash, jpeg ?: ByteArray(0)))
+                    sentArtKey = key
+                    sentArtHash = hash
+                }
+                sendLine(NowWire.nowLine(now))
+            } catch (e: Exception) {
+                Log.d(TAG, "could not send what is playing: $e")
+            }
+        }
+    }
+
     // ── The link ───────────────────────────────────────────────────────────────
+
+    /** The link is worth holding while the headphones are on this phone or an app has media (the laptop shows it). */
+    private fun wanted() = headphones.value == Where.Phone || mediaSession.value
 
     private suspend fun loop() {
         var wait = 2_000L
         while (scope.isActive) {
-            if (headphones.value != Where.Phone) {
+            if (!wanted()) {
                 _status.value = Status.Idle
-                // Nothing to hear without the headphones on this phone: sleep until they are.
-                headphones.first { it == Where.Phone }
+                // Nothing to hear and nothing to show: sleep until the headphones are on this phone or an app has media.
+                combine(headphones, mediaSession) { h, s -> h == Where.Phone || s }.first { it }
                 continue
             }
             val profile = PhoneSettings.profile(this, PhoneSettings.LAPTOP)
@@ -133,7 +187,8 @@ class AudioLinkService : Service(), PhoneSignals {
                 // Unreachable laptop, refused key, hung-up pipe: all the same to the phone, try again.
             }
             outbox = null
-            _status.value = if (headphones.value == Where.Phone) Status.Reconnecting else Status.Idle
+            laptopReadsNow = false
+            _status.value = if (wanted()) Status.Reconnecting else Status.Idle
             delay(wait)
             wait = (wait * 2).coerceAtMost(30_000L)
         }
@@ -160,7 +215,12 @@ class AudioLinkService : Service(), PhoneSignals {
                                     FrameKind.Audio -> player.feed(d.frame.payload)
                                     FrameKind.PausePhone -> watchers.pausePhoneMedia()
                                     FrameKind.SwapPrompt -> swapAskOf(d.frame.payload)?.let { notifySwap(it) }
-                                    FrameKind.Hello, FrameKind.Heartbeat -> {}
+                                    FrameKind.Hello -> {
+                                        laptopReadsNow = NowWire.helloAllowsNow(d.frame.payload)
+                                        resetNowSent()
+                                        pushNow()
+                                    }
+                                    FrameKind.Heartbeat -> {}
                                 }
                                 at += d.consumed
                             }
@@ -192,7 +252,7 @@ class AudioLinkService : Service(), PhoneSignals {
                 if (now - lastHeard.get() > SILENCE_MS) break
                 // A short Bluetooth blip keeps the session (a new one would take seconds to open, longer than the
                 // laptop waits before giving its speakers back); a long absence ends it.
-                goneSince = if (headphones.value == Where.Phone) null else goneSince ?: now
+                goneSince = if (wanted()) null else goneSince ?: now
                 if (shouldLeave(goneSince, now)) break
                 player.idle(SystemClock.elapsedRealtime())
                 delay(1_000)

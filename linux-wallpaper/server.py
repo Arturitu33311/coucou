@@ -64,6 +64,9 @@ def player_state():
     sep = "|||"
     fmt = sep.join(["{{status}}", "{{title}}", "{{artist}}", "{{album}}", "{{mpris:artUrl}}", "{{mpris:length}}", "{{position}}"])
     names = [n for n in run(["playerctl", "-l"], timeout=1.0).split("\n") if n and n != "playerctld"]
+    if any(n.startswith("coucou.phone") for n in names):
+        # Coucou's own player for the phone's music (with its cover) replaces KDE Connect's mirror of the same music.
+        names = [n for n in names if not n.startswith(("kdeconnect", "gsconnect"))]
     if not names:
         return None
     t0 = time.time()

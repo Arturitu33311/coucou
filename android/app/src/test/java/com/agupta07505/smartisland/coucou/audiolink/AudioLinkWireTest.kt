@@ -72,6 +72,53 @@ class AudioLinkWireTest {
     }
 
     @Test
+    fun the_now_and_art_lines_are_the_ones_the_laptop_reads() {
+        val cases = doc.getJSONArray("line_cases")
+        var checked = 0
+        for (i in 0 until cases.length()) {
+            val c = cases.getJSONObject(i)
+            when (c.getString("result")) {
+                "now" -> {
+                    val j = JSONObject(c.getString("line"))
+                    val n = NowPlaying(j.getString("title"), j.getString("artist"), j.getString("album"), j.getString("status"), j.getLong("pos"), j.getLong("len"))
+                    assertEquals(c.getString("name"), c.getString("line"), NowWire.nowLine(n))
+                    checked++
+                }
+                "art" -> {
+                    val j = JSONObject(c.getString("line"))
+                    val bytes = java.util.Base64.getDecoder().decode(j.getString("b64"))
+                    assertEquals(c.getString("name"), c.getString("line"), NowWire.artLine(j.getString("hash"), bytes))
+                    checked++
+                }
+            }
+        }
+        assertTrue("no now/art case was checked", checked >= 3)
+    }
+
+    @Test
+    fun the_hello_of_a_laptop_that_reads_now_lines_says_so() {
+        val cases = doc.getJSONArray("wire_cases")
+        for (i in 0 until cases.length()) {
+            val c = cases.getJSONObject(i)
+            if (c.getString("name") == "hello_ok") {
+                val frame = (AudioLinkWire.decode(unhex(c.getString("hex"))) as Decoded.Got).frame
+                assertTrue(NowWire.helloAllowsNow(frame.payload))
+            }
+        }
+        assertTrue(!NowWire.helloAllowsNow("""{"rate":48000,"channels":2,"fmt":"s16le"}""".toByteArray()))
+    }
+
+    @Test
+    fun long_and_odd_text_is_cut_to_fit_without_splitting_a_character() {
+        val long = "é".repeat(300) // 2 bytes each
+        val cut = NowWire.clean(long)
+        assertEquals(100, cut.length)
+        assertEquals("a b c", NowWire.clean("a\nb\tc"))
+        val line = NowWire.nowLine(NowPlaying("\"".repeat(150) + long, long, long, "Playing", 5, 9))
+        assertTrue("a worst-case now line fits the laptop's limit: ${line.toByteArray().size}", line.toByteArray().size <= 1536)
+    }
+
+    @Test
     fun decode_reads_only_the_bytes_it_is_told_about() {
         val buf = unhex("0100020102") + ByteArray(10)
         assertEquals(Decoded.NeedMore, AudioLinkWire.decode(buf, 4))
