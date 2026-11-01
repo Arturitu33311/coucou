@@ -15,6 +15,7 @@ import android.media.session.PlaybackState
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import com.agupta07505.smartisland.service.SmartIslandNotificationListenerService
 
 /** What the phone tells the audio relay about itself. All of it is reported as it changes. */
@@ -25,6 +26,8 @@ interface PhoneSignals {
 }
 
 /** The decisions the watchers make, with no Android objects, so they can be tested on the JVM. */
+private const val TAG = "AudioLink"
+
 object WatchersLogic {
     private val BLUETOOTH_OUTPUTS = setOf(
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
@@ -118,9 +121,9 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
     /** Pauses whatever media is playing on the phone (a pause, never a toggle). */
     fun pausePhoneMedia() {
         main.post {
-            controllers.keys
-                .filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
-                .forEach { it.transportControls.pause() }
+            val playing = controllers.keys.filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+            Log.d(TAG, "the laptop asked to pause: pausing ${playing.map { it.packageName }}")
+            playing.forEach { it.transportControls.pause() }
         }
     }
 
@@ -131,7 +134,9 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
 
     private fun reportMedia() {
         val states = controllers.keys.mapNotNull { it.playbackState?.state }
-        signals.onPhoneMedia(WatchersLogic.mediaPlaying(states))
+        val playing = WatchersLogic.mediaPlaying(states)
+        Log.d(TAG, "phone media playing=$playing from ${controllers.keys.map { "${it.packageName}:${it.playbackState?.state}" }}")
+        signals.onPhoneMedia(playing)
     }
 
     /**

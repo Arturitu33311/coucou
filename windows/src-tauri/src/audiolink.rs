@@ -319,6 +319,8 @@ pub fn apply_gain(chunk: &mut [u8], gain: f32) {
 
 /// Sound that goes on this long counts as "this computer is playing" (a ping or a click is shorter).
 pub const PLAYING_AFTER_MS: u64 = 3_000;
+/// With a media player reporting "playing" as well, a sound counts as playing after only this long.
+pub const FAST_AFTER_MS: u64 = 600;
 /// Silence up to this long inside a sound does not end it (music and speech have gaps).
 pub const SOUND_GAP_MS: u64 = 1_000;
 /// This long without sound and the computer is no longer playing.
@@ -332,11 +334,13 @@ pub struct SoundWatch {
     /// When the current sound (gaps under `SOUND_GAP_MS` included) began.
     since: Option<u64>,
     last_loud: Option<u64>,
+    /// Whether the player check was already made for the current sound (it is asked once per sound).
+    hint_asked: bool,
 }
 
 impl SoundWatch {
     pub const fn new() -> Self {
-        SoundWatch { playing: false, since: None, last_loud: None }
+        SoundWatch { playing: false, since: None, last_loud: None, hint_asked: false }
     }
 
     pub fn is_playing(&self) -> bool {
@@ -344,17 +348,26 @@ impl SoundWatch {
     }
 
     /// One 20 ms chunk at `now_ms`; `loud` is whether it holds sound. Returns the new state when it changes.
-    pub fn feed(&mut self, now_ms: u64, loud: bool) -> Option<bool> {
+    /// `player_playing` says whether a media player that makes sound here reports "playing"; it is only called
+    /// (once per sound) when the sound has gone on `FAST_AFTER_MS`, and then the computer counts as playing at once
+    /// instead of after `PLAYING_AFTER_MS`. A mirror (Sonora, KDE Connect) makes no sound, so it cannot trigger this.
+    pub fn feed(&mut self, now_ms: u64, loud: bool, player_playing: impl FnOnce() -> bool) -> Option<bool> {
         if loud {
             // A silence longer than the allowed gap ended the previous sound: this chunk starts a new one.
             if self.last_loud.map_or(true, |l| now_ms - l > SOUND_GAP_MS) {
                 self.since = Some(now_ms);
+                self.hint_asked = false;
             }
             self.last_loud = Some(now_ms);
             // How long it has gone on is measured to its last chunk with sound, so two short sounds never add up.
-            if !self.playing && self.since.is_some_and(|s| now_ms - s >= PLAYING_AFTER_MS) {
-                self.playing = true;
-                return Some(true);
+            if !self.playing {
+                let lasted = now_ms - self.since.unwrap_or(now_ms);
+                let confirmed = lasted >= PLAYING_AFTER_MS
+                    || (lasted >= FAST_AFTER_MS && !std::mem::replace(&mut self.hint_asked, true) && player_playing());
+                if confirmed {
+                    self.playing = true;
+                    return Some(true);
+                }
             }
         } else if self.playing && self.last_loud.map_or(true, |l| now_ms - l >= PLAYING_ENDS_MS) {
             self.playing = false;
@@ -485,6 +498,7 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
     use crate::log;
     let mut state = State::default();
     while let Ok(ev) = rx.recv() {
+        log::line(format!("audiolink: event {ev:?} (was {:?})", state.mode));
         let (next, actions) = step(&state, ev);
         if next.mode != state.mode {
             log::line(format!("audiolink: {:?} -> {:?}", state.mode, next.mode));
@@ -526,8 +540,8 @@ fn apply(_app: &AppHandle, action: Action) {
         // Off the engine thread: a player that does not answer must not hold up the stream.
         Action::PausePc => {
             std::thread::spawn(|| {
-                let n = crate::audiolink_players::pause_all_playing();
-                crate::log::line(format!("audiolink: paused {n} player(s) here"));
+                let names = crate::audiolink_players::pause_all_playing();
+                crate::log::line(format!("audiolink: paused {} player(s) here: {}", names.len(), names.join(", ")));
             });
         }
         // The phone cannot tell when the computer starts playing, so the computer asks it to pause.
@@ -565,7 +579,7 @@ fn start_capture() {
         // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
         while let Ok(true) = capture.read_chunk(&mut chunk) {
             // Whether this computer is playing is told by the sound itself, not by a player's status (see SoundWatch).
-            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk)) {
+            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk), crate::audiolink_players::non_mirror_playing) {
                 send_event(Event::PcMedia(playing));
             }
             if gate.pass(&chunk) {
@@ -827,7 +841,55 @@ mod tests {
 
     /// Feeds `ms` of chunks (20 ms apart) from `from`, `loud` or silent; returns every change reported.
     fn feed_for(w: &mut SoundWatch, from: u64, ms: u64, loud: bool) -> Vec<(u64, bool)> {
-        (0..=ms / 20).filter_map(|i| w.feed(from + i * 20, loud).map(|b| (from + i * 20, b))).collect()
+        feed_for_hint(w, from, ms, loud, &|| false)
+    }
+
+    /// Like `feed_for`, with a media player check (`hint`) available to the watcher.
+    fn feed_for_hint(w: &mut SoundWatch, from: u64, ms: u64, loud: bool, hint: &dyn Fn() -> bool) -> Vec<(u64, bool)> {
+        (0..=ms / 20).filter_map(|i| w.feed(from + i * 20, loud, hint).map(|b| (from + i * 20, b))).collect()
+    }
+
+    #[test]
+    fn a_player_that_says_it_is_playing_makes_it_count_after_a_fraction_of_a_second() {
+        let mut w = SoundWatch::new();
+        let changes = feed_for_hint(&mut w, 0, 2_000, true, &|| true);
+        assert_eq!(changes, vec![(FAST_AFTER_MS, true)]);
+    }
+
+    #[test]
+    fn without_a_player_saying_so_it_still_takes_three_seconds() {
+        let mut w = SoundWatch::new();
+        let changes = feed_for_hint(&mut w, 0, 4_000, true, &|| false);
+        assert_eq!(changes, vec![(PLAYING_AFTER_MS, true)]);
+    }
+
+    #[test]
+    fn the_player_is_checked_once_per_sound_and_never_for_a_blip() {
+        let calls = std::cell::Cell::new(0);
+        let ask = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let mut w = SoundWatch::new();
+        feed_for_hint(&mut w, 0, 500, true, &ask); // shorter than FAST_AFTER_MS: no check at all
+        assert_eq!(calls.get(), 0);
+        let mut w = SoundWatch::new();
+        feed_for_hint(&mut w, 0, 2_500, true, &ask); // a long sound: one check, not one per chunk
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn a_new_sound_after_a_pause_is_checked_again() {
+        let calls = std::cell::Cell::new(0);
+        let ask = || {
+            calls.set(calls.get() + 1);
+            false
+        };
+        let mut w = SoundWatch::new();
+        feed_for_hint(&mut w, 0, 1_500, true, &ask);
+        feed_for_hint(&mut w, 1_520, 1_500, false, &ask); // more than a second of silence ends it
+        feed_for_hint(&mut w, 3_040, 1_500, true, &ask);
+        assert_eq!(calls.get(), 2);
     }
 
     #[test]
