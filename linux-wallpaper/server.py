@@ -47,27 +47,53 @@ def run(cmd, timeout=1.5):
         return ""
 
 
+_LAST_PLAYER = ""
+
+
+def _one_player(name, fmt, results):
+    out = run(["playerctl", "-p", name, "metadata", "--format", fmt], timeout=1.0)
+    if out:
+        results[name] = out
+
+
 def player_state():
+    """What is playing. Every MPRIS player is asked on its own thread with a short deadline: a frozen app that still owns
+    its name (it happened with a hung music player) used to blank the wallpaper for everything else, the phone's music
+    mirrored by KDE Connect included."""
+    global CURRENT_ART, _LAST_PLAYER
     sep = "|||"
     fmt = sep.join(["{{status}}", "{{title}}", "{{artist}}", "{{album}}", "{{mpris:artUrl}}", "{{mpris:length}}", "{{position}}"])
+    names = [n for n in run(["playerctl", "-l"], timeout=1.0).split("\n") if n and n != "playerctld"]
+    if not names:
+        return None
     t0 = time.time()
-    out = run(["playerctl", "metadata", "--format", fmt])
+    results = {}
+    threads = [threading.Thread(target=_one_player, args=(n, fmt, results), daemon=True) for n in names]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(max(0.0, t0 + 1.2 - time.time()))
     sampled = int((t0 + time.time()) / 2 * 1000)     # when the position was read (the middle of the call), so the page can age it
-    if not out:
+    parsed = {}
+    for n in names:
+        p = results.get(n, "").split(sep)
+        if len(p) >= 7 and p[1]:
+            parsed[n] = p[:7]
+    if not parsed:
         return None
-    p = out.split(sep)
-    if len(p) < 7:
-        return None
-    status, title, artist, album, art, length, pos = p[:7]
-    if not title:
-        return None
-    global CURRENT_ART
+    playing = [n for n in parsed if parsed[n][0] == "Playing"]
+    pick = (_LAST_PLAYER if _LAST_PLAYER in playing else None) or (playing[0] if playing else None) \
+        or (_LAST_PLAYER if _LAST_PLAYER in parsed else None) or next(iter(parsed))
+    _LAST_PLAYER = pick
+    status, title, artist, album, art, length, pos = parsed[pick]
     CURRENT_ART = art      # kept here: /art serves this and never a URL from the request
     to_int = lambda s: int(s) if s.strip().lstrip("-").isdigit() else 0
     return {
         "status": status, "title": title, "artist": artist, "album": album,
         "art": "/art?u=" + urllib.parse.quote(art, safe="") if art else "",
         "lengthMs": to_int(length) // 1000, "positionMs": to_int(pos) // 1000, "sampledAt": sampled,
+        # The sound of a phone's music never goes through this computer: nothing to analyse, the page animates it itself.
+        "remote": pick.startswith("kdeconnect") or pick.startswith("gsconnect") or pick.startswith("coucou.phone"),
     }
 
 

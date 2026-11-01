@@ -344,7 +344,18 @@ const bars = new Array(32).fill(0);
 let bassS = 0;
 async function pollSpec() {
   const p = st && st.player;
-  if (!DEMO && WANT_CAR && p && p.status === 'Playing') {
+  if (!DEMO && WANT_CAR && p && p.status === 'Playing' && p.remote) {
+    /* the phone's music: its sound never reaches this computer, so there is nothing to analyse. The bars breathe on their
+       own, a soft beat with slow per-band drift, so the wallpaper still reacts to it being played */
+    const t = performance.now() / 1000, beat = Math.pow(Math.max(0, Math.sin(t * 7.6)), 3);
+    const b = new Array(32);
+    for (let i = 0; i < 32; i++) {
+      const falloff = 1 - i / 48, drift = .5 + .5 * Math.sin(t * (1.3 + i * .21) + i * 1.7);
+      b[i] = Math.min(1, (.18 + .42 * drift + .35 * beat * (i < 12 ? 1 : .45)) * falloff);
+    }
+    spec = { bands: b, bass: .25 + .6 * beat };
+    setTimeout(pollSpec, 40);
+  } else if (!DEMO && WANT_CAR && p && p.status === 'Playing') {
     try { spec = await (await fetch('/spectrum?k=' + TOKEN, { cache: 'no-store' })).json(); } catch (e) { /* no analyser: no visualizer */ }
     setTimeout(pollSpec, 60);
   } else setTimeout(pollSpec, 1000);

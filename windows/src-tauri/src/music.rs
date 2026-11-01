@@ -724,8 +724,45 @@ mod mpris {
         Some(Read { name: name.to_string(), status, track })
     }
 
+    /// How long one player gets to answer. A player that hangs (a frozen app still owning its MPRIS name) makes every
+    /// D-Bus call wait 25 s; read one by one, it froze the island for minutes and hid the phone's music behind it.
+    const PLAYER_DEADLINE: Duration = Duration::from_millis(1500);
+
+    /// Every player's state, each read on its own thread; the ones that don't answer in time are left out.
+    fn read_all(conn: &Connection) -> Vec<Read> {
+        let names = players(conn);
+        let (tx, rx) = mpsc::channel::<(usize, Option<Read>)>();
+        for (i, name) in names.iter().enumerate() {
+            let (conn, tx, name) = (conn.clone(), tx.clone(), name.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send((i, read(&conn, &name)));
+            });
+        }
+        drop(tx);
+        let deadline = std::time::Instant::now() + PLAYER_DEADLINE;
+        let mut got: Vec<(usize, Read)> = Vec::new();
+        let mut answered = 0;
+        while answered < names.len() {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(left) {
+                Ok((i, r)) => {
+                    answered += 1;
+                    if let Some(r) = r {
+                        got.push((i, r));
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if answered < names.len() {
+            log::line(format!("music: {} player(s) did not answer in {} ms, skipped", names.len() - answered, PLAYER_DEADLINE.as_millis()));
+        }
+        got.sort_by_key(|(i, _)| *i);
+        got.into_iter().map(|(_, r)| r).collect()
+    }
+
     fn snapshot(conn: &Connection) -> Option<Track> {
-        let mut reads: Vec<Read> = players(conn).iter().filter_map(|n| read(conn, n)).collect();
+        let mut reads = read_all(conn);
         let previous = ACTIVE.lock().unwrap().clone();
         let candidates: Vec<Candidate> = reads
             .iter()
