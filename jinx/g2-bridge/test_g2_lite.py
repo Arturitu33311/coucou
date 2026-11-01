@@ -99,6 +99,15 @@ class HaTest(unittest.TestCase):
         self.assertEqual([e["entity_id"] for e in ha.find("puerta")], ["lock.puerta"])  # readable, not controllable
         self.assertEqual(ha.find("auto"), [])
 
+    def test_find_understands_how_the_same_thing_is_said(self):
+        # A TV called "Tv habitacion" with an id that says nothing ("55_oled…"): "la tele" has to find it.
+        tv = {"entity_id": "media_player.55_oled_qn55s90fafxzx", "state": "on", "attributes": {"friendly_name": "Tv habitación"}}
+        ha = self.make(self.STATES + [tv])
+        for q in ("tele", "televisor", "television", "tv", "tele habitacion", "pantalla"):
+            self.assertEqual([e["entity_id"] for e in ha.find(q)], ["media_player.55_oled_qn55s90fafxzx"], q)
+        self.assertEqual([e["entity_id"] for e in ha.find("lampara salon")], ["light.salon"])
+        self.assertEqual(ha.find("tele cocina"), [])  # a synonym does not make unrelated words match
+
     def test_states_are_cached_for_30_s(self):
         ha = self.make(self.STATES)
         ha.find("luz")

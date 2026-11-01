@@ -98,6 +98,20 @@ def check_call(domain, service, entity_id, data):
     return True, clean
 
 
+# Cómo se dice lo mismo en casa. La búsqueda ve "nombre + entity_id", y un televisor suele llamarse "Tv ..." o por su
+# modelo; sin esto, pedir "la tele" fallaba según la palabra que el modelo eligiera buscar.
+_TELE = ("tv", "tele", "televisor", "television", "pantalla")
+SINONIMOS = {
+    "tele": _TELE, "televisor": _TELE, "television": _TELE, "tv": _TELE, "pantalla": _TELE,
+    "luz": ("luz", "light", "lampara", "foco"), "luces": ("luz", "light", "lampara", "foco"),
+    "lampara": ("lampara", "luz", "light"), "foco": ("foco", "luz", "light"),
+    "ventilador": ("ventilador", "fan", "abanico"), "abanico": ("abanico", "ventilador", "fan"),
+    "bocina": ("bocina", "altavoz", "speaker"), "altavoz": ("altavoz", "bocina", "speaker"),
+    "enchufe": ("enchufe", "switch", "plug"), "clima": ("clima", "aire", "climate", "ac"),
+    "aire": ("aire", "clima", "climate", "ac"),
+}
+
+
 def _fold(s):
     s = unicodedata.normalize("NFKD", str(s).lower())
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -138,6 +152,8 @@ class HomeAssistant:
 
     def find(self, query, domain=None):
         words = [w for w in _fold(query).split() if w]
+        # Cada palabra puede decirse de otra forma: "tele" encuentra "Tv habitacion", que ninguna palabra suya contiene.
+        alts = [SINONIMOS.get(w, (w,)) for w in words]
         out = []
         for s in self.states():
             eid = s.get("entity_id", "")
@@ -148,7 +164,7 @@ class HomeAssistant:
                 continue
             name = (s.get("attributes") or {}).get("friendly_name") or eid
             hay = _fold(name + " " + eid)
-            if all(w in hay for w in words):
+            if all(any(a in hay for a in options) for options in alts):
                 out.append({"entity_id": eid, "name": name, "state": s.get("state")})
             if len(out) >= FIND_MAX:
                 break
