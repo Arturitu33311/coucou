@@ -13,6 +13,7 @@
 // speaks itself.
 
 pub mod brain;
+pub mod home;
 pub mod wake;
 
 use std::collections::HashMap;
@@ -53,9 +54,9 @@ fn pending() -> &'static Mutex<HashMap<u64, mpsc::Sender<String>>> {
 }
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Whether « OK Coucou » can run: the voice model and a Claude key.
+/// Whether « OK Coucou » can run: the voice model and a language-model key (OpenRouter or Claude).
 pub fn requirements_met() -> bool {
-    speech::is_ready() && crate::secrets::present(crate::claude::KEY)
+    speech::is_ready() && (crate::or_brain::present() || crate::secrets::present(crate::claude::KEY))
 }
 
 /// Starts or stops listening to follow the preference.
@@ -391,6 +392,8 @@ pub fn run_tool(app: &AppHandle, name: &str, input: &Value) -> (String, bool) {
             (answer, acted)
         }
         "service_info" => (ask_island(app, "info", json!({})).unwrap_or_else(|| "no data".into()), false),
+        "casa" => home::ask_home(input["request"].as_str().unwrap_or("")),
+        "jinx" => home::pass_to_jinx(app, input["request"].as_str().unwrap_or("")),
         "music" => music(app, input),
         "open_app" => open_app(input["name"].as_str().unwrap_or("")),
         "prepare_email" => {

@@ -22,6 +22,9 @@ pub const KNOWN_KEYS: &[&str] = &[
     "calcom-api-key",
     "jinx-url",
     "jinx-api-key",
+    // The quick Jinx's bridge on the server (« OK Coucou » asks it for the house): its HTTPS address and its own key.
+    "jinx-g2-url",
+    "jinx-g2-key",
     // The presence server (heartbeat for "which device is in use"); without them the devices decide
     // among themselves.
     "presence-url",
