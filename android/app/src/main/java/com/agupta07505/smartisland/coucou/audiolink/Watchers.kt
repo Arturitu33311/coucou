@@ -42,6 +42,15 @@ object WatchersLogic {
             audioMode == AudioManager.MODE_IN_COMMUNICATION ||
             audioMode == AudioManager.MODE_RINGTONE
 
+    /**
+     * Sessions that only mirror the laptop's media (KDE Connect shows what the laptop plays as a session here) or are
+     * our own: they are not sound made on this phone. Counting them would make the laptop's music look like the phone's
+     * and pausing them would pause the laptop.
+     */
+    fun isMirror(packageName: String?): Boolean = packageName in MIRRORS
+
+    private val MIRRORS = setOf("org.kde.kdeconnect_tp", "com.agupta07505.smartisland")
+
     /** Media is playing when some session is in `STATE_PLAYING`: not paused, not buffering, not stopped. */
     fun mediaPlaying(sessionStates: List<Int>): Boolean = sessionStates.any { it == PlaybackState.STATE_PLAYING }
 }
@@ -125,8 +134,12 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
         signals.onPhoneMedia(WatchersLogic.mediaPlaying(states))
     }
 
-    /** Follows exactly the sessions that are active now, each for changes in what it is doing. */
-    private fun follow(active: List<MediaController>) {
+    /**
+     * Follows exactly the sessions that are active now, each for changes in what it is doing. Mirrors of the laptop's
+     * media (KDE Connect) and our own sessions are left out: they are neither heard nor paused here.
+     */
+    private fun follow(all: List<MediaController>) {
+        val active = all.filterNot { WatchersLogic.isMirror(it.packageName) }
         val ids = active.map { it.sessionToken }.toSet()
         controllers.keys.filter { it.sessionToken !in ids }.forEach { gone ->
             controllers.remove(gone)?.let { gone.unregisterCallback(it) }

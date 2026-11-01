@@ -42,6 +42,16 @@ class WatchersLogicTest {
     }
 
     @Test
+    fun the_laptops_mirror_is_not_music_playing_on_the_phone() {
+        // KDE Connect shows what plays on the laptop as a media session here; it is not sound made on this phone.
+        assertTrue(WatchersLogic.isMirror("org.kde.kdeconnect_tp"))
+        assertTrue(WatchersLogic.isMirror("com.agupta07505.smartisland"))
+        assertFalse(WatchersLogic.isMirror("com.spotify.music"))
+        assertFalse(WatchersLogic.isMirror("com.google.android.youtube"))
+        assertFalse(WatchersLogic.isMirror(null))
+    }
+
+    @Test
     fun media_playing_needs_state_playing() {
         assertTrue(WatchersLogic.mediaPlaying(listOf(PlaybackState.STATE_PAUSED, PlaybackState.STATE_PLAYING)))
         assertFalse(WatchersLogic.mediaPlaying(listOf(PlaybackState.STATE_PAUSED, PlaybackState.STATE_BUFFERING)))
