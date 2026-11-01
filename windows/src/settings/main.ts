@@ -839,9 +839,20 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
   const offered = new Set(availablePills().map((p) => p.id));
   for (const def of INTEGRATIONS.filter((d) => offered.has(d.id))) {
-    const active = settings.activeIntegrations.includes(def.id);
-    const sw = h("button", { class: active ? "switch on" : "switch" });
+    // The main pill is shown on the island without being in the declared list, so it reads as on
+    // here (and cannot be toggled: it is changed under "Main pill").
+    const shown = () => def.id === settings.mainPill || settings.activeIntegrations.includes(def.id);
+    const sw = h("button", { class: shown() ? "switch on" : "switch" });
+    const syncSwitch = () => {
+      const main = def.id === settings.mainPill;
+      sw.classList.toggle("on", shown());
+      sw.title = main ? t("Main pill — change it under Pills") : "";
+      sw.style.opacity = main ? "0.6" : "";
+    };
+    syncSwitch();
+    declaredViews.push(syncSwitch);
     sw.addEventListener("click", () => {
+      if (def.id === settings.mainPill) return;
       const on = settings.activeIntegrations.includes(def.id);
       if (on) {
         settings.activeIntegrations = settings.activeIntegrations.filter((x) => x !== def.id);
