@@ -115,6 +115,8 @@ pub fn pass_to_jinx(app: &AppHandle, request: &str) -> (String, bool) {
             (s.jinx_backend.clone(), s.jinx_share && !s.server_host.trim().is_empty())
         })
         .unwrap_or_default();
+    // Said by voice and rewritten by the model: Jinx treats it as a request to weigh, not a command to obey blindly.
+    let request = format!("[Pedido por voz con «OK Coucou», reformulado por el modelo; si algo es delicado o destructivo, confirma antes con el usuario] {request}");
     if crate::jinx_gateway::use_gateway(&backend) {
         crate::jinx_gateway::send(app.clone(), request);
     } else {
