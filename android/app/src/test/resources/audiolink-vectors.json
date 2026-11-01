@@ -963,6 +963,42 @@
       "hex": "020001ff",
       "result": "error",
       "consumed": 0
+    },
+    {
+      "name": "pc_now_ok",
+      "hex": "0600487b227469746c65223a2254222c22617274697374223a2241222c22616c62756d223a22222c22737461747573223a22506c6179696e67222c22706f73223a312c226c656e223a327d",
+      "result": "pc_now",
+      "consumed": 75
+    },
+    {
+      "name": "pc_art_three_bytes",
+      "hex": "070003ffd8ff",
+      "result": "pc_art",
+      "consumed": 6
+    },
+    {
+      "name": "pc_art_empty",
+      "hex": "070000",
+      "result": "pc_art",
+      "consumed": 3
+    },
+    {
+      "name": "pc_art_60000_header_waits",
+      "hex": "07ea60",
+      "result": "need_more",
+      "consumed": 0
+    },
+    {
+      "name": "pc_art_60001_is_too_long",
+      "hex": "07ea61",
+      "result": "error",
+      "consumed": 0
+    },
+    {
+      "name": "pc_now_1537_is_too_long",
+      "hex": "060601",
+      "result": "error",
+      "consumed": 0
     }
   ],
   "line_cases": [
@@ -1058,6 +1094,11 @@
       "name": "art_hash_with_a_slash",
       "line": "{\"op\":\"art\",\"hash\":\"../x\",\"b64\":\"\"}",
       "result": "error"
+    },
+    {
+      "name": "caps_now",
+      "line": "{\"op\":\"caps\",\"now\":1}",
+      "result": "caps"
     }
   ]
 }

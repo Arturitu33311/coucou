@@ -6,8 +6,11 @@
 //   3 hello      JSON describing the audio; at most `MAX_HELLO` bytes
 //   4 pause      the computer asks the phone to pause its media; no payload
 //   5 swap       the computer asks the phone to prompt about the headphones; one byte (1 release, 2 connect)
+//   6 pc_now     what the computer is playing: JSON {"title","artist","album","status","pos","len"} (only after `caps`)
+//   7 pc_art     the cover of that, a JPEG of at most `MAX_PC_ART` bytes; empty = no cover (only after `caps`)
 // Phone → laptop: one JSON object per line, at most `MAX_LINE` bytes:
 //   {"op":"hb"}
+//   {"op":"caps","now":1}   the phone reads frames 6 and 7 (an older phone drops the link at an unknown frame)
 //   {"op":"state","headphones":"phone"|"pc"|"none","call":bool,"phone_playing":bool}
 //   {"op":"now","title":s,"artist":s,"album":s,"status":"Playing"|"Paused"|"Stopped","pos":ms,"len":ms}  (hello says "now":1)
 //   {"op":"art","hash":s,"b64":s}  the cover as base64, at most `MAX_ART` bytes decoded; empty `b64` = no cover
@@ -26,6 +29,8 @@ pub const MAX_NOW_LINE: usize = 1536;
 /// The largest cover, decoded, and the longest `art` line that can carry it (base64 plus the JSON around it).
 pub const MAX_ART: usize = 65536;
 pub const MAX_ART_LINE: usize = 90_000;
+/// The computer's cover, as a frame payload (a frame's length is 16 bits).
+pub const MAX_PC_ART: usize = 60_000;
 /// What the phone is told the audio is. `now` says the computer understands the phone's now-playing lines (an older
 /// computer drops the link at any op it does not know, so the phone sends them only when it reads this).
 pub const HELLO_JSON: &str = r#"{"rate":48000,"channels":2,"fmt":"s16le","now":1}"#;
@@ -39,6 +44,10 @@ pub enum FrameKind {
     PausePhone = 4,
     /// The computer asks the phone to prompt the person about the headphones: one byte, `SWAP_RELEASE` or `SWAP_CONNECT`.
     SwapPrompt = 5,
+    /// What the computer is playing, JSON.
+    PcNow = 6,
+    /// The cover of that.
+    PcArt = 7,
 }
 
 /// Prompt: "let go of the headphones" (they are about to move to the computer).
@@ -63,11 +72,22 @@ pub enum WireError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PhoneMsg {
     Heartbeat,
+    /// The phone reads `PcNow` and `PcArt` frames.
+    Caps,
     State { headphones: Where, call: bool, phone_playing: bool },
     /// What the phone is playing (empty title and `Stopped` when nothing).
     Now { title: String, artist: String, album: String, status: String, pos_ms: i64, len_ms: i64 },
     /// The cover of what the phone is playing (an image, or nothing at all).
     Art { hash: String, image: Vec<u8> },
+}
+
+/// `s` cut to at most `max` bytes of UTF-8, never inside a character.
+pub fn clip(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Standard base64 (RFC 4648, padded); `None` when the text is not exactly that.
@@ -132,6 +152,8 @@ pub fn decode(buf: &[u8]) -> Result<Option<(Frame, usize)>, WireError> {
         3 => (FrameKind::Hello, MAX_HELLO),
         4 => (FrameKind::PausePhone, 0),
         5 => (FrameKind::SwapPrompt, 1),
+        6 => (FrameKind::PcNow, MAX_NOW_LINE),
+        7 => (FrameKind::PcArt, MAX_PC_ART),
         other => return Err(WireError::UnknownType(other)),
     };
     let len = u16::from_be_bytes([buf[1], buf[2]]) as usize;
@@ -181,6 +203,7 @@ pub fn parse_phone_line(line: &str) -> Result<PhoneMsg, WireError> {
             Ok(PhoneMsg::Art { hash: hash.to_string(), image })
         }
         Some("hb") => Ok(PhoneMsg::Heartbeat),
+        Some("caps") => Ok(PhoneMsg::Caps),
         Some("state") => {
             let headphones = match v["headphones"].as_str() {
                 Some("phone") => Where::Phone,
@@ -223,6 +246,8 @@ mod tests {
                     assert_eq!((f.kind, n), (FrameKind::SwapPrompt, consumed), "{name}");
                     assert_eq!(f.payload.len(), 1, "{name}");
                 }
+                ("pc_now", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::PcNow, consumed), "{name}"),
+                ("pc_art", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::PcArt, consumed), "{name}"),
                 ("pause_phone", Ok(Some((f, n)))) => assert_eq!((f.kind, n), (FrameKind::PausePhone, consumed), "{name}"),
                 ("hello", Ok(Some((f, n)))) => {
                     assert_eq!((f.kind, n), (FrameKind::Hello, consumed), "{name}");
@@ -243,6 +268,7 @@ mod tests {
             let got = parse_phone_line(c["line"].as_str().unwrap());
             match (c["result"].as_str().unwrap(), got) {
                 ("heartbeat", Ok(PhoneMsg::Heartbeat)) => {}
+                ("caps", Ok(PhoneMsg::Caps)) => {}
                 ("state", Ok(PhoneMsg::State { headphones, call, phone_playing })) => {
                     let want = match c["headphones"].as_str().unwrap() {
                         "phone" => Where::Phone,

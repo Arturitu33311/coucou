@@ -22,7 +22,7 @@ class AudioLinkWireTest {
             val name = c.getString("name")
             val got = AudioLinkWire.decode(unhex(c.getString("hex")))
             when (c.getString("result")) {
-                "audio", "heartbeat", "hello", "pause_phone", "swap_prompt" -> {
+                "audio", "heartbeat", "hello", "pause_phone", "swap_prompt", "pc_now", "pc_art" -> {
                     assertTrue("$name: $got", got is Decoded.Got)
                     got as Decoded.Got
                     val kind = when (got.frame.kind) {
@@ -31,6 +31,8 @@ class AudioLinkWireTest {
                         FrameKind.Hello -> "hello"
                         FrameKind.PausePhone -> "pause_phone"
                         FrameKind.SwapPrompt -> "swap_prompt"
+                        FrameKind.PcNow -> "pc_now"
+                        FrameKind.PcArt -> "pc_art"
                     }
                     assertEquals(name, c.getString("result"), kind)
                     assertEquals(name, c.getInt("consumed"), got.consumed)
@@ -49,6 +51,10 @@ class AudioLinkWireTest {
         for (i in 0 until cases.length()) {
             val c = cases.getJSONObject(i)
             when (c.getString("result")) {
+                "caps" -> {
+                    assertEquals(c.getString("line"), AudioLinkWire.capsLine())
+                    checked++
+                }
                 "heartbeat" -> {
                     assertEquals(c.getString("line"), AudioLinkWire.heartbeatLine())
                     checked++

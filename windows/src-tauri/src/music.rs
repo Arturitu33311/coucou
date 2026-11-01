@@ -645,6 +645,8 @@ pub mod mpris {
             }
             *last = track.clone();
         }
+        // The phone shows what plays here too (when it announced it can).
+        crate::phonenow::share_pc_track(track.as_ref());
         let _ = app.emit_to(WINDOW_LABEL, "music", track);
     }
 

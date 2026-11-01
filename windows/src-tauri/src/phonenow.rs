@@ -11,6 +11,7 @@
 // computer: `audiolink_players::is_mirror` keeps it out of every "is the computer playing?" decision.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -37,6 +38,98 @@ struct Now {
 
 static NOW: Mutex<Option<Now>> = Mutex::new(None);
 static BUS: Mutex<Option<Connection>> = Mutex::new(None);
+
+// ── The other way: what this computer plays, for the phone ─────────────────────────────────────────────────────────────
+
+/// The phone said (`caps`) that it reads `PcNow` and `PcArt` frames.
+static PHONE_READS: AtomicBool = AtomicBool::new(false);
+/// The last cover frame and track frame, kept to hand to a phone that announces itself after they were made.
+static LAST: Mutex<(Vec<u8>, Vec<u8>)> = Mutex::new((Vec::new(), Vec::new()));
+/// Which cover `LAST` holds. Its lock also serialises the work (shrinking a cover takes a moment).
+static SENT: Mutex<String> = Mutex::new(String::new());
+
+/// The phone announced (or lost) the ability to show this computer's music.
+pub fn phone_can_read(on: bool) {
+    PHONE_READS.store(on, Ordering::Relaxed);
+    if on {
+        let (art, now) = LAST.lock().unwrap().clone();
+        for f in [art, now] {
+            if !f.is_empty() {
+                crate::audiolink::send_control(f);
+            }
+        }
+    }
+}
+
+/// The cover as bytes small enough for a frame: a local file as it is when it is a JPEG that fits, else shrunk with
+/// ImageMagick's `convert` if there is one; none otherwise (the phone then shows the title without a picture).
+fn cover_for_phone(art_url: &str) -> Vec<u8> {
+    use crate::audiolink_wire::MAX_PC_ART;
+    let Some(path) = crate::music::file_url_to_path(art_url) else { return Vec::new() };
+    let Ok(meta) = std::fs::metadata(&path) else { return Vec::new() };
+    if !meta.is_file() || meta.len() > (6 << 20) {
+        return Vec::new();
+    }
+    let Ok(bytes) = std::fs::read(&path) else { return Vec::new() };
+    if crate::music::sniff_image(&bytes).is_none() {
+        return Vec::new();
+    }
+    if bytes.len() <= MAX_PC_ART && bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return bytes;
+    }
+    for q in ["75", "50", "30"] {
+        let out = std::process::Command::new("convert")
+            .args([path.as_str(), "-resize", "320x320>", "-quality", q, "jpeg:-"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        if let Ok(o) = out {
+            if o.status.success() && !o.stdout.is_empty() && o.stdout.len() <= MAX_PC_ART {
+                return o.stdout;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// What the island shows, told to the phone. The phone's own music (and its mirror) is not sent back to it.
+pub fn share_pc_track(track: Option<&crate::music::Track>) {
+    use crate::audiolink_wire::{clip, encode, FrameKind};
+    let own = track.filter(|t| !crate::audiolink_players::is_mirror(&format!("org.mpris.MediaPlayer2.{}", t.player)));
+    let (json, art_url) = match own {
+        Some(t) => {
+            let now = crate::music::mpris::now_ms();
+            let pos = if t.status == "Playing" { t.position_ms + (now - t.position_at).max(0) } else { t.position_ms };
+            let j = serde_json::json!({
+                "title": clip(&t.title, 200),
+                "artist": clip(&t.artists.join(", "), 200),
+                "album": clip(&t.album, 200),
+                "status": if matches!(t.status.as_str(), "Playing" | "Paused") { t.status.as_str() } else { "Stopped" },
+                "pos": pos.max(0),
+                "len": t.length_ms.max(0),
+            });
+            (j.to_string(), t.art_url.clone())
+        }
+        None => (r#"{"title":"","artist":"","album":"","status":"Stopped","pos":0,"len":0}"#.to_string(), String::new()),
+    };
+    std::thread::spawn(move || {
+        let mut sent = SENT.lock().unwrap();
+        let art_changed = *sent != art_url;
+        let mut last = LAST.lock().unwrap().clone();
+        if art_changed {
+            last.0 = encode(FrameKind::PcArt, &cover_for_phone(&art_url));
+            *sent = art_url;
+        }
+        last.1 = encode(FrameKind::PcNow, json.as_bytes());
+        if PHONE_READS.load(Ordering::Relaxed) {
+            if art_changed {
+                crate::audiolink::send_control(last.0.clone());
+            }
+            crate::audiolink::send_control(last.1.clone());
+        }
+        *LAST.lock().unwrap() = last;
+    });
+}
 
 /// Where the covers are written: a folder the wallpaper's server is allowed to serve from.
 fn art_dir() -> std::path::PathBuf {
@@ -104,6 +197,7 @@ pub fn apply(msg: &PhoneMsg) {
 
 /// The phone is gone: nothing is playing there as far as we can tell.
 pub fn clear() {
+    PHONE_READS.store(false, Ordering::Relaxed);
     *NOW.lock().unwrap() = None;
     clear_art_files(&art_dir(), None);
     sync_bus();

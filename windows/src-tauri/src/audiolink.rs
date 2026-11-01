@@ -254,7 +254,7 @@ static GRACE_CLOCK: Mutex<GraceClock> = Mutex::new(GraceClock::new());
 pub fn events_of(msg: &PhoneMsg) -> Vec<crate::audiolink_logic::Event> {
     use crate::audiolink_logic::Event;
     match msg {
-        PhoneMsg::Heartbeat | PhoneMsg::Now { .. } | PhoneMsg::Art { .. } => Vec::new(),
+        PhoneMsg::Heartbeat | PhoneMsg::Caps | PhoneMsg::Now { .. } | PhoneMsg::Art { .. } => Vec::new(),
         PhoneMsg::State { headphones, call, phone_playing } => {
             vec![Event::Call(*call), Event::Headphones(*headphones), Event::PhoneMedia(*phone_playing)]
         }
@@ -712,8 +712,12 @@ async fn client(_app: AppHandle, stream: tokio::net::UnixStream) {
     send_event(Event::Link(true));
     let end = pump(&mut rd, SILENCE, |msg| {
         // What the phone plays, for the island and the wallpaper. Only the current connection speaks for the phone.
-        if matches!(msg, PhoneMsg::Now { .. } | PhoneMsg::Art { .. }) && CURRENT.lock().unwrap().is_current(id) {
-            crate::phonenow::apply(&msg);
+        if matches!(msg, PhoneMsg::Now { .. } | PhoneMsg::Art { .. } | PhoneMsg::Caps) && CURRENT.lock().unwrap().is_current(id) {
+            if msg == PhoneMsg::Caps {
+                crate::phonenow::phone_can_read(true);
+            } else {
+                crate::phonenow::apply(&msg);
+            }
         }
         for ev in events_of(&msg) {
             send_event(ev);

@@ -68,6 +68,7 @@
     <string name="coucou_phrase_evening">Ya casi a descansar 🌙</string>
     <!-- Relay de audio: el sonido de la laptop por los audífonos que se quedan en este celular -->
     <string name="audiolink_channel">Audio de la laptop</string>
+    <string name="audiolink_pc_channel">Sonando en la laptop</string>
     <string name="audiolink_notification_title">Audio de la laptop</string>
     <string name="audiolink_notification_text">Listo para oír tu laptop por los audífonos</string>
     <string name="audiolink_swap_channel">Cambio de audífonos</string>

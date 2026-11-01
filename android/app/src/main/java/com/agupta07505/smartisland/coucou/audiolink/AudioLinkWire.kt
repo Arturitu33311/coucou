@@ -11,7 +11,7 @@ package com.agupta07505.smartisland.coucou.audiolink
  * Laptop → phone: frames `[type: u8][len: u16 big-endian][payload]` (1 audio, 2 heartbeat, 3 hello).
  * Phone → laptop: one JSON object per line.
  */
-enum class FrameKind(val id: Int) { Audio(1), Heartbeat(2), Hello(3), PausePhone(4), SwapPrompt(5) }
+enum class FrameKind(val id: Int) { Audio(1), Heartbeat(2), Hello(3), PausePhone(4), SwapPrompt(5), PcNow(6), PcArt(7) }
 
 class Frame(val kind: FrameKind, val payload: ByteArray)
 
@@ -112,6 +112,8 @@ object AudioLinkWire {
             3 -> FrameKind.Hello to MAX_HELLO
             4 -> FrameKind.PausePhone to 0
             5 -> FrameKind.SwapPrompt to 1
+            6 -> FrameKind.PcNow to 1536
+            7 -> FrameKind.PcArt to 60_000
             else -> return Decoded.Bad("unknown type $t")
         }
         val len = ((buf[1].toInt() and 0xff) shl 8) or (buf[2].toInt() and 0xff)
@@ -121,6 +123,9 @@ object AudioLinkWire {
     }
 
     fun heartbeatLine(): String = """{"op":"hb"}"""
+
+    /** Tells the laptop this phone shows what plays there (frames 6 and 7). Sent only to a laptop whose hello has `now`. */
+    fun capsLine(): String = """{"op":"caps","now":1}"""
 
     fun stateLine(headphones: Where, call: Boolean, phonePlaying: Boolean): String {
         val at = when (headphones) {

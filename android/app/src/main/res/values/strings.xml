@@ -675,6 +675,7 @@
     <string name="coucou_phrase_evening">Almost time to rest 🌙</string>
     <!-- Audio relay: the laptop's sound through the headphones kept on this phone -->
     <string name="audiolink_channel">Laptop audio</string>
+    <string name="audiolink_pc_channel">Playing on the laptop</string>
     <string name="audiolink_notification_title">Laptop audio</string>
     <string name="audiolink_notification_text">Ready to play your laptop through the headphones</string>
     <string name="audiolink_swap_channel">Moving the headphones</string>

@@ -76,6 +76,7 @@ class AudioLinkService : Service(), PhoneSignals {
     }
 
     override fun onDestroy() {
+        runCatching { hidePcNow() }
         runCatching { watchers.stop() }
         scope.cancel()
         _status.value = Status.Off
@@ -125,6 +126,50 @@ class AudioLinkService : Service(), PhoneSignals {
         lastNow = now
         lastArt = art
         pushNow()
+    }
+
+    // ── What the laptop plays, shown here ──────────────────────────────────────
+
+    /** The laptop's cover for the track in `showPcNow`. Written by the reader thread, which is also the one that reads it. */
+    private var pcCover: android.graphics.Bitmap? = null
+
+    /** A quiet, ongoing notification with the laptop's track and cover; gone when nothing plays there or the link ends. */
+    private fun showPcNow(json: ByteArray) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val o = try {
+            org.json.JSONObject(String(json, Charsets.UTF_8))
+        } catch (_: Exception) {
+            return
+        }
+        val title = o.optString("title")
+        if (title.isEmpty() || o.optString("status") == "Stopped") {
+            nm.cancel(PC_NOTIFICATION_ID)
+            return
+        }
+        nm.createNotificationChannel(
+            NotificationChannel(PC_CHANNEL, getString(R.string.audiolink_pc_channel), NotificationManager.IMPORTANCE_LOW),
+        )
+        val sub = listOf(o.optString("artist"), o.optString("album")).filter { it.isNotEmpty() }.joinToString(" · ")
+        val b = NotificationCompat.Builder(this, PC_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setContentTitle(title)
+            .setContentText(sub)
+            .setSubText(getString(R.string.audiolink_pc_channel))
+            .setLargeIcon(pcCover)
+            .setOngoing(o.optString("status") == "Playing")
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+        try {
+            nm.notify(PC_NOTIFICATION_ID, b.build())
+        } catch (_: SecurityException) {
+            // Notifications are not allowed on this phone: the relay itself does not need them.
+        }
+    }
+
+    private fun hidePcNow() {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(PC_NOTIFICATION_ID)
+        pcCover = null
     }
 
     /** A new link starts from nothing sent: the laptop has forgotten the last cover. */
@@ -188,6 +233,7 @@ class AudioLinkService : Service(), PhoneSignals {
             }
             outbox = null
             laptopReadsNow = false
+            hidePcNow()
             _status.value = if (wanted()) Status.Reconnecting else Status.Idle
             delay(wait)
             wait = (wait * 2).coerceAtMost(30_000L)
@@ -218,8 +264,13 @@ class AudioLinkService : Service(), PhoneSignals {
                                     FrameKind.Hello -> {
                                         laptopReadsNow = NowWire.helloAllowsNow(d.frame.payload)
                                         resetNowSent()
+                                        // A laptop that reads our lines also sends its own music: say we can show it.
+                                        if (laptopReadsNow) sendLine(AudioLinkWire.capsLine())
                                         pushNow()
                                     }
+                                    FrameKind.PcArt -> pcCover = d.frame.payload.takeIf { it.isNotEmpty() }
+                                        ?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                    FrameKind.PcNow -> showPcNow(d.frame.payload)
                                     FrameKind.Heartbeat -> {}
                                 }
                                 at += d.consumed
@@ -497,6 +548,8 @@ class AudioLinkService : Service(), PhoneSignals {
     companion object {
         private const val CHANNEL = "audiolink"
         private const val NOTIFICATION_ID = 4107
+        private const val PC_CHANNEL = "audiolink-pc-music"
+        private const val PC_NOTIFICATION_ID = 4109
         private const val SWAP_CHANNEL = "audiolink-swap"
         private const val SWAP_NOTIFICATION_ID = 4108
         private const val RATE = 48_000

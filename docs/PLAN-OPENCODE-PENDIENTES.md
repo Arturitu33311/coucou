@@ -20,17 +20,26 @@ No matar `gnome-shell`. No tocar `~/.claude/settings.json`.
   isla apunta a localhost:1420 y sale "Could not connect to localhost"). En esta sesión el comando `coucou-island` necesita
   `DISPLAY=:0 XAUTHORITY=<la de gnome-shell>`.
 
+## Hecho 2026-11-01 (tarde): música bidireccional con portada — CONSTRUIDO, SIN PROBAR EN DISPOSITIVO
+- Celular→PC: líneas `{"op":"now",...}` y `{"op":"art",hash,b64}` (portada JPEG ≤64 KB, 320 px) → `phonenow.rs` publica el
+  reproductor MPRIS `coucou.phone` con `artUrl` en `~/.cache/coucou/phone-art/<hash>.jpg`. Isla y fondo lo ven solos;
+  el espejo de KDE Connect se oculta (`music.rs::without_duplicate_mirror`, `server.py`). Los controles se reenvían al espejo.
+  `audiolink_players::is_mirror` incluye `coucou.phone` (evita el bucle "la PC suena → pausa el celular").
+- PC→celular: tramas 6 (`PcNow` JSON) y 7 (`PcArt` JPEG ≤60 KB, se achica con ImageMagick `convert`) → notificación
+  silenciosa "Sonando en la laptop" con portada (`AudioLinkService.showPcNow`).
+- Compatibilidad: el hello de la PC trae `"now":1`; el celular manda `{"op":"caps","now":1}` solo si lo ve. Una PC o un
+  celular viejos siguen funcionando como antes.
+- El enlace ahora también se abre cuando una app del celular tiene sesión de medios (antes solo con los Bose puestos);
+  se cierra a los 7 s sin ninguna de las dos cosas. Costo: la conexión ssh queda abierta mientras haya una sesión.
+- Pendiente de la prueba real: instalar con `install-phone.sh`, compilar la laptop con
+  `cargo build --release --features tauri/custom-protocol`, reproducir algo en el celular y mirar `playerctl -l`
+  (debe salir `coucou.phone`) y que la isla/fondo muestren portada; y al revés, la notificación en el celular.
+- No hecho: espectro REAL (Visualizer de Android pide RECORD_AUDIO y en Samsung suele dar ceros; el sintético sigue).
+  Controles desde la notificación del celular hacia la PC. Mostrar lo de la PC en la isla del celular en vez de una notificación.
+
 ## Falta, en orden
-1. **Portada y espectro REAL del celular en fondo e isla (propuesta de Alan: el celular, que siempre sabe qué suena,
-   manda la info a la PC, y viceversa).** KDE Connect 23.08.5 no publica `mpris:artUrl`. Diseño: nuevo frame del
-   canal audiolink (tipo 6, celular→PC, JSON `{title,artist,album,status,positionMs,lengthMs}` + portada JPEG ≤64 KB y
-   bandas de espectro si se quiere) en `AudioLinkWire.kt`/`audiolink_wire.rs` con casos nuevos en
-   `audiolink-vectors.json` (copiar a ambos lados, `scripts/check-contracts.sh`); el celular lo saca de la sesión de
-   medios (`Watchers`, ya excluye espejos). En la PC: publicar un reproductor MPRIS `coucou.phone` (zbus) con `artUrl`
-   a un archivo local, así isla (`music.rs`), fondo (`server.py`, ya trata `coucou.phone*` como remoto) y cualquier
-   cliente lo ven sin más cambios; ocultar el espejo de kdeconnect para no duplicar. Sentido inverso (PC→celular):
-   mismo frame por el canal de la PC con lo que suena en la laptop, para que el fondo del celular reaccione.
-   Alternativa barata: KDE Connect más nuevo (flatpak/PPA), comprobar con `playerctl -p kdeconnect.mpris_* metadata`.
+1. **Probar lo de arriba en el dispositivo** (ver "Pendiente de la prueba real"). Alternativa si la sesión de medios
+   no trae portada en alguna app: KDE Connect más nuevo, `playerctl -p kdeconnect.mpris_* metadata`.
 2. **Persistencia del fondo estático.** Comprobar tras un login que Hidamari no regenera `static-947648.png`
    (si lo hace, mover la captura a `apply-profile.sh`). Regenerar con
    `chromium --headless=new --no-sandbox --user-data-dir=$HOME/coucou-shot/p --screenshot=... "http://127.0.0.1:8765/?still=1&noclock=1"`
