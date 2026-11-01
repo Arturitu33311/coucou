@@ -24,6 +24,7 @@ class CoverSessionWatcher(context: Context, private val listener: ComponentName)
     private val handler = Handler(Looper.getMainLooper())
     private val mgr = app.getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
     private val attached = HashMap<String, Pair<MediaController, MediaController.Callback>>()
+    private var controllers: List<MediaController> = emptyList()
 
     private val sessionsChanged = MediaSessionManager.OnActiveSessionsChangedListener { list -> attach(list.orEmpty()) }
 
@@ -42,6 +43,7 @@ class CoverSessionWatcher(context: Context, private val listener: ComponentName)
     }
 
     private fun attach(list: List<MediaController>) {
+        controllers = list
         val ids = list.map { id(it) }.toSet()
         attached.keys.filter { it !in ids }.forEach { k ->
             attached.remove(k)?.let { (c, cb) -> runCatching { c.unregisterCallback(cb) } }
@@ -50,12 +52,28 @@ class CoverSessionWatcher(context: Context, private val listener: ComponentName)
             val k = id(c)
             if (k in attached) continue
             val cb = object : MediaController.Callback() {
-                override fun onMetadataChanged(metadata: MediaMetadata?) = push(c)
-                override fun onPlaybackStateChanged(state: PlaybackState?) = push(c)
+                override fun onMetadataChanged(metadata: MediaMetadata?) = refresh()
+                override fun onPlaybackStateChanged(state: PlaybackState?) = refresh()
             }
             runCatching { c.registerCallback(cb, handler) }.onSuccess { attached[k] = c to cb }
-            push(c)
         }
+        refresh()
+    }
+
+    /**
+     * Every session reports here, but only one is followed (see `pickSession`): before, each one wrote its cover and
+     * lyrics over the others, so the laptop's mirror (KDE Connect) kept replacing what the phone itself was playing.
+     */
+    private fun refresh() {
+        val views = controllers.map { c ->
+            SessionView(
+                packageName = c.packageName,
+                hasTrack = !c.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE).isNullOrEmpty(),
+                playing = c.playbackState?.state == PlaybackState.STATE_PLAYING,
+            )
+        }
+        val i = pickSession(views)
+        if (i >= 0) push(controllers[i])
     }
 
     private fun id(c: MediaController) = c.packageName + "#" + c.sessionToken.hashCode()
