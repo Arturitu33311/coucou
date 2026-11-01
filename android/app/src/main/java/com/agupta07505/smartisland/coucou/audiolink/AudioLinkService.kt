@@ -268,8 +268,7 @@ class AudioLinkService : Service(), PhoneSignals {
                                         if (laptopReadsNow) sendLine(AudioLinkWire.capsLine())
                                         pushNow()
                                     }
-                                    FrameKind.PcArt -> pcCover = d.frame.payload.takeIf { it.isNotEmpty() }
-                                        ?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size) }
+                                    FrameKind.PcArt -> pcCover = NowArt.decodeSmall(d.frame.payload)
                                     FrameKind.PcNow -> showPcNow(d.frame.payload)
                                     FrameKind.Heartbeat -> {}
                                 }

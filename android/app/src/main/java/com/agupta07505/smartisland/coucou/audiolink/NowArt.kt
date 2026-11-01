@@ -26,6 +26,31 @@ object NowArt {
         return null
     }
 
+    /**
+     * The laptop's cover as a bitmap of at most about `SIDE` pixels a side, or null. A small file can declare a huge
+     * picture, so the size is read first and the picture is decoded already reduced (or not at all).
+     */
+    fun decodeSmall(bytes: ByteArray): Bitmap? {
+        if (bytes.isEmpty()) return null
+        return try {
+            val probe = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, probe)
+            val longest = maxOf(probe.outWidth, probe.outHeight)
+            if (probe.outWidth <= 0 || probe.outHeight <= 0 || longest > 8192) return null
+            val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleFor(longest) }
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /** The power of two that brings `longest` pixels to at most `SIDE`·2 (a decode never needs more). */
+    fun sampleFor(longest: Int): Int {
+        var s = 1
+        while (longest / s > SIDE * 2) s *= 2
+        return s
+    }
+
     /** 16 hex digits identifying the image bytes: the laptop names the cover's file after it. */
     fun hash(image: ByteArray): String =
         MessageDigest.getInstance("SHA-1").digest(image).joinToString("") { "%02x".format(it) }.take(16)

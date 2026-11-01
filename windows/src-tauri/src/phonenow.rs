@@ -92,23 +92,36 @@ fn cover_for_phone(art_url: &str) -> Vec<u8> {
     Vec::new()
 }
 
+/// The track as JSON that is certain to fit a `PcNow` frame: control characters become spaces (escaped they would take
+/// six bytes each) and the texts are cut shorter until the whole serialised text fits.
+fn track_json(title: &str, artist: &str, album: &str, status: &str, pos: i64, len: i64) -> String {
+    use crate::audiolink_wire::{clip, MAX_NOW_LINE};
+    let flat = |s: &str| s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>();
+    let (title, artist, album) = (flat(title), flat(artist), flat(album));
+    let mut cap = 200;
+    loop {
+        let j = serde_json::json!({
+            "title": clip(&title, cap), "artist": clip(&artist, cap), "album": clip(&album, cap),
+            "status": status, "pos": pos.max(0), "len": len.max(0),
+        })
+        .to_string();
+        if j.len() <= MAX_NOW_LINE || cap == 0 {
+            return j;
+        }
+        cap = cap * 3 / 4;
+    }
+}
+
 /// What the island shows, told to the phone. The phone's own music (and its mirror) is not sent back to it.
 pub fn share_pc_track(track: Option<&crate::music::Track>) {
-    use crate::audiolink_wire::{clip, encode, FrameKind};
+    use crate::audiolink_wire::{encode, FrameKind};
     let own = track.filter(|t| !crate::audiolink_players::is_mirror(&format!("org.mpris.MediaPlayer2.{}", t.player)));
     let (json, art_url) = match own {
         Some(t) => {
             let now = crate::music::mpris::now_ms();
             let pos = if t.status == "Playing" { t.position_ms + (now - t.position_at).max(0) } else { t.position_ms };
-            let j = serde_json::json!({
-                "title": clip(&t.title, 200),
-                "artist": clip(&t.artists.join(", "), 200),
-                "album": clip(&t.album, 200),
-                "status": if matches!(t.status.as_str(), "Playing" | "Paused") { t.status.as_str() } else { "Stopped" },
-                "pos": pos.max(0),
-                "len": t.length_ms.max(0),
-            });
-            (j.to_string(), t.art_url.clone())
+            let status = if matches!(t.status.as_str(), "Playing" | "Paused") { t.status.as_str() } else { "Stopped" };
+            (track_json(&t.title, &t.artists.join(", "), &t.album, status, pos, t.length_ms), t.art_url.clone())
         }
         None => (r#"{"title":"","artist":"","album":"","status":"Stopped","pos":0,"len":0}"#.to_string(), String::new()),
     };
@@ -386,6 +399,14 @@ mod tests {
         assert_eq!(position_ms(&n), 1_500);
         n.status = "Paused".into();
         assert_eq!(position_ms(&n), 1_000);
+    }
+
+    #[test]
+    fn a_hostile_title_still_fits_a_frame() {
+        let nasty = "\u{1}\"\\".repeat(500);
+        let j = track_json(&nasty, &nasty, &nasty, "Playing", 5, 9);
+        assert!(j.len() <= crate::audiolink_wire::MAX_NOW_LINE, "{}", j.len());
+        assert!(serde_json::from_str::<serde_json::Value>(&j).is_ok());
     }
 
     #[test]
