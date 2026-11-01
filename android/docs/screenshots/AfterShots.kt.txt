@@ -1,0 +1,72 @@
+package com.agupta07505.smartisland.coucou
+
+import app.cash.paparazzi.DeviceConfig
+import app.cash.paparazzi.Paparazzi
+import com.agupta07505.smartisland.coucou.agents.SessionInfo
+import com.agupta07505.smartisland.coucou.agents.SessionState
+import com.agupta07505.smartisland.coucou.assist.AssistContent
+import com.agupta07505.smartisland.coucou.assist.AssistUi
+import com.agupta07505.smartisland.coucou.assist.ChatLine
+import com.agupta07505.smartisland.coucou.phone.Setup
+import com.agupta07505.smartisland.coucou.ui.CoucouTheme
+import org.junit.Rule
+import org.junit.Test
+
+class AfterShots {
+    @get:Rule val paparazzi = Paparazzi(deviceConfig = DeviceConfig.PIXEL_6)
+
+    private val now = 1_792_000_000L
+    private fun line(src: String, text: String, min: Int) = ChatLine("$min:$src", (now + min * 60).toDouble(), src, text, "$min", true)
+
+    private val lines = listOf(
+        line("tg", "¿Me recuerdas qué tenía pendiente para hoy?", 0),
+        line("jinx", "Tienes dos cosas: pagar el internet y llamar a tu mamá a las 17:30. ¿Quieres que te avise antes?", 1),
+        line("s21", "Sí, avísame 10 minutos antes", 3),
+        line("jinx", "Listo. Te aviso a las 17:20 en el teléfono que estés usando.", 4),
+        line("pc", "¿Cómo va la build del merge?", 9),
+        line("jinx", "Claude Code sigue trabajando en coucou: 3 pasos, sin errores por ahora.", 10),
+    )
+    private val sessions = listOf(
+        SessionInfo("a", "coucou", SessionState.Working, "Edit", "", now),
+        SessionInfo("b", "jinx", SessionState.NeedsYou, "Bash", "", now),
+    )
+
+    private fun shot(name: String, tab: CoucouTab, page: @androidx.compose.runtime.Composable (androidx.compose.ui.Modifier) -> Unit) =
+        paparazzi.snapshot(name = name) { CoucouTheme { CoucouScaffold(tab, {}) { m, _ -> page(m) } } }
+
+    @Test fun jinx() = shot("jinx", CoucouTab.Jinx) {
+        AssistContent(AssistUi(lines = lines, badge = "Jinx (Hermes) · laptop"), sessions, {}, {}, {}, {}, {}, it)
+    }
+
+    @Test fun jinxBusyModel() = shot("jinx-busy", CoucouTab.Jinx) {
+        AssistContent(
+            AssistUi(lines = lines.take(3), busy = true, modelBusy = true, modelPercent = 42,
+                notice = "La laptop no responde; sigo con lo que tengo."),
+            emptyList(), {}, {}, {}, {}, {}, it,
+        )
+    }
+
+    @Test fun jinxEmpty() = shot("jinx-empty", CoucouTab.Jinx) { AssistContent(AssistUi(), emptyList(), {}, {}, {}, {}, {}, it) }
+
+    private fun task(id: String, title: String, at: Long? = null, done: Boolean = false, jinx: Boolean = false, origin: String? = null) =
+        CoucouTask(id = id, title = title, done = done, remindAt = at, created = now, completedAt = if (done) now else null, jinx = jinx, origin = origin)
+
+    @Test fun tasks() = shot("tasks", CoucouTab.Tasks) {
+        TasksContent(
+            tasks = listOf(
+                task("1", "Pagar el internet", at = now - 3600, jinx = true),
+                task("2", "Llamar a mamá", at = now + 5 * 3600),
+                task("3", "Revisar el PR del merge de Coucou", jinx = true, origin = "hook"),
+                task("4", "Comprar café", done = true),
+            ),
+            input = "", onInput = {}, onAdd = {}, picking = false, dayPicked = false, onTogglePicker = {}, picker = {},
+            error = null, syncError = null, jinxOn = true, onDone = { _, _ -> }, onDelete = {}, modifier = it, now = now,
+        )
+    }
+
+    @Test fun tasksEmpty() = shot("tasks-empty", CoucouTab.Tasks) {
+        TasksContent(emptyList(), "", {}, {}, false, false, {}, {}, null, "el servidor no responde", true, { _, _ -> }, {}, it, now)
+    }
+
+    @Test fun settings() = shot("settings", CoucouTab.Settings) { Setup(it) }
+}

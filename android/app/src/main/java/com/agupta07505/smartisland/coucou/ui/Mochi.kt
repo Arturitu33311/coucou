@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -45,8 +46,20 @@ import kotlin.math.sin
 
 /** What Mochi feels. Alert/Happy/Listening/Sleepy are his desk states; Surprised, Glance and
  * Dancing are his reactions to the island (news, then looking at it, music); Tired is low
- * battery and Celebrating is an emptied task list. */
-enum class MochiMood { Idle, Alert, Happy, Listening, Sleepy, Surprised, Glance, Dancing, Tired, Celebrating, Working, Searching, Thinking, Error }
+ * battery and Celebrating is an emptied task list. The moods with an [emote] are Jinx's (what her
+ * reply carries, see JinxMood): the same faces as the PC's emotes of that name (engine.ts EMOTE_EYE). */
+enum class MochiMood(val emote: String? = null) {
+    Idle, Alert, Happy, Listening, Sleepy, Surprised, Glance, Dancing, Tired, Celebrating, Working, Searching, Thinking, Error,
+    Love("love"), Proud("proud"), Excited("excited"), Confused("confused"), Shy("shy"), Sad("sad"),
+    Curious("curious"), Bored("bored"), Scared("scared"), Grumpy("grumpy"), Smug("smug"), Laughing("laughing"),
+    Crying("crying"), Relieved("relieved"), Determined("determined"), Flustered("flustered"),
+}
+
+/** Blush on his cheeks (shy, in love, laughing, flustered). */
+private val Blush = Color(0xFFFF7A9A)
+
+/** Tears and the water in teary eyes (engine.ts "teary"). */
+private val TearBlue = Color(0xFF7CC7FF)
 
 /** The blue of Claude Code's working dots on the laptop's Mochi (engine.ts C.working). */
 private val WorkingBlue = Color(0xFF4F9BFF)
@@ -114,6 +127,8 @@ fun MochiGlyph(
         mood == MochiMood.Surprised -> 0.21f
         mood == MochiMood.Dancing -> 0.22f
         mood == MochiMood.Sleepy -> 0.22f
+        mood == MochiMood.Love || mood == MochiMood.Confused || mood == MochiMood.Excited ||
+            mood == MochiMood.Proud || mood == MochiMood.Grumpy -> 0.22f
         else -> 0f
     }.let { GlyphFit.need(it) }
     // Shrink the whole picture just enough to fit his body plus that room (never more than his outfit
@@ -222,10 +237,27 @@ fun MochiGlyph(
         celebrating -> sin(wave) * 8f
         tired -> 7f
         glancing -> lookX * 6f
+        // Jinx's moods, as the PC's emotes move him (engine.ts triggerEmote), held while the mood lasts.
+        mood == MochiMood.Confused -> sin(wave) * 10f
+        mood == MochiMood.Curious -> 9f
+        mood == MochiMood.Proud || mood == MochiMood.Smug -> -7f
+        mood == MochiMood.Shy -> -6f
+        mood == MochiMood.Love -> sin(wave) * 5f
+        mood == MochiMood.Laughing -> -5f + sin(wave * 2f) * 3f
+        mood == MochiMood.Sad || mood == MochiMood.Crying -> 3f
         else -> gestureTilt
     }
-    val shiftX = if (dancing) sin(wave) * 0.07f else if (surprised) (bob - 0.5f) * 0.05f else 0f
+    val shiftX = when {
+        dancing -> sin(wave) * 0.07f
+        surprised -> (bob - 0.5f) * 0.05f
+        mood == MochiMood.Scared -> sin(wave * 24f) * 0.015f
+        mood == MochiMood.Flustered -> sin(wave * 10f) * 0.025f
+        else -> 0f
+    }
     val hop = when {
+        mood == MochiMood.Excited -> -abs(sin(wave * 2f)) * 0.08f
+        mood == MochiMood.Laughing -> -abs(sin(wave * 5f)) * 0.035f
+        mood == MochiMood.Proud -> -0.03f
         dancing -> -abs(sin(wave)) * 0.09f
         celebrating -> -abs(sin(wave)) * 0.13f
         g == IdleGesture.Hop -> -abs(sin(gp * 2f * PI.toFloat())) * 0.16f
@@ -233,6 +265,23 @@ fun MochiGlyph(
         else -> 0f
     }
     val breathe = if (!dancing && !surprised && !tired) 1f + (bob - 0.5f) * 0.03f else 1f
+    // Squash and stretch of Jinx's moods: puffed up when grumpy, a deep sigh when bored or relieved,
+    // a sob when crying, squished when sad, planted when determined.
+    val moodSx = when (mood) {
+        MochiMood.Grumpy -> 1.06f
+        MochiMood.Bored, MochiMood.Relieved -> 1f + (bob - 0.5f) * 0.05f
+        MochiMood.Shy -> 0.96f
+        else -> 1f
+    }
+    val moodSy = when (mood) {
+        MochiMood.Grumpy -> 0.95f
+        MochiMood.Sad -> 0.94f
+        MochiMood.Crying -> 0.96f - abs(sin(wave * 3f)) * 0.035f
+        MochiMood.Bored, MochiMood.Relieved -> 0.97f - (bob - 0.5f) * 0.05f
+        MochiMood.Determined -> 1.03f
+        MochiMood.Curious -> 1.03f
+        else -> 1f
+    }
     val scale = if (surprised) 0.6f + pop * 0.4f else 1f
     // Stretch reaches up and narrows; a yawn swells him a little.
     val gestureStretchY = when (g) {
@@ -249,8 +298,8 @@ fun MochiGlyph(
                 translationX = shiftX * size.toPx()
                 translationY = (hop + drop) * size.toPx()
                 // (`fit` shrinks him with a big outfit on, so a witch's brim stays in his box.)
-                scaleX = scale * breathe * fit * gestureStretchX
-                scaleY = scale * (if (dancing) 2f - breathe else 1f) * fit * gestureStretchY
+                scaleX = scale * breathe * fit * gestureStretchX * moodSx
+                scaleY = scale * (if (dancing) 2f - breathe else 1f) * fit * gestureStretchY * moodSy
             },
     ) {
         val w = this.size.width
@@ -264,6 +313,7 @@ fun MochiGlyph(
             mood == MochiMood.Happy -> -bob * h * 0.035f
             surprised -> -pop * h * 0.08f
             dancing -> -abs(sin(wave)) * h * 0.05f
+            mood == MochiMood.Sad || mood == MochiMood.Crying -> h * 0.035f
             else -> 0f
         }
         val top = (h - bodyH) / 2f + lift
@@ -330,6 +380,7 @@ fun MochiGlyph(
                     }
                     drawPath(p, ink, style = Stroke(width = w * 0.055f, cap = StrokeCap.Round))
                 }
+                mood.emote != null -> emoteEye(mood, cx, eyeY, w, if (eyeIdx == 0) -1f else 1f, blink, wave, ink)
                 surprised -> {
                     // Wide open and frozen: a surprise never blinks, or the moment is lost.
                     val rx = w * 0.08f
@@ -461,6 +512,7 @@ fun MochiGlyph(
             }
             drawPath(tip, sweat)
         }
+        if (mood.emote != null) emoteDecorations(mood, textMeasurer, w, h, top, bodyH, eyeY, xs, wave, bob, small)
         if (celebrating) {
             // Confetti for an emptied list: six dots orbiting him, each halfway around from the
             // next, rising and falling with the beat. Fixed palette, no allocation per frame.
@@ -504,4 +556,234 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.glyph(
         layout,
         topLeft = Offset(cx - layout.size.width / 2f, y - layout.size.height / 2f),
     )
+}
+
+/** An eye, [rx] by [ry] around ([cx], [cy]), cut by a straight lid: only what is below the line from its
+ * outer edge ([outer] of the way down) to its inner edge ([inner]) shows. [side] is -1 for his left eye. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.liddedEye(
+    cx: Float, cy: Float, rx: Float, ry: Float, side: Float, inner: Float, outer: Float, ink: Color,
+) {
+    val topY = cy - ry
+    val yOuter = topY + 2f * ry * outer
+    val yInner = topY + 2f * ry * inner
+    // His left eye's outer edge is on the left; the right eye's on the right.
+    val (yl, yr) = if (side < 0f) yOuter to yInner else yInner to yOuter
+    val cut = Path().apply {
+        moveTo(cx - rx * 1.5f, yl - (yr - yl) * 0.25f)
+        lineTo(cx + rx * 1.5f, yr + (yr - yl) * 0.25f)
+        lineTo(cx + rx * 1.5f, cy + ry * 2f)
+        lineTo(cx - rx * 1.5f, cy + ry * 2f)
+        close()
+    }
+    clipPath(cut) { drawOval(ink, topLeft = Offset(cx - rx, cy - ry), size = Size(rx * 2, ry * 2)) }
+}
+
+/** The PC's emote eyes (engine.ts, the Mac's newer fifteen), one eye at a time. [wave] runs 0..2π on the beat. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.emoteEye(
+    mood: MochiMood, cx: Float, cy: Float, w: Float, side: Float, blink: Float, wave: Float, ink: Color,
+) {
+    val rx = w * 0.062f
+    val ry = rx * 1.55f
+    val stroke = w * 0.05f
+    when (mood) {
+        MochiMood.Love -> {
+            // Heart eyes, in rose.
+            val r = w * 0.085f
+            val heart = Path().apply {
+                moveTo(cx, cy + r * 0.9f)
+                cubicTo(cx - r * 1.4f, cy - r * 0.1f, cx - r * 0.7f, cy - r * 1.2f, cx, cy - r * 0.45f)
+                cubicTo(cx + r * 0.7f, cy - r * 1.2f, cx + r * 1.4f, cy - r * 0.1f, cx, cy + r * 0.9f)
+                close()
+            }
+            drawPath(heart, Color(0xFFE11D48))
+        }
+        MochiMood.Proud -> {
+            // Star eyes, in amber, turning slowly.
+            val r = w * 0.09f
+            val star = Path()
+            for (i in 0 until 10) {
+                val a = wave * 0.25f * side + i * (PI.toFloat() / 5f) - PI.toFloat() / 2f
+                val rr = if (i % 2 == 0) r else r * 0.45f
+                val x = cx + cos(a) * rr
+                val y = cy + sin(a) * rr
+                if (i == 0) star.moveTo(x, y) else star.lineTo(x, y)
+            }
+            star.close()
+            drawPath(star, Color(0xFFF7B32B))
+        }
+        MochiMood.Excited -> {
+            // Big glossy eyes with twinkling highlights.
+            val ex = rx * 1.15f
+            val ey = ry * 1.12f * blink.coerceAtLeast(0.3f)
+            drawOval(ink, topLeft = Offset(cx - ex, cy - ey), size = Size(ex * 2, ey * 2))
+            if (blink > 0.5f) {
+                val tw = 1f + 0.14f * sin(wave * 3f + side)
+                drawCircle(Color.White, radius = ex * 0.42f * tw, center = Offset(cx - ex * 0.28f, cy - ey * 0.35f))
+                drawCircle(Color.White.copy(alpha = 0.9f), radius = ex * 0.2f * (2f - tw), center = Offset(cx + ex * 0.3f, cy + ey * 0.3f))
+            }
+        }
+        MochiMood.Confused -> {
+            // "o -": one round eye, one tilted dash.
+            if (side < 0f) {
+                drawCircle(ink, radius = rx * 0.95f, center = Offset(cx, cy))
+            } else {
+                val d = rx * 1.3f
+                drawLine(ink, Offset(cx - d, cy - d * 0.22f), Offset(cx + d, cy + d * 0.22f), strokeWidth = stroke * 1.1f, cap = StrokeCap.Round)
+            }
+        }
+        MochiMood.Shy -> {
+            // Small eyes, looking down and away.
+            val sx = cx - w * 0.03f
+            val sy = cy + ry * 0.45f
+            val ex = rx * 0.6f
+            val ey = rx * 0.6f * blink.coerceAtLeast(0.25f)
+            drawOval(ink, topLeft = Offset(sx - ex, sy - ey), size = Size(ex * 2, ey * 2))
+        }
+        MochiMood.Sad, MochiMood.Crying -> {
+            // Outer corners droop; crying eyes well up with a wobbling water line.
+            val ey = ry * 0.9f * blink.coerceAtLeast(0.3f)
+            liddedEye(cx, cy, rx, ey, side, inner = 0.08f, outer = 0.55f, ink = ink)
+            if (mood == MochiMood.Crying) {
+                val water = cy + ey * 0.15f + sin(wave * 2f + side) * ey * 0.12f
+                clipPath(Path().apply { addOval(androidx.compose.ui.geometry.Rect(cx - rx, cy - ey, cx + rx, cy + ey)) }) {
+                    drawRect(TearBlue.copy(alpha = 0.85f), topLeft = Offset(cx - rx, water), size = Size(rx * 2, ey * 2))
+                }
+            }
+            drawCircle(Color.White.copy(alpha = 0.85f), radius = rx * 0.28f, center = Offset(cx + side * rx * 0.3f, cy - ey * 0.05f))
+        }
+        MochiMood.Grumpy -> liddedEye(cx, cy, rx * 1.05f, ry * 0.9f, side, inner = 0.62f, outer = 0.08f, ink = ink)
+        MochiMood.Bored -> {
+            // Flat, unimpressed lids at half height.
+            liddedEye(cx, cy, rx * 1.05f, ry, side, inner = 0.5f, outer = 0.5f, ink = ink)
+            drawLine(ink, Offset(cx - rx * 1.2f, cy), Offset(cx + rx * 1.2f, cy), strokeWidth = stroke * 0.7f, cap = StrokeCap.Round)
+        }
+        MochiMood.Smug -> {
+            // Lazy lids and a side-eye: both eyes glance the same way.
+            val sx = cx + rx * 0.3f
+            liddedEye(sx, cy, rx, ry, side, inner = 0.4f, outer = 0.58f, ink = ink)
+        }
+        MochiMood.Determined -> {
+            // Focused: lowered inner lid and a firm brow.
+            val ey = ry * 0.95f
+            liddedEye(cx, cy, rx, ey, side, inner = 0.36f, outer = 0.1f, ink = ink)
+            val inX = cx - side * rx * 1.1f
+            val outX = cx + side * rx * 1.25f
+            drawLine(ink, Offset(inX, cy - ey * 1.05f), Offset(outX, cy - ey * 1.6f), strokeWidth = stroke, cap = StrokeCap.Round)
+        }
+        MochiMood.Scared -> {
+            // Tall trembling eyes with a catch-light.
+            val tx = cx + sin(wave * 30f) * rx * 0.1f
+            val ey = ry * 1.3f * blink.coerceAtLeast(0.3f)
+            val ex = rx * 0.95f
+            drawOval(ink, topLeft = Offset(tx - ex, cy - ey), size = Size(ex * 2, ey * 2))
+            if (blink > 0.5f) drawCircle(Color.White.copy(alpha = 0.9f), radius = ex * 0.32f, center = Offset(tx - ex * 0.3f, cy - ey * 0.45f))
+        }
+        MochiMood.Curious -> {
+            // One eye bigger and raised: the "hm?" look.
+            val k = if (side > 0f) 1.3f else 0.8f
+            val ey = ry * k * blink
+            val dy = if (side > 0f) -ry * 0.2f else 0f
+            drawOval(ink, topLeft = Offset(cx - rx * k, cy + dy - ey), size = Size(rx * k * 2, ey * 2))
+        }
+        MochiMood.Laughing -> {
+            // "> <" squeezed shut.
+            val d = rx * 1.05f
+            val p = Path().apply {
+                moveTo(cx + side * d * 0.75f, cy - d * 0.8f)
+                lineTo(cx - side * d * 0.6f, cy)
+                lineTo(cx + side * d * 0.75f, cy + d * 0.8f)
+            }
+            drawPath(p, ink, style = Stroke(width = stroke, cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        }
+        MochiMood.Relieved -> {
+            // Eyes closed, content: soft downward arcs.
+            val r = w * 0.08f
+            val p = Path().apply {
+                moveTo(cx - r, cy - r * 0.2f)
+                quadraticTo(cx, cy + r * 1.0f, cx + r, cy - r * 0.2f)
+            }
+            drawPath(p, ink, style = Stroke(width = stroke, cap = StrokeCap.Round))
+        }
+        MochiMood.Flustered -> {
+            // "~" squiggle.
+            val p = Path()
+            val steps = 14
+            for (i in 0..steps) {
+                val u = i / steps.toFloat()
+                val x = cx - rx * 1.4f + u * rx * 2.8f
+                val y = cy + sin(u * 2f * PI.toFloat() + wave * 2f * side) * ry * 0.3f
+                if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+            }
+            drawPath(p, ink, style = Stroke(width = stroke, cap = StrokeCap.Round))
+        }
+        else -> drawOval(ink, topLeft = Offset(cx - rx, cy - ry * blink), size = Size(rx * 2, ry * 2 * blink))
+    }
+}
+
+/** A bead of sweat at ([x], [y]). */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.sweatDrop(x: Float, y: Float, r: Float) {
+    val sweat = Color(0xFF7DD3FC)
+    drawCircle(sweat, radius = r, center = Offset(x, y))
+    val tip = Path().apply {
+        moveTo(x - r * 0.8f, y - r * 0.2f)
+        quadraticTo(x, y - r * 1.8f, x + r * 0.8f, y - r * 0.2f)
+        close()
+    }
+    drawPath(tip, sweat)
+}
+
+/** What floats around him in Jinx's moods: hearts, sparkles, a "?", tears, sweat, a sigh, a vein, blush. */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.emoteDecorations(
+    mood: MochiMood,
+    measurer: androidx.compose.ui.text.TextMeasurer,
+    w: Float, h: Float, top: Float, bodyH: Float, eyeY: Float, eyes: List<Float>,
+    wave: Float, bob: Float, small: Boolean,
+) {
+    val up = (sin(wave) + 1f) / 2f
+    val above = if (small) 0.10f else 0.18f
+    if (mood == MochiMood.Shy || mood == MochiMood.Love || mood == MochiMood.Laughing || mood == MochiMood.Flustered || mood == MochiMood.Smug) {
+        val a = if (mood == MochiMood.Smug) 0.35f else 0.55f
+        for (x in eyes) {
+            drawOval(Blush.copy(alpha = a), topLeft = Offset(x - w * 0.075f, eyeY + bodyH * 0.13f), size = Size(w * 0.15f, w * 0.07f))
+        }
+    }
+    when (mood) {
+        MochiMood.Love -> {
+            glyph(measurer, "♥", w * 0.14f, top - h * (0.02f + up * above), w * 0.24f, Color(0xFFFB7185), 0.35f + up * 0.65f)
+            glyph(measurer, "♥", w * 0.86f, top - h * (0.02f + (1f - up) * above), w * 0.20f, Color(0xFFFB7185), 0.35f + (1f - up) * 0.65f)
+        }
+        MochiMood.Proud, MochiMood.Excited -> {
+            val c = if (mood == MochiMood.Proud) Color(0xFFF7B32B) else Color.White
+            glyph(measurer, "✦", w * 0.12f, top - h * (0.0f + up * above), w * 0.22f, c, 0.3f + up * 0.7f)
+            glyph(measurer, "✦", w * 0.88f, top - h * (0.0f + (1f - up) * above), w * 0.18f, c, 0.3f + (1f - up) * 0.7f)
+        }
+        MochiMood.Confused -> glyph(measurer, "?", w * 0.82f, top - h * (if (small) 0.06f else 0.12f) - up * h * 0.03f, w * (if (small) 0.26f else 0.32f), Color.White, 0.85f)
+        MochiMood.Grumpy -> glyph(measurer, "💢", w * 0.84f, top - h * (if (small) 0.04f else 0.08f), w * (if (small) 0.22f else 0.26f), Color.White, 0.6f + 0.4f * bob)
+        MochiMood.Sad -> {
+            // One tear running down from his left eye.
+            val y = eyeY + bodyH * (0.08f + bob * 0.22f)
+            drawCircle(TearBlue, radius = w * 0.03f, center = Offset(eyes[0] - w * 0.04f, y))
+        }
+        MochiMood.Crying -> {
+            // Streams of tears from both eyes.
+            for ((i, x) in eyes.withIndex()) {
+                val side = if (i == 0) -1f else 1f
+                for (k in 0 until 2) {
+                    val p = ((wave / (2f * PI.toFloat())) * 2f + k * 0.5f + i * 0.25f) % 1f
+                    drawCircle(
+                        TearBlue.copy(alpha = 1f - p * 0.6f),
+                        radius = w * 0.028f,
+                        center = Offset(x + side * w * (0.06f + p * 0.08f), eyeY + bodyH * (0.06f + p * 0.32f)),
+                    )
+                }
+            }
+        }
+        MochiMood.Scared, MochiMood.Flustered -> sweatDrop(w * 0.94f, top + bodyH * (0.18f + bob * 0.10f), w * 0.045f)
+        MochiMood.Bored, MochiMood.Relieved -> {
+            // A sigh drifting out from the side of his face.
+            val p = (wave / (2f * PI.toFloat()))
+            drawCircle(Color.White.copy(alpha = 0.55f * (1f - p)), radius = w * (0.04f + p * 0.05f), center = Offset(w * (0.92f + p * 0.12f), eyeY + bodyH * 0.2f - p * h * 0.08f))
+        }
+        else -> {}
+    }
 }

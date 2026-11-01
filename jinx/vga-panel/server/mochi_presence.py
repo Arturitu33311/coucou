@@ -10,19 +10,42 @@ fallback en los funnels (ver mochi_route.py), nunca aquí.
 
 Endpoints (127.0.0.1:8897 + IP tailnet, clave X-Mochi-Key salvo localhost):
   POST /api/presence/heartbeat {"device":"pc|s21|s22","idle_seconds":N,"screen_on":bool}
+       -> {ok, active_device, jinx_mood}   ("laptop" se acepta como alias de "pc")
   GET  /api/presence/state
   POST /api/mochi/message {"text","mood"|null,"kind","source"}  (texto <=500)
-  GET  /api/mochi/inbox?since_id=N  -> {messages, active_device}
+       -> {ok, id, active_device, watched}   watched=false: nadie mirando, avisar también por Telegram
+  GET  /api/mochi/inbox?since_id=N[&all=1]  -> {messages, active_device}  (all=1 incluye las ya aceptadas)
   POST /api/mochi/ack {"id","by"}
+  POST /api/island/command {"action","args"}   (Jinx → la isla del PC; solo lo de island_commands.py)
+       -> {ok, id}  |  409 pc_offline  |  429 demasiadas  |  400 con el motivo
+  GET  /api/island/poll?device=pc&wait=N       (el PC pregunta por órdenes; espera hasta N s, máx. 25)
+  POST /api/island/result {"id","ok","message","data"}   (el PC dice cómo le fue)
+  GET  /api/island/result?id=N&wait=N          (quien pidió espera el resultado)
   GET  /health
 """
 from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
 import time
+from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+# El ánimo de fondo de Jinx: el mismo módulo que usa el gateway. En el servidor va copiado al lado de este
+# archivo (deploy.sh); en el repo está en jinx/jinx-assist.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parents[2] / "jinx-assist"))
+try:
+    from jinx_baseline import load_recent_events, mood_now, parse_emotion_state
+except ImportError:  # sin el módulo el servidor sigue: simplemente no hay ánimo de fondo
+    load_recent_events = mood_now = parse_emotion_state = None
+try:
+    import island_commands
+except ImportError:  # sin el módulo no se aceptan órdenes para la isla; todo lo demás sigue
+    island_commands = None
 
 BASE = Path(__file__).parent
 STATE_PATH = BASE / "mochi_presence_state.json"
@@ -34,13 +57,35 @@ PORT = int(os.environ.get("MOCHI_PORT", "8897"))
 HEARTBEAT_TIMEOUT = 45   # s sin latir -> el dispositivo se declara fuera
 IDLE_LIMIT = 300         # idle mayor -> no cuenta como "mirado"
 DEVICES = ("pc", "s21", "s22")  # el panel (vga) es el failsafe: siempre presente, no late
+# Coucou del portátil se llama a sí mismo "laptop"; aquí es "pc".
+ALIASES = {"laptop": "pc"}
+# El STATE.md de Hermes (local en este servidor) y cada cuánto se vuelve a leer.
+JINX_STATE_MD = Path(os.environ.get("MOCHI_JINX_STATE", str(Path.home() / ".hermes" / "STATE.md")))
+# El log de turnos de Hermes: de ahí salen los eventos recientes (halagos, roces…) que le dan cara a Mochi.
+JINX_EVENTS_LOG = Path(os.environ.get("MOCHI_JINX_EVENTS",
+                                      str(Path.home() / ".hermes" / "logs" / "emotion_turn_log.jsonl")))
+JINX_MOOD_TTL = 60
 # La página del panel (kiosco) es el único navegador que habla con este servidor desde un origen web.
 PANEL_ORIGINS = ("http://127.0.0.1:8896", "http://localhost:8896")
 INBOX_CAP = 50
 TEXT_CAP = 500
 MOODS = {"Idle", "Happy", "Sleepy", "Alert", "Listening", "Celebrating",
-         "Dancing", "Tired"}
+         "Dancing", "Tired",
+         # Las caras de Jinx (los emotes de Mochi en PC y teléfono: MochiMood.kt con `emote`).
+         "Love", "Proud", "Excited", "Confused", "Shy", "Sad", "Curious", "Bored",
+         "Scared", "Grumpy", "Smug", "Laughing", "Crying", "Relieved", "Determined",
+         "Flustered"}
 KINDS = {"info", "warn", "alert"}
+
+# Órdenes de Jinx para la isla del PC. En memoria: si el servidor se reinicia se pierden, y está bien (caducan solas).
+ISLAND_DEVICE = "pc"      # lo único que puede ejecutarlas
+ISLAND_TTL = 90           # s: una orden que el PC no recogió en este tiempo caduca
+ISLAND_RATE = 30          # órdenes por minuto, de todas
+ISLAND_MAX_WAIT = 25      # s: lo más que espera una petición larga
+ISLAND_KEEP = 100         # resultados guardados
+# Los ids no se repiten entre reinicios (el PC recuerda los que ya hizo): se parte de la hora en milisegundos.
+island = {"next_id": int(time.time() * 1000), "queue": [], "results": {}, "stamps": [], "pc_polled": 0.0}
+island_cv = threading.Condition()
 
 state = {
     "presence": {},      # device -> {idle_seconds, screen_on, ts}
@@ -66,6 +111,117 @@ def save():
             ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
+
+
+def pc_alive(now: float) -> bool:
+    """El PC late (con la pantalla como esté) o está esperando órdenes: hay a quién pedirle cosas."""
+    p = state["presence"].get(ISLAND_DEVICE)
+    beating = bool(p) and now - p["ts"] < HEARTBEAT_TIMEOUT
+    return beating or now - island["pc_polled"] < ISLAND_MAX_WAIT + 15
+
+
+def island_submit(action, args, now):
+    """Encola una orden. (código HTTP, cuerpo). Todo se valida aquí; el PC lo valida otra vez."""
+    if island_commands is None:
+        return 503, {"error": "este servidor no tiene island_commands.py"}
+    ok, clean = island_commands.validate(action, args)
+    if not ok:
+        return 400, {"error": clean}
+    with island_cv:
+        if not pc_alive(now):
+            return 409, {"error": "pc_offline", "message": "el PC no está conectado ahora mismo"}
+        island["stamps"] = [t for t in island["stamps"] if now - t < 60]
+        if len(island["stamps"]) >= ISLAND_RATE:
+            return 429, {"error": "demasiadas órdenes por minuto"}
+        island["stamps"].append(now)
+        cmd = {"id": island["next_id"], "action": action, "args": clean, "ts": now, "sent": False}
+        island["next_id"] += 1
+        island["queue"].append(cmd)
+        island_cv.notify_all()
+    return 200, {"ok": True, "id": cmd["id"]}
+
+
+def _island_expire(now):
+    """Las órdenes que el PC no recogió a tiempo caducan, y quien espera su resultado lo sabe. Con el candado."""
+    for cmd in [c for c in island["queue"] if not c["sent"] and now - c["ts"] > ISLAND_TTL]:
+        island["queue"].remove(cmd)
+        island["results"][cmd["id"]] = {"ok": False, "message": "caducó: el PC no la recogió", "ts": now}
+    for old in sorted(island["results"])[:-ISLAND_KEEP]:
+        island["results"].pop(old, None)
+    island["queue"] = [c for c in island["queue"] if now - c["ts"] < ISLAND_TTL * 4]
+
+
+def island_poll(wait, clock=time.time):
+    """Las órdenes nuevas para el PC; espera hasta `wait` s a que llegue alguna. Las marca entregadas."""
+    wait = max(0.0, min(float(wait), ISLAND_MAX_WAIT))
+    end = clock() + wait
+    with island_cv:
+        while True:
+            now = clock()
+            island["pc_polled"] = now
+            _island_expire(now)
+            fresh = [c for c in island["queue"] if not c["sent"]]
+            if fresh or now >= end:
+                for c in fresh:
+                    c["sent"] = True
+                return [{"id": c["id"], "action": c["action"], "args": c["args"]} for c in fresh]
+            island_cv.wait(timeout=min(1.0, end - now))
+
+
+def island_result_post(cid, ok, message, data, now):
+    with island_cv:
+        known = any(c["id"] == cid for c in island["queue"])
+        if not known and cid not in island["results"]:
+            return False
+        island["results"][cid] = {"ok": bool(ok), "message": str(message or "")[:500], "ts": now}
+        if isinstance(data, (dict, list)):
+            if len(json.dumps(data)) <= 12000:
+                island["results"][cid]["data"] = data
+            else:  # nunca en silencio: quien pidió debe saber que faltan datos
+                island["results"][cid]["message"] = (island["results"][cid]["message"] + " [datos demasiado grandes: omitidos]").strip()
+        island["queue"] = [c for c in island["queue"] if c["id"] != cid]
+        island_cv.notify_all()
+    return True
+
+
+def island_result_wait(cid, wait, clock=time.time):
+    """El resultado de una orden; espera hasta `wait` s. None si aún no hay."""
+    wait = max(0.0, min(float(wait), ISLAND_MAX_WAIT))
+    end = clock() + wait
+    with island_cv:
+        while True:
+            now = clock()
+            _island_expire(now)
+            if cid in island["results"]:
+                return island["results"][cid]
+            if now >= end:
+                return None
+            island_cv.wait(timeout=min(1.0, end - now))
+
+
+def hour_of(now: float) -> int:
+    """La hora local de `now` (de 22 a 6 Mochi duerme). Aparte para que los tests no dependan del huso horario."""
+    return time.localtime(now).tm_hour
+
+
+_jinx_cache = {"at": 0.0, "mood": None, "latch": {}}
+
+
+def jinx_mood(now: float):
+    """El ánimo de fondo de Jinx (un emote de Mochi o None), de su STATE.md, como mucho una lectura por minuto.
+    Nunca falla: sin archivo, sin módulo o con un archivo raro es None (tranquila)."""
+    if now - _jinx_cache["at"] < JINX_MOOD_TTL:
+        return _jinx_cache["mood"]
+    mood, latch = None, _jinx_cache["latch"]
+    if mood_now is not None:
+        try:
+            st = parse_emotion_state(JINX_STATE_MD.read_text(encoding="utf-8"))
+            mood, latch = mood_now(st, load_recent_events(JINX_EVENTS_LOG, now), now, latch,
+                                   hour_of(now))
+        except Exception:
+            mood = None
+    _jinx_cache.update(at=now, mood=mood, latch=latch)
+    return mood
 
 
 def read_key() -> str:
@@ -166,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
                 **{dev: view(dev) for dev in DEVICES},
                 "devices": list(DEVICES),
                 "failsafe": "vga",
+                "jinx_mood": jinx_mood(now),
                 "ts": int(now),
             })
         if self.path.startswith("/api/mochi/inbox"):
@@ -176,13 +333,34 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     pass
             now = time.time()
+            # `all=1`: también las ya aceptadas por un dispositivo (solo lectura, nunca marca nada). Lo usa el puente
+            # de las gafas, que ve los avisos ADEMÁS de quien tenga la isla; sin esto casi siempre llegaría tarde.
+            every = "all=1" in self.path.split("?", 1)[-1].split("&")
             msgs = [m for m in state["inbox"]
-                    if not m.get("acked_by") and m["id"] > since][-INBOX_CAP:]
+                    if (every or not m.get("acked_by")) and m["id"] > since][-INBOX_CAP:]
             return self._send(200, {
                 "messages": msgs,
                 "active_device": active_device(now),
                 "ts": int(now),
             })
+        if self.path.startswith("/api/island/"):
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            try:
+                wait = float((q.get("wait") or ["0"])[0])
+            except ValueError:
+                wait = 0.0
+            if u.path == "/api/island/poll":
+                if (q.get("device") or [ISLAND_DEVICE])[0] != ISLAND_DEVICE:
+                    return self._send(400, {"error": "device debe ser pc"})
+                return self._send(200, {"ok": True, "commands": island_poll(wait)})
+            if u.path == "/api/island/result":
+                try:
+                    cid = int((q.get("id") or ["0"])[0])
+                except ValueError:
+                    return self._send(400, {"error": "id inválido"})
+                r = island_result_wait(cid, wait)
+                return self._send(200, {"ok": True, "done": r is not None, "result": r})
         return self._send(404, {"error": "not found"})
 
     def do_OPTIONS(self):
@@ -211,6 +389,8 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         if self.path == "/api/presence/heartbeat":
             b = self._body()
+            if isinstance(b, dict) and b.get("device") in ALIASES:
+                b["device"] = ALIASES[b["device"]]
             if not isinstance(b, dict) or b.get("device") not in DEVICES:
                 return self._send(400, {"error": "device debe ser " + "|".join(DEVICES)})
             try:
@@ -222,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
                 "screen_on": bool(b.get("screen_on", True)),
                 "ts": now,
             }
-            return self._send(200, {"ok": True, "active_device": active_device(now)})
+            return self._send(200, {"ok": True, "active_device": active_device(now), "jinx_mood": jinx_mood(now)})
         if self.path == "/api/mochi/message":
             b = self._body()
             if not isinstance(b, dict) or not str(b.get("text", "")).strip():
@@ -241,8 +421,11 @@ class Handler(BaseHTTPRequestHandler):
             state["inbox"].append(msg)
             state["inbox"] = state["inbox"][-INBOX_CAP:]
             save()
+            active = active_device(now)
+            # `watched`: hay alguien mirando un dispositivo (pc o un teléfono). Con "vga" (el respaldo) puede no
+            # haber nadie delante del panel: quien manda el aviso debe mandarlo también por Telegram.
             return self._send(200, {"ok": True, "id": msg["id"],
-                                   "active_device": active_device(now)})
+                                   "active_device": active, "watched": active != "vga"})
         if self.path == "/api/mochi/ack":
             b = self._body()
             if not isinstance(b, dict):
@@ -257,6 +440,19 @@ class Handler(BaseHTTPRequestHandler):
                     save()
                     return self._send(200, {"ok": True})
             return self._send(404, {"error": "id desconocido"})
+        if self.path == "/api/island/command":
+            b = self._body()
+            if not isinstance(b, dict):
+                return self._send(400, {"error": "json requerido"})
+            code, body = island_submit(b.get("action"), b.get("args"), now)
+            return self._send(code, body)
+        if self.path == "/api/island/result":
+            b = self._body(limit=16384)
+            if not isinstance(b, dict) or not isinstance(b.get("id"), int):
+                return self._send(400, {"error": "id requerido"})
+            if not island_result_post(b["id"], b.get("ok"), b.get("message"), b.get("data"), now):
+                return self._send(404, {"error": "id desconocido"})
+            return self._send(200, {"ok": True})
         return self._send(404, {"error": "not found"})
 
     def log_message(self, fmt, *args):

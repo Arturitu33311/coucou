@@ -7,11 +7,15 @@ No hace getUpdates ni toca webhooks: sólo sendMessage.
 import contextlib
 import fcntl
 import hashlib
+import http.client
 import importlib.machinery
 import importlib.util
 import json
 import os
 import re
+import shlex
+import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -20,11 +24,28 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from jinx_thread import Thread  # noqa: E402
+from jinx_thread import EMOTES, Thread, valid_mood  # noqa: E402
 
 HOME = os.path.expanduser("~")
 BASE = os.path.join(HOME, "jinx-emergencia", "telegram")
-SRCS = ("s21", "s22")
+# Quien puede escribir por el gateway: los dos teléfonos, Coucou del PC (local, sin ssh) y las gafas Even G2.
+SRCS = ("s21", "s22", "pc", "g2")
+# Las gafas recogen la respuesta ellas mismas (puente jinx/g2-bridge): el gateway no la reparte; si nadie la
+# recoge, el puente pide `deliver` y va a la isla o a Telegram como cualquier otra.
+HELD_SRCS = ("g2",)
+# Cómo se ve cada origen al espejarlo en Telegram.
+# En Telegram los mensajes van tal cual, sin marca de quién ni de dónde. La única marca es ⚠️: Jinx no contestó
+# con Hermes sino con un respaldo (OpenRouter, un modelo local).
+MIRROR_PREFIX = {"jinx": ""}
+BACKUP_MODES = ("or", "local")
+BACKUP_PREFIX = "⚠️ "
+# Lo que se manda a la isla de una respuesta (el servidor de presencia guarda hasta 500).
+ISLAND_MAX = 480
+
+
+def mirror_prefix(line):
+    """La marca de una línea al espejarla en Telegram: ⚠️ si es de Jinx y la dio un respaldo; si no, nada. Pura."""
+    return BACKUP_PREFIX if line.get("src") == "jinx" and line.get("via") in BACKUP_MODES else ""
 TG_MAX = 4000
 
 
@@ -43,6 +64,141 @@ class Deps:
     defer_mirror: Optional[Callable[[], None]] = None
     # La Jinx real (Hermes): se usa para mostrar en el hilo lo hablado por Telegram. None = sin Hermes.
     hermes: Optional[object] = None
+    # Su `emotion_state` (el STATE.md del servidor) para `op: mood`: () -> dict, o lanza. None = no hay de dónde leerlo.
+    state: Optional[Callable[[], dict]] = None
+    # La hora local (0-23) para el ánimo de noche. None = el reloj de este equipo.
+    hour: Optional[Callable[[], int]] = None
+    # Los eventos emocionales recientes de Hermes (turn log) para que la cara siga a lo que acaba de pasar:
+    # () -> [{"t", "trigger", "deltas"}], o lanza. None = sin eventos (la cara sale solo del estado).
+    events: Optional[Callable[[], list]] = None
+    # El servidor de presencia (op notify y las respuestas): (text, kind, source) -> True/False (alguien mira /
+    # nadie) o lanza si no está. None = sin presencia (todo va a Telegram); los gateways reales usan presence_post.
+    presence: Optional[Callable[[str, str, str], bool]] = None
+    # Las aprobaciones de Hermes (ops approvals/approve): (petición) -> evento del puente. None = sin Hermes.
+    approvals: Optional[Callable[[dict], dict]] = None
+
+
+# ---------- ánimo ----------
+#
+# Hermes no devuelve ánimo con sus respuestas (solo texto): el ánimo de fondo sale de su `emotion_state`
+# (STATE.md del servidor, lo escribe el hook persona-engine-turn en cada mensaje de Alan) y el de una respuesta,
+# si algún día el cerebro la termina con la etiqueta oculta `[[mood:<emote>]]`, de esa etiqueta.
+
+_MOOD_TAG_RE = re.compile(r"[ \t]*\[\[\s*mood\s*:\s*([^\]]*?)\s*\]\]", re.IGNORECASE)
+
+
+def split_mood(text):
+    """(texto sin etiquetas, emote|None). Quita TODA etiqueta `[[mood:…]]`, válida o no; el emote es el de
+    la última etiqueta válida. Sin etiqueta o con una desconocida no hay emote (los clientes usan el texto)."""
+    if not isinstance(text, str) or "[[" not in text:
+        return text, None
+    mood = None
+    for m in _MOOD_TAG_RE.finditer(text):
+        mood = valid_mood(m.group(1).strip().lower()) or mood
+    return _MOOD_TAG_RE.sub("", text).strip(), mood
+
+
+# parse_emotion_state, baseline_emote y sus umbrales viven en jinx_baseline.py: el servidor de presencia usa los
+# mismos (ver ese módulo).
+from jinx_baseline import baseline_emote, mood_now, parse_emotion_state, parse_events_log  # noqa: E402,F401
+
+_MOOD_LATCH = {}  # la histéresis de "contenta" (jinx_baseline.mood_now) entre llamadas de este proceso
+
+
+# ---------- avisos de los agentes (op notify) ----------
+#
+# Coucou del PC le cuenta a Jinx lo que hacen sus agentes de código (Claude Code, Antigravity, OpenCode…)
+# cuando no estás en el PC: una tarea larga que terminó, un error, un permiso que lleva rato esperando.
+# Jinx lo dice en el dispositivo que estés usando (el servidor de presencia, como sus otros avisos) y, si nadie
+# está mirando ninguno, por Telegram. No entra en el hilo: no son palabras suyas ni tuyas.
+
+NOTIFY_MAX = 300
+NOTIFY_KINDS = ("info", "warn", "alert")
+# La fuente de las respuestas de Jinx en la isla: el dispositivo que tiene abierto el chat no las repite.
+ISLAND_SOURCE = "jinx-chat"
+PRESENCE_URL = os.environ.get("JINX_PRESENCE_URL", "http://127.0.0.1:8897/api/mochi/message")
+
+
+def presence_post(text, kind, source, url=PRESENCE_URL, opener=urllib.request.urlopen):
+    """Un aviso al servidor de presencia (desde el propio servidor no hace falta llave). True si alguien mira
+    un dispositivo, False si nadie; lanza si el servidor no está."""
+    body = json.dumps({"text": text, "kind": kind, "source": source, "mood": None}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    with opener(req, timeout=6) as r:
+        d = json.loads(r.read() or b"{}")
+    if not d.get("ok"):
+        raise RuntimeError("presencia rechazó el aviso")
+    return d.get("watched") is not False
+
+
+def _notify(req, deps):
+    text = req.get("text") if isinstance(req.get("text"), str) else ""
+    text = " ".join(text.split())[:NOTIFY_MAX]
+    if not text:
+        return _err("notify necesita text")
+    kind = req.get("kind") if req.get("kind") in NOTIFY_KINDS else "info"
+    source = str(req.get("source") or "agentes")[:60]
+    try:
+        watched = deps.presence(text, kind, source) if deps.presence else None
+    except Exception:  # noqa: BLE001 - sin presencia (p. ej. el gateway de respaldo del portátil): Telegram
+        watched = None
+    telegram = False
+    if watched is not True:
+        telegram = bool(deps.mirror.send(text))
+    return {"ev": "notified", "watched": watched, "telegram": telegram}
+
+
+APPROVE_CHOICES = ("once", "session", "always", "deny")
+
+
+def _approvals(deps):
+    """`op: approvals`: lo que Hermes espera que Alan apruebe. Nunca falla: sin Hermes, lista vacía."""
+    if deps.approvals is None:
+        return {"ev": "approvals", "items": []}
+    try:
+        ev = deps.approvals({"op": "approvals"})
+    except Exception:  # noqa: BLE001 - el puente puede no contestar; el cliente pregunta luego
+        ev = None
+    items = ev.get("items") if isinstance(ev, dict) and ev.get("ev") == "approvals" else None
+    return {"ev": "approvals", "items": [d for d in items or [] if isinstance(d, dict)]}
+
+
+def _approve(req, deps):
+    """`op: approve`: la respuesta de Alan (ya confirmada con su huella en el cliente) a una pregunta de Hermes.
+    El puente solo acepta lo que tiene pendiente; aquí solo se filtra la forma."""
+    run_id, request_id, choice = req.get("run_id"), req.get("request_id", ""), req.get("choice")
+    if not isinstance(run_id, str) or not run_id or not isinstance(request_id, str) or choice not in APPROVE_CHOICES:
+        return _err("approve necesita run_id, request_id y choice")
+    if deps.approvals is None:
+        return _err("sin Hermes aquí")
+    try:
+        ev = deps.approvals({"op": "approve", "run_id": run_id, "request_id": request_id, "choice": choice})
+    except Exception as e:  # noqa: BLE001
+        return _err("no pude contestar a Hermes: %s" % e)
+    if not isinstance(ev, dict) or ev.get("ev") not in ("approved", "error"):
+        return _err("Hermes no contestó")
+    return ev
+
+
+def _mood_event(deps):
+    """`op: mood`: el ánimo de fondo. Nunca falla: sin STATE.md → emote null, source "text"."""
+    try:
+        state = deps.state() if deps.state else None
+    except Exception:  # noqa: BLE001 - el servidor puede no contestar; los clientes siguen con el texto
+        state = None
+    if not isinstance(state, dict):
+        return {"ev": "mood", "emote": None, "source": "text", "emotion_state": None}
+    try:
+        hour = deps.hour() if deps.hour else time.localtime().tm_hour
+    except Exception:  # noqa: BLE001
+        hour = None
+    try:
+        events = deps.events() if deps.events else []
+    except Exception:  # noqa: BLE001 - sin eventos la cara sigue siendo la del estado
+        events = []
+    global _MOOD_LATCH
+    emote, _MOOD_LATCH = mood_now(state, events, time.time(), _MOOD_LATCH, hour)
+    return {"ev": "mood", "emote": emote, "source": "state", "emotion_state": state}
 
 
 _TOKEN_RE = re.compile(r"(?:bot)?\d{6,}(?::|%3A)[A-Za-z0-9_-]{20,}", re.IGNORECASE)
@@ -71,8 +227,7 @@ def _mirror_pending(deps):
     """Intenta espejar, en orden, lo que quedó sin espejar. Para al primer fallo."""
     done = []
     for d in deps.thread.unmirrored():
-        prefix = "🟠 " if d["src"] == "jinx" else "📱 "
-        if not deps.mirror.send((prefix + d["text"])[:TG_MAX]):
+        if not deps.mirror.send((mirror_prefix(d) + d["text"])[:TG_MAX]):
             break
         done.append(d["id"])
     if done:
@@ -109,6 +264,37 @@ def _settle_mirror(deps, ids):
     return _mirrored(deps, ids)
 
 
+def _deliver(deps, ids, line, mood=None):
+    """La respuesta va a la isla del dispositivo que Alan está usando (el servidor de presencia); solo si nadie
+    mira (o no hay presencia: el gateway de respaldo del portátil) va a Telegram. True: el gateway se hace cargo
+    de las líneas (el cliente no las repite en Telegram)."""
+    text = mirror_prefix(line) + line["text"]
+    if len(text) > ISLAND_MAX:
+        text = text[: ISLAND_MAX - 1] + "…"
+    try:
+        watched = deps.presence(text, "info", ISLAND_SOURCE) if deps.presence else None
+    except Exception:  # noqa: BLE001 - sin presencia: Telegram, como siempre
+        watched = None
+    if watched is True:
+        deps.thread.mark_mirrored(ids)  # alguien mira un dispositivo: lo ve ahí, no en Telegram
+        return True
+    return _settle_mirror(deps, ids)
+
+
+def _redeliver(req, deps):
+    """La respuesta de un cid que las gafas no recogieron: se reparte como cualquier otra (isla o Telegram)."""
+    cid = req.get("cid")
+    if not isinstance(cid, str) or not cid:
+        return _err("deliver necesita cid")
+    line = deps.thread.answer_for(cid)
+    if not line:
+        return _err("no hay respuesta para ese cid")
+    # La pregunta de las gafas también vuelve a pendiente: si llega a Telegram se ve con su respuesta, no suelta.
+    ids = ["%s:g2" % cid, "%s:jinx" % cid]
+    deps.thread.mark_mirrored(set(ids), False)
+    return {"ev": "delivered", "mirrored": _deliver(deps, ids, line, line.get("mood"))}
+
+
 def _pull_hermes(deps):
     """Mezcla en el hilo lo hablado en la sesión de Telegram de Hermes (lo que no está ya). Nunca falla."""
     if deps.hermes is None:
@@ -121,12 +307,16 @@ def _pull_hermes(deps):
     incoming = []
     for m in items:
         role = "jinx" if m.get("role") == "assistant" else "user"
-        text = str(m.get("text", ""))
+        # La etiqueta de ánimo nunca llega al hilo: lo local ya se guardó sin ella y la comparación es por texto.
+        text, mood = split_mood(str(m.get("text", "")))
         if not text.strip() or (role, text.strip()) in known:
             continue
         src = "jinx" if role == "jinx" else "tg"
-        incoming.append({"id": "h%s:%s" % (m.get("id"), src), "ts": float(m.get("ts") or 0), "src": src,
-                         "text": text, "cid": None, "mirrored": True})
+        line = {"id": "h%s:%s" % (m.get("id"), src), "ts": float(m.get("ts") or 0), "src": src,
+                "text": text, "cid": None, "mirrored": True}
+        if mood and src == "jinx":
+            line["mood"] = mood
+        incoming.append(line)
     return len(deps.thread.merge(incoming)) if incoming else 0
 
 
@@ -145,8 +335,12 @@ def _send(req, deps):
         cached = deps.thread.answer_for(cid)
         if cached:
             yield {"ev": "ack"}
-            yield {"ev": "done", "mode": "cached", "text": cached["text"],
-                   "mirrored": _settle_mirror(deps, ids)}
+            held = src in HELD_SRCS
+            done = {"ev": "done", "mode": "cached", "text": cached["text"],
+                    "mirrored": True if held else _settle_mirror(deps, ids)}
+            if valid_mood(cached.get("mood")):
+                done["mood"] = cached["mood"]
+            yield done
             return
         deps.thread.append(src, text, cid=cid)
         yield {"ev": "ack"}
@@ -155,9 +349,18 @@ def _send(req, deps):
         except Exception as e:  # noqa: BLE001 - el modelo puede fallar de mil formas
             yield _err("no pude generar respuesta: %s" % e)
             return
+        # La etiqueta oculta de ánimo se quita ANTES de guardar y de espejar a Telegram; el emote viaja aparte.
+        out, mood = split_mood((out or "").strip())
         out = (out or "").strip() or "(sin respuesta)"
-        line = deps.thread.append("jinx", out, cid=cid)
-        yield {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _settle_mirror(deps, ids)}
+        line = deps.thread.append("jinx", out, cid=cid, mood=mood, via=mode)
+        if src in HELD_SRCS:
+            deps.thread.mark_mirrored(set(ids))  # las gafas la recogen; si no, `deliver` la reparte
+            done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": True, "held": True}
+        else:
+            done = {"ev": "done", "mode": mode, "text": line["text"], "mirrored": _deliver(deps, ids, line, mood)}
+        if mood:
+            done["mood"] = mood  # solo si la respuesta traía una etiqueta válida; nunca el ánimo de fondo
+        yield done
 
 
 def handle(req, deps):
@@ -175,7 +378,16 @@ def handle(req, deps):
         if not isinstance(lines, list) or not isinstance(have, list):
             yield _err("merge necesita lines y have")
             return
-        added = deps.thread.merge(lines)
+        # Una línea que llegue con la etiqueta (p. ej. de un cerebro en el teléfono) se limpia igual que aquí.
+        clean = []
+        for d in lines:
+            if isinstance(d, dict) and isinstance(d.get("text"), str) and "[[" in d["text"]:
+                text, mood = split_mood(d["text"])
+                d = dict(d, text=text)
+                if mood and d.get("src") == "jinx":
+                    d["mood"] = mood
+            clean.append(d)
+        added = deps.thread.merge(clean)
         _pull_hermes(deps)
         sent_ids = {d["id"] for d in lines if isinstance(d, dict) and isinstance(d.get("id"), str)}
         if deps.defer_mirror is not None:
@@ -188,6 +400,16 @@ def handle(req, deps):
         yield {"ev": "merged", "added": len(added),
                "items": deps.thread.since({h for h in have if isinstance(h, str)}),
                "mirrored_ids": mirrored_ids}
+    elif op == "deliver":
+        yield _redeliver(req, deps)
+    elif op == "mood":
+        yield _mood_event(deps)
+    elif op == "notify":
+        yield _notify(req, deps)
+    elif op == "approvals":
+        yield _approvals(deps)
+    elif op == "approve":
+        yield _approve(req, deps)
     elif op == "core":
         yield {"ev": "core", "core": deps.core_text, "memory": deps.memory_text}
     elif op == "provision":
@@ -224,15 +446,74 @@ def run_line(raw, deps):
 
 # ---------- implementaciones reales ----------
 
+TG_HOST = "api.telegram.org"
+# Desde la red del servidor el DNS de Telegram a veces no llega ("No route to host"): se prueban estas IPs
+# primero (las mismas que usa hermes_telegram_retry.py) y el DNS al final.
+TG_DEFAULT_IPS = ("149.154.167.99", "149.154.167.220", "149.154.166.110")
+HERMES_ENV = os.path.join(HOME, ".hermes", ".env")
+
+
+def telegram_ips(env=None, env_file=HERMES_ENV):
+    """IPs fijas de Telegram del servidor: TELEGRAM_FALLBACK_IPS (entorno o ~/.hermes/.env), o las de siempre."""
+    raw = (env if env is not None else os.environ).get("TELEGRAM_FALLBACK_IPS", "")
+    if not raw:
+        try:
+            for line in _read(env_file).splitlines():
+                if line.startswith("TELEGRAM_FALLBACK_IPS="):
+                    raw = line.split("=", 1)[1].strip().strip("\"'")
+                    break
+        except OSError:
+            pass
+    ips = [p.strip() for p in raw.split(",") if p.strip()] or list(TG_DEFAULT_IPS)
+    return list(dict.fromkeys(ips))
+
+
+class _PinnedConn(http.client.HTTPSConnection):
+    """HTTPS a una IP fija conservando SNI y validación del certificado de api.telegram.org."""
+
+    def __init__(self, ip, timeout=8):
+        super().__init__(TG_HOST, timeout=timeout)
+        self._ip = ip
+
+    def connect(self):
+        sock = socket.create_connection((self._ip or TG_HOST, 443), timeout=self.timeout)
+        self.sock = ssl.create_default_context().wrap_socket(sock, server_hostname=TG_HOST)
+
+
 class TelegramMirror:
-    def __init__(self, token, chat, opener=urllib.request.urlopen):
+    def __init__(self, token, chat, opener=urllib.request.urlopen, ips=None, conn_factory=_PinnedConn):
         self.token, self.chat, self.opener = token, chat, opener
+        self.ips, self.conn_factory = ips, conn_factory
         self.last_error = ""
+
+    def _send_pinned(self, data):
+        """Prueba cada IP fija y al final el DNS; la primera que contesta con una respuesta de la API gana."""
+        last = "sin ruta"
+        for ip in list(self.ips) + [None]:
+            try:
+                conn = self.conn_factory(ip)
+                conn.request("POST", "/bot%s/sendMessage" % self.token, data, {"Content-Type": "application/json"})
+                resp = conn.getresponse()
+                body = json.loads(resp.read() or b"{}")
+                conn.close()
+            except (OSError, ssl.SSLError, ValueError, http.client.HTTPException) as e:
+                last = type(e).__name__
+                continue
+            if body.get("ok"):
+                self.last_error = ""
+                return True
+            last = "%s:%s" % (body.get("error_code"), str(body.get("description"))[:80])
+            if body.get("error_code") in (400, 403):  # chat o bot mal: otra IP no ayuda
+                break
+        self.last_error = redact(last)
+        return False
 
     def send(self, text):
         if not self.token or not self.chat or self.opener is None:
             self.last_error = "sin token o chat"
             return False
+        if self.ips:
+            return self._send_pinned(json.dumps({"chat_id": str(self.chat), "text": text[:TG_MAX]}).encode())
         data = json.dumps({"chat_id": str(self.chat), "text": text[:TG_MAX]}).encode()
         req = urllib.request.Request(
             "https://api.telegram.org/bot%s/sendMessage" % self.token, data=data,
@@ -250,8 +531,8 @@ class TelegramMirror:
 class LazyTelegramMirror(TelegramMirror):
     """Igual que TelegramMirror, pero token y chat se piden a la bóveda sólo al primer envío real."""
 
-    def __init__(self, token_fn, chat_fn, opener=urllib.request.urlopen):
-        super().__init__("", "", opener)
+    def __init__(self, token_fn, chat_fn, opener=urllib.request.urlopen, ips=None, conn_factory=_PinnedConn):
+        super().__init__("", "", opener, ips=ips, conn_factory=conn_factory)
         self._token_fn, self._chat_fn, self._resolved = token_fn, chat_fn, False
 
     def send(self, text):
@@ -262,7 +543,11 @@ class LazyTelegramMirror(TelegramMirror):
 
 
 def _load_jinx():
+    """El módulo `jinx` del portátil (bóveda, memoria, modelos locales), o None si no está: en el servidor no
+    existe y el gateway corre en modo servidor (ver `build_server_deps`)."""
     path = os.path.join(HOME, "bin", "jinx")
+    if not os.path.exists(path):
+        return None
     loader = importlib.machinery.SourceFileLoader("jinxmod", path)
     spec = importlib.util.spec_from_loader("jinxmod", loader)
     mod = importlib.util.module_from_spec(spec)
@@ -286,21 +571,70 @@ def _read(path):
         return f.read()
 
 
-HERMES_SSH = os.environ.get("JINX_HERMES_SSH", "server")
 HERMES_CMD = os.environ.get(
     "JINX_HERMES_CMD",
     "/home/alan/.hermes/hermes-agent/venv/bin/python /home/alan/.hermes/scripts/jinx_hermes_chat.py")
 
 
-def ssh_runner(payload, timeout=85):
-    """Una petición al puente de Hermes por ssh; devuelve el evento JSON o lanza si no hay respuesta."""
+def default_hermes_host(cmd=HERMES_CMD, exists=os.path.exists):
+    """Dónde está Hermes si nadie lo dice: aquí mismo cuando su intérprete y su puente están en esta máquina
+    (el gateway corre en el servidor), si no el servidor por ssh (el gateway de respaldo del portátil). Pura."""
+    argv = shlex.split(cmd)
+    return "local" if argv and all(exists(a) for a in argv if a.startswith("/")) else "server"
+
+
+HERMES_SSH = os.environ.get("JINX_HERMES_SSH") or default_hermes_host()
+
+
+def hermes_argv(cmd, host=None):
+    """Cómo se corre un comando de Hermes: por ssh al servidor desde el portátil; tal cual cuando el gateway
+    corre en el propio servidor (JINX_HERMES_SSH=local o vacío). Pura."""
+    host = HERMES_SSH if host is None else host
+    if host.strip() in ("", "local"):
+        return shlex.split(cmd)
+    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, cmd]
+
+
+# Un `send` puede esperar a que Alan apruebe un comando (Hermes da 300 s): el puente corta el turno a los 80 s
+# sin preguntas y a los ~490 s con una; esto solo es la red de seguridad por encima.
+SEND_WAIT = 500
+
+
+def ssh_runner(payload, timeout=None):
+    """Una petición al puente de Hermes (por ssh, o local en el servidor); devuelve el evento JSON o lanza."""
+    if timeout is None:
+        timeout = SEND_WAIT if payload.get("op") == "send" else 85
     p = subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", HERMES_SSH, HERMES_CMD],
+        hermes_argv(HERMES_CMD),
         input=json.dumps(payload) + "\n", capture_output=True, text=True, timeout=timeout)
     lines = [ln for ln in p.stdout.splitlines() if ln.strip()]
     if not lines:
         raise RuntimeError("Hermes no respondió (%s)" % (p.stderr.strip().splitlines() or ["sin salida"])[-1][:80])
     return json.loads(lines[-1])
+
+
+STATE_CMD = os.environ.get("JINX_STATE_CMD", "cat /home/alan/.hermes/STATE.md")
+
+
+def ssh_state_reader(timeout=12, runner=subprocess.run):
+    """El `emotion_state` de Hermes: STATE.md del servidor, leído por ssh (solo lectura, con tope de tiempo).
+    No se lee por el montaje del servidor: un montaje colgado bloquearía al gateway. Lanza si no hay estado."""
+    p = runner(hermes_argv(STATE_CMD),
+               capture_output=True, text=True, timeout=timeout)
+    state = parse_emotion_state(p.stdout)
+    if state is None:
+        raise RuntimeError("STATE.md sin emotion_state")
+    return state
+
+
+EVENTS_CMD = os.environ.get("JINX_EVENTS_CMD", "tail -c 262144 /home/alan/.hermes/logs/emotion_turn_log.jsonl")
+
+
+def ssh_events_reader(timeout=12, runner=subprocess.run):
+    """Los eventos emocionales recientes de Hermes: la cola del turn log del servidor, por ssh (solo lectura, con
+    tope de tiempo y de bytes). Lanza si el comando falla; el llamador lo trata como "sin eventos"."""
+    p = runner(hermes_argv(EVENTS_CMD), capture_output=True, text=True, timeout=timeout)
+    return parse_events_log(p.stdout)
 
 
 class HermesBrain:
@@ -336,6 +670,12 @@ class ChainBrain:
                 return b.reply(messages)
             except Exception as e:  # noqa: BLE001
                 last = e
+                # Por qué no contestó (sin el mensaje): así se ve cuándo y por qué habló el respaldo.
+                try:
+                    append_log(os.path.join(BASE, "gateway.log"), "%s brain=%s failed: %s" % (
+                        time.strftime("%Y-%m-%dT%H:%M:%S"), type(b).__name__, redact(str(e))[:160]))
+                except Exception:  # noqa: BLE001
+                    pass
         raise last
 
 
@@ -384,8 +724,117 @@ def _spawn_flush_mirror():
         pass  # las líneas siguen mirrored:false y se reintentan en la próxima op
 
 
+# ---------- el gateway en el propio servidor ----------
+#
+# Allí no hay `~/bin/jinx` ni la bóveda del portátil: los secretos salen de la bóveda del servidor
+# (`hermes-secrets get`, la misma que usan jinx_send.py y jinx_hermes_chat.py; nunca se copian ni se escriben) y
+# Hermes es local. Si Hermes falla pero el servidor vive, contesta OpenRouter con el alma de Jinx: un `send`
+# que ya llegó al servidor no se reenvía al portátil, así que aquí no puede quedarse sin respuesta.
+
+SECRETS_CMD = os.environ.get("JINX_SECRETS_CMD", "/home/alan/.hermes/hermes-agent/venv/bin/hermes-secrets")
+# Nombre que pide el gateway -> nombres en la bóveda del servidor, por orden.
+SERVER_SECRET_NAMES = {
+    "TELEGRAM_BOT_TOKEN": ("TELEGRAM_BOT_TOKEN",),
+    "TELEGRAM_ALLOWED_CHAT": ("TELEGRAM_ALLOWED_CHAT", "TELEGRAM_HOME_CHANNEL"),
+    "OPENROUTER_API_KEY": ("OPENROUTER_API_KEY",),
+}
+OR_URL = os.environ.get("JINX_OR_BASE", "https://openrouter.ai/api/v1") + "/chat/completions"
+OR_MODEL = os.environ.get("JINX_OR_MODEL", "deepseek/deepseek-v4-flash")
+SOUL_FALLBACK = os.path.join(HOME, ".hermes", "SOUL.md")
+SOUL_MAX = 6000
+
+
+def server_secret(name, run=subprocess.run, cmd=None):
+    """Un secreto de la bóveda del servidor, o "" (sin imprimirlo ni registrarlo en ningún sitio)."""
+    cmd = cmd or SECRETS_CMD
+    for n in SERVER_SECRET_NAMES.get(name, (name,)):
+        try:
+            p = run([cmd, "get", n], capture_output=True, text=True, timeout=10)
+        except Exception:  # noqa: BLE001 - sin bóveda: el espejo se reintenta luego
+            continue
+        if getattr(p, "returncode", 1) == 0 and (p.stdout or "").strip():
+            return p.stdout.strip().splitlines()[-1].strip()
+    return ""
+
+
+class ServerFallbackBrain:
+    """Respaldo del servidor cuando Hermes falla: OpenRouter con el alma de Jinx. Lanza si no hay llave o falla."""
+
+    def __init__(self, key_fn, core_fn, opener=urllib.request.urlopen):
+        self.key_fn, self.core_fn, self.opener = key_fn, core_fn, opener
+
+    def reply(self, messages):
+        key = self.key_fn()
+        if not key:
+            raise RuntimeError("sin llave de OpenRouter en el servidor")
+        system = ("Eres Jinx. Tu memoria completa (Hermes) no está disponible ahora mismo: contesta breve y "
+                  "natural, sin inventar lo que no sepas.\n\n---\n\n" + self.core_fn())
+        body = json.dumps({"model": OR_MODEL,
+                           "messages": [{"role": "system", "content": system}] + list(messages)}).encode()
+        req = urllib.request.Request(OR_URL, data=body, headers={
+            "Content-Type": "application/json", "Authorization": "Bearer " + key})
+        try:
+            with self.opener(req, timeout=60) as r:
+                data = json.loads(r.read().decode("utf-8", "replace"))
+            text = data["choices"][0]["message"]["content"]
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(redact(str(e)).replace(key, "<llave>")) from None
+        if not (text or "").strip():
+            raise RuntimeError("OpenRouter contestó vacío")
+        return "or", text
+
+
+def _read_first(*paths, limit=None):
+    for p in paths:
+        try:
+            t = _read(p)
+        except OSError:
+            continue
+        if t.strip():
+            return t[:limit] if limit else t
+    return ""
+
+
+def build_server_deps(base=BASE, defer=False, secret=server_secret):
+    cache = {}
+
+    def lazy(name):
+        if name not in cache:
+            cache[name] = os.environ.get({"TELEGRAM_BOT_TOKEN": "JINX_TG_TOKEN",
+                                          "TELEGRAM_ALLOWED_CHAT": "JINX_TG_CHAT",
+                                          "OPENROUTER_API_KEY": "JINX_OR_KEY"}.get(name, ""), "") or secret(name)
+        return cache[name]
+
+    emerg = os.path.join(HOME, "jinx-emergencia")
+    core = _read_first(os.path.join(emerg, "JINX-CORE.md"))
+    memory = _read_first(os.path.join(emerg, "MEMORY.md"), os.path.join(HOME, ".hermes", "memories", "MEMORY.md"))
+    soul = core or _read_first(SOUL_FALLBACK, limit=SOUL_MAX)
+    no_hermes = bool(os.environ.get("JINX_NO_HERMES"))
+    fallback = ServerFallbackBrain(lambda: lazy("OPENROUTER_API_KEY"), lambda: soul)
+    hermes = None if no_hermes else HermesBrain()
+    brain = ChainBrain([hermes, fallback]) if hermes else fallback
+    thread = Thread(base)
+
+    def defer_if_needed():
+        if thread.unmirrored():
+            _spawn_flush_mirror()
+
+    return Deps(thread, brain,
+                LazyTelegramMirror(lambda: lazy("TELEGRAM_BOT_TOKEN"), lambda: lazy("TELEGRAM_ALLOWED_CHAT"),
+                                   ips=telegram_ips()),
+                core, memory,
+                lambda: {"openrouter_key": lazy("OPENROUTER_API_KEY"), "telegram_token": lazy("TELEGRAM_BOT_TOKEN"),
+                         "chat": lazy("TELEGRAM_ALLOWED_CHAT")},
+                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
+                state=None if no_hermes else ssh_state_reader,
+                events=None if no_hermes else ssh_events_reader,
+                approvals=None if no_hermes else ssh_runner, presence=presence_post)
+
+
 def build_real_deps(base=BASE, defer=False):
     jx = _load_jinx()
+    if jx is None:
+        return build_server_deps(base, defer)
     cache = {}
 
     def secret(env_names, vault_key):
@@ -413,7 +862,10 @@ def build_real_deps(base=BASE, defer=False):
     return Deps(thread, brain, LazyTelegramMirror(token, chat),
                 jinx_brain.core, memory,
                 lambda: {"openrouter_key": jinx_brain.key or "", "telegram_token": token(), "chat": chat()},
-                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes)
+                base, defer_mirror=defer_if_needed if defer else None, hermes=hermes,
+                state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
+                events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader,
+                approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner, presence=presence_post)
 
 
 def flush_mirror_main():
@@ -438,25 +890,90 @@ def flush_mirror_main():
     return 0
 
 
+# ---------- el portátil como respaldo del servidor ----------
+#
+# El gateway principal corre en el servidor; el del portátil solo atiende cuando el servidor falla (los clientes
+# deciden: Failover en ChatApi.kt y jinx_gateway.rs). Lo que el portátil atendió entonces vive en SU hilo: al
+# volver el servidor, `jinx-chat --sync-to-server` se lo pasa (op merge: deduplica por id y no vuelve a espejar a
+# Telegram lo ya espejado) y se trae lo del servidor, así los dos hilos vuelven a ser el mismo.
+
+SYNC_HOST = os.environ.get("JINX_SYNC_HOST", "server")
+SYNC_CMD = os.environ.get("JINX_SYNC_CMD", "bin/jinx-chat")
+SYNC_LINES = 500
+
+
+def sync_to_server(thread, ask, limit=SYNC_LINES):
+    """Pasa al servidor las últimas `limit` líneas de este hilo y trae las suyas. `ask(req) -> [eventos]`.
+    Devuelve (las que el servidor añadió, las que se añadieron aquí). Lanza si el servidor no contesta como
+    gateway (nada cambia aquí)."""
+    mine = thread.read()[-limit:]
+    events = ask({"op": "merge", "lines": mine, "have": [d["id"] for d in thread.read()]})
+    merged = next((e for e in events if isinstance(e, dict) and e.get("ev") == "merged"), None)
+    if merged is None:
+        err = next((e.get("msg") for e in events if isinstance(e, dict) and e.get("ev") == "error"), None)
+        raise RuntimeError(err or "el servidor no contestó como gateway")
+    items = merged.get("items") if isinstance(merged.get("items"), list) else []
+    # Lo que el servidor ya espejó cuenta como espejado aquí también (y al revés lo hizo el merge del servidor).
+    mirrored = set(merged.get("mirrored_ids") or [])
+    here = thread.merge(items)
+    if mirrored:
+        thread.mark_mirrored(mirrored)
+    return merged.get("added", 0), len(here)
+
+
+def ssh_gateway_ask(req, host=SYNC_HOST, cmd=SYNC_CMD, timeout=60):
+    """Una petición al gateway del servidor por ssh: sus eventos."""
+    p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", host, cmd],
+                       input=json.dumps(req, ensure_ascii=False) + "\n", capture_output=True, text=True, timeout=timeout)
+    out = []
+    for ln in p.stdout.splitlines():
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            continue
+    return out
+
+
+def sync_main():
+    try:
+        sent, got = sync_to_server(Thread(BASE), ssh_gateway_ask)
+    except Exception as e:  # noqa: BLE001 - servidor caído: se reintenta en la próxima pasada
+        sys.stdout.write("sync: el servidor no está (%s)\n" % e)
+        return 1
+    sys.stdout.write("sync: %d líneas nuevas en el servidor, %d aquí\n" % (sent, got))
+    return 0
+
+
 def main(stdin=sys.stdin, stdout=sys.stdout):
     if "--flush-mirror" in sys.argv[1:]:
         return flush_mirror_main()
+    if "--sync-to-server" in sys.argv[1:]:
+        return sync_main()
     raw = stdin.readline()
     try:
         req = json.loads(raw) if raw.strip() else {}
     except ValueError:
         req = {}
     # Sólo se construye el cerebro real si la op lo necesita (history no).
-    needs_real = isinstance(req, dict) and req.get("op") in ("send", "core", "provision", "merge")
+    needs_real = isinstance(req, dict) and req.get("op") in ("send", "core", "provision", "merge", "notify")
     t_start = time.time()
     try:
+        # Las ops ligeras (history, mood) no necesitan cerebro ni bóveda; mood sí necesita poder leer el estado.
         deps = build_real_deps(defer=True) if needs_real else Deps(
-            Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE)
+            Thread(BASE), None, TelegramMirror("", ""), "", "", dict, BASE,
+            state=None if os.environ.get("JINX_NO_HERMES") else ssh_state_reader,
+            events=None if os.environ.get("JINX_NO_HERMES") else ssh_events_reader,
+            approvals=None if os.environ.get("JINX_NO_HERMES") else ssh_runner)
     except Exception as e:  # noqa: BLE001
         stdout.write(json.dumps(_err("gateway sin cerebro: %s" % e)) + "\n")
         return 0
     t_deps = time.time()
+    mode = "-"
     for ev in run_line(raw, deps):
+        if ev.get("ev") == "done":
+            mode = ev.get("mode") or "-"
+        elif ev.get("ev") == "error":
+            mode = "error"
         stdout.write(json.dumps(ev, ensure_ascii=False) + "\n")
         stdout.flush()
     t_end = time.time()
@@ -464,8 +981,8 @@ def main(stdin=sys.stdin, stdout=sys.stdout):
     try:
         op = req.get("op", "?") if isinstance(req, dict) else "?"
         append_log(os.path.join(BASE, "gateway.log"),
-                   "%s op=%s deps=%.2fs run=%.2fs total=%.2fs" % (
-                       time.strftime("%Y-%m-%dT%H:%M:%S"), op, t_deps - t_start, t_end - t_deps, t_end - t_start))
+                   "%s op=%s mode=%s deps=%.2fs run=%.2fs total=%.2fs" % (
+                       time.strftime("%Y-%m-%dT%H:%M:%S"), op, mode, t_deps - t_start, t_end - t_deps, t_end - t_start))
     except OSError:
         pass
     return 0

@@ -1,0 +1,81 @@
+{
+  "_doc": "When one of Jinx's pendientes with a `due` rings, in unix seconds (null: no reminder). The PC (tasks.rs due_reminder) and the phone (TaskLogic.dueReminder) read the same file; `offset` is the local time zone's offset east of UTC, in seconds, fixed here.",
+  "offset": -21600,
+  "cases": [
+    {
+      "due": "2026-10-17",
+      "expect": 1792249200,
+      "note": "a day alone: 09:00 local"
+    },
+    {
+      "due": "2026-10-17T05:59:00Z",
+      "expect": 1792216740,
+      "note": "UTC as given"
+    },
+    {
+      "due": "2026-10-17T05:59:00",
+      "expect": 1792238340,
+      "note": "no zone: local time"
+    },
+    {
+      "due": "2026-10-17 18:30:00",
+      "expect": 1792283400,
+      "note": "a space instead of T"
+    },
+    {
+      "due": "2026-10-17T18:30:00-06:00",
+      "expect": 1792283400,
+      "note": "its own offset"
+    },
+    {
+      "due": "2026-10-17T18:30:00+0530",
+      "expect": 1792242000,
+      "note": "offset without colon"
+    },
+    {
+      "due": "2026-10-17T05:59:00.123Z",
+      "expect": 1792216740,
+      "note": "fractions ignored"
+    },
+    {
+      "due": "  2026-10-17T05:59:00Z ",
+      "expect": 1792216740,
+      "note": "spaces around"
+    },
+    {
+      "due": "2026-13-01",
+      "expect": null,
+      "note": "no month 13"
+    },
+    {
+      "due": "2026-13-40T25:00:00",
+      "expect": null,
+      "note": "impossible date and hour"
+    },
+    {
+      "due": "2026-10-17T24:00:00",
+      "expect": null,
+      "note": "no hour 24"
+    },
+    {
+      "due": "2026-10-17T05:60:00Z",
+      "expect": null,
+      "note": "no minute 60"
+    },
+    {
+      "due": "mañana",
+      "expect": null,
+      "note": "words are not a date"
+    },
+    {
+      "due": "2026-10-17T05:59",
+      "expect": null,
+      "note": "seconds are required"
+    },
+    {
+      "due": "",
+      "expect": null,
+      "note": "empty"
+    }
+  ]
+}

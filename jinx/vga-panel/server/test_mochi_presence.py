@@ -18,6 +18,7 @@ def load():
     mod.STATE_PATH = type(mod.STATE_PATH)("/tmp/mochi_presence_test_state.json")   # no tocar el estado real
     mod.state["presence"].clear()
     mod.state["inbox"].clear()
+    mod.JINX_STATE_MD = type(mod.JINX_STATE_MD)("/nonexistent/STATE.md")   # sin el estado real de Jinx
     return mod
 
 
@@ -80,6 +81,24 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(out["active_device"], "s22")
 
+    def test_a_message_says_whether_anyone_is_watching(self):
+        code, out = self.post("/api/mochi/message", {"text": "hola", "kind": "info", "source": "test"})
+        self.assertEqual((code, out["active_device"], out["watched"]), (200, "vga", False))
+        self.post("/api/presence/heartbeat", {"device": "s21", "idle_seconds": 1, "screen_on": True})
+        code, out = self.post("/api/mochi/message", {"text": "hola", "kind": "info", "source": "test"})
+        self.assertEqual((out["active_device"], out["watched"]), ("s21", True))
+
+    def test_the_laptop_may_call_itself_laptop(self):
+        code, out = self.post("/api/presence/heartbeat", {"device": "laptop", "idle_seconds": 1, "screen_on": True})
+        self.assertEqual(code, 200)
+        self.assertEqual(out["active_device"], "pc")
+
+    def test_the_heartbeat_answer_carries_jinx_background_mood(self):
+        code, out = self.post("/api/presence/heartbeat", {"device": "s21", "idle_seconds": 1, "screen_on": True})
+        self.assertEqual(code, 200)
+        self.assertIn("jinx_mood", out)
+        self.assertIsNone(out["jinx_mood"])  # no STATE.md here: calm
+
     def test_an_unknown_device_is_refused_with_the_list_of_known_ones(self):
         code, out = self.post("/api/presence/heartbeat", {"device": "tablet", "idle_seconds": 1})
         self.assertEqual(code, 400)
@@ -98,6 +117,131 @@ class HttpTest(unittest.TestCase):
         out = self.get("/api/mochi/inbox?since_id=0")
         self.assertEqual(out["active_device"], "vga")
         self.assertEqual(len(out["messages"]), 1)
+
+
+    def test_all_flag_also_returns_acked_messages_and_never_acks(self):
+        _, a = self.post("/api/mochi/message", {"text": "uno", "kind": "info", "source": "test"})
+        self.post("/api/mochi/ack", {"id": a["id"], "by": "pc"})
+        self.assertEqual(self.get("/api/mochi/inbox?since_id=0")["messages"], [])
+        both = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"]
+        self.assertEqual([m["text"] for m in both], ["uno"])
+        self.assertEqual(self.get("/api/mochi/inbox?all=1&since_id=0")["messages"][0]["acked_by"], "pc")
+        self.assertEqual(self.get("/api/mochi/inbox?since_id=0")["messages"], [])  # reading with all=1 changed nothing
+
+
+class IslandTest(unittest.TestCase):
+    """Las órdenes de Jinx para la isla del PC: se encolan, el PC las recoge y contesta, quien las pidió ve el resultado."""
+
+    def setUp(self):
+        self.m = load()
+        self.now = time.time()
+        self.m.state["presence"]["pc"] = {"idle_seconds": 1, "screen_on": True, "ts": self.now}
+
+    def test_an_order_waits_for_the_pc_which_takes_it_once_and_answers(self):
+        code, body = self.m.island_submit("music", {"action": "next", "x": 1}, self.now)
+        self.assertEqual((code, body["ok"]), (200, True))
+        cid = body["id"]
+        got = self.m.island_poll(0)
+        self.assertEqual(got, [{"id": cid, "action": "music", "args": {"action": "next"}}])
+        self.assertEqual(self.m.island_poll(0), [], "delivered once")
+        self.assertIsNone(self.m.island_result_wait(cid, 0))
+        self.assertTrue(self.m.island_result_post(cid, True, "done", {"a": 1}, self.now))
+        r = self.m.island_result_wait(cid, 0)
+        self.assertEqual((r["ok"], r["message"], r["data"]), (True, "done", {"a": 1}))
+        self.assertFalse(self.m.island_result_post(9999, True, "x", None, self.now), "an id that was never given")
+
+    def test_what_is_not_on_the_list_is_refused_before_it_is_queued(self):
+        for action, args in (("approve", {}), ("music", {"action": "format"}), ("hub", {"tool": "x"}), ("open_app", {})):
+            code, body = self.m.island_submit(action, args, self.now)
+            self.assertEqual(code, 400, action)
+            self.assertIn("error", body)
+        self.assertEqual(self.m.island_poll(0), [])
+
+    def test_with_the_pc_off_nothing_is_queued_and_the_caller_knows(self):
+        self.m.state["presence"].clear()
+        code, body = self.m.island_submit("state", {}, self.now)
+        self.assertEqual((code, body["error"]), (409, "pc_offline"))
+
+    def test_a_pc_that_is_waiting_for_orders_counts_as_there_even_without_a_heartbeat(self):
+        self.m.state["presence"].clear()
+        self.m.island["pc_polled"] = self.now
+        self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 200)
+
+    def test_too_many_orders_a_minute_are_refused(self):
+        for _ in range(self.m.ISLAND_RATE):
+            self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 200)
+        self.assertEqual(self.m.island_submit("state", {}, self.now)[0], 429)
+        self.m.state["presence"]["pc"]["ts"] = self.now + 61   # the PC kept beating
+        self.assertEqual(self.m.island_submit("state", {}, self.now + 61)[0], 200, "a minute later")
+
+    def test_an_order_the_pc_never_took_expires_and_the_caller_is_told(self):
+        _, body = self.m.island_submit("state", {}, self.now)
+        later = self.now + self.m.ISLAND_TTL + 1
+        r = self.m.island_result_wait(body["id"], 0, clock=lambda: later)
+        self.assertFalse(r["ok"])
+        self.assertIn("caducó", r["message"])
+        self.assertEqual(self.m.island_poll(0, clock=lambda: later), [])
+
+    def test_after_a_restart_new_orders_do_not_reuse_the_ids_the_pc_already_did(self):
+        before = self.m.island_submit("state", {}, self.now)[1]["id"]
+        time.sleep(0.01)
+        restarted = load()   # the service restarted: the queue is empty again
+        restarted.state["presence"]["pc"] = {"idle_seconds": 1, "screen_on": True, "ts": time.time()}
+        after = restarted.island_submit("state", {}, time.time())[1]["id"]
+        self.assertGreater(after, before)
+
+    def test_a_result_too_big_to_keep_says_so_instead_of_vanishing(self):
+        cid = self.m.island_submit("state", {}, self.now)[1]["id"]
+        self.m.island_poll(0)
+        self.m.island_result_post(cid, True, "", {"x": "y" * 20000}, self.now)
+        r = self.m.island_result_wait(cid, 0)
+        self.assertTrue(r["ok"])
+        self.assertNotIn("data", r)
+        self.assertIn("demasiado grandes", r["message"])
+
+    def test_a_long_poll_wakes_when_an_order_arrives(self):
+        out = {}
+
+        def poll():
+            t = time.time()
+            out["got"] = self.m.island_poll(5)
+            out["took"] = time.time() - t
+
+        th = threading.Thread(target=poll)
+        th.start()
+        time.sleep(0.3)
+        self.m.island_submit("mochi", {"emote": "happy"}, time.time())
+        th.join(6)
+        self.assertEqual(out["got"][0]["action"], "mochi")
+        self.assertLess(out["took"], 2.5)
+
+    def test_over_http(self):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), self.m.Handler)
+        port = srv.server_address[1]
+        self.m.PORT = port
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+
+        def call(method, path, body=None):
+            req = urllib.request.Request("http://127.0.0.1:%d%s" % (port, path), method=method,
+                                         data=json.dumps(body).encode() if body is not None else None,
+                                         headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+
+        self.assertEqual(call("POST", "/api/island/command", {"action": "shell", "args": {}})[0], 400)
+        code, sent = call("POST", "/api/island/command", {"action": "hub", "args": {"tool": "tasks"}})
+        self.assertEqual(code, 200)
+        _, polled = call("GET", "/api/island/poll?device=pc&wait=1")
+        self.assertEqual(polled["commands"][0]["args"], {"tool": "tasks"})
+        self.assertEqual(call("GET", "/api/island/poll?device=s22")[0], 400)
+        call("POST", "/api/island/result", {"id": sent["id"], "ok": True, "message": "abierto"})
+        _, res = call("GET", "/api/island/result?id=%d&wait=1" % sent["id"])
+        self.assertEqual((res["done"], res["result"]["message"]), (True, "abierto"))
+        self.assertEqual(call("POST", "/api/island/result", {"id": 424242, "ok": True})[0], 404)
 
 
 class HostAndCorsTest(unittest.TestCase):
@@ -157,3 +301,62 @@ class HostAndCorsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JinxMoodTest(unittest.TestCase):
+    # calidez = (80 + 78 + 70) / 3 = 76 >= 74.5: contenta
+    STATE = "---\nemotion_state:\n  affection: 80\n  trust: 78\n  patience: 70\n  energy: 70\n---\n"
+    CALM = "---\nemotion_state:\n  affection: 70\n  trust: 75\n  patience: 65\n  energy: 70\n---\n"
+
+    def fresh(self, text, events=None):
+        import datetime as dt
+        import json
+        import tempfile
+        m = load()
+        # De día, en cualquier huso horario donde corran los tests (la noche se prueba aparte).
+        m.hour_of = lambda now: 15
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(text)
+        m.JINX_STATE_MD = type(m.JINX_STATE_MD)(f.name)
+        log = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        for minutes_ago, trig, deltas in (events or []):
+            ts = dt.datetime.fromtimestamp(1000.0 - minutes_ago * 60).isoformat()
+            log.write(json.dumps({"timestamp": ts, "last_event": {"trigger": trig, "deltas": deltas}}) + "\n")
+        log.close()
+        m.JINX_EVENTS_LOG = type(m.JINX_STATE_MD)(log.name)
+        m._jinx_cache.update(at=0.0, mood=None, latch={})
+        self.addCleanup(lambda: [os.path.exists(x) and os.unlink(x) for x in (f.name, log.name)])
+        return m, f.name
+
+    def test_it_reads_her_state_md_once_a_minute(self):
+        m, state_file = self.fresh(self.STATE)
+        self.assertEqual(m.jinx_mood(1000.0), "happy")
+        os.unlink(state_file)
+        self.assertEqual(m.jinx_mood(1030.0), "happy")  # cached: the file is not read again yet
+        self.assertIsNone(m.jinx_mood(1100.0))           # read again: gone, so calm
+
+    def test_a_recent_event_gives_a_face_that_fades(self):
+        praise = (2, "praise", {"affection": 10, "trust": 5, "pride": 7, "energy": 4})
+        m, _ = self.fresh(self.CALM, [praise])
+        self.assertEqual(m.jinx_mood(1000.0), "proud")
+        self.assertIsNone(m.jinx_mood(1000.0 + 3 * 3600))  # hours later: calm again
+
+    def test_neutral_chat_and_cron_pushes_give_no_face(self):
+        m, _ = self.fresh(self.CALM, [(1, "normal_interaction", {"trust": 1}),
+                                      (1, "deterministic", {"worry": 7, "energy": 5})])
+        self.assertIsNone(m.jinx_mood(1000.0))
+
+    def test_warmth_does_not_flicker(self):
+        m, state_file = self.fresh(self.STATE)
+        self.assertEqual(m.jinx_mood(1000.0), "happy")
+        with open(state_file, "w") as f:  # 73.0: inside the 72.5-74.5 band, she stays happy
+            f.write("---\nemotion_state:\n  affection: 76\n  trust: 75\n  patience: 68\n---\n")
+        self.assertEqual(m.jinx_mood(1100.0), "happy")
+        with open(state_file, "w") as f:  # 71.0: out
+            f.write("---\nemotion_state:\n  affection: 72\n  trust: 72\n  patience: 69\n---\n")
+        self.assertIsNone(m.jinx_mood(1200.0))
+
+    def test_without_her_file_she_is_calm(self):
+        m = load()
+        m._jinx_cache.update(at=0.0, mood=None, latch={})
+        self.assertIsNone(m.jinx_mood(5000.0))

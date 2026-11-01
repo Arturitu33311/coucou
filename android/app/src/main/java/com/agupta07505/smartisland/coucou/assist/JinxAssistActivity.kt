@@ -48,7 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.agupta07505.smartisland.coucou.CoucouHome
 import com.agupta07505.smartisland.coucou.CoucouRuntime
+import com.agupta07505.smartisland.coucou.CoucouTab
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
 import com.agupta07505.smartisland.coucou.ui.MochiEmerald
 import com.agupta07505.smartisland.coucou.ui.MochiGlyph
@@ -57,6 +60,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -72,6 +78,10 @@ data class AssistUi(
     val model: ModelState = ModelState.NotDownloaded,
     val modelPercent: Int = -1,
     val modelBusy: Boolean = false,
+    /** What Jinx is waiting for Alan to allow (on the server), oldest first. */
+    val approvals: List<JinxApproval> = emptyList(),
+    /** The key of the approval whose answer is on its way. */
+    val answering: String? = null,
 )
 
 class AssistModel(app: Application) : AndroidViewModel(app) {
@@ -79,7 +89,18 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     private val personas = PersonaStore(File(app.filesDir, "jinx-persona.json"))
     private val secrets = KeystoreSecrets(app)
     private val deviceId = PhoneSettings.deviceId(app)
-    private val laptopApi = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) }
+    // Jinx's gateway on the server first; the laptop's only when the server fails (see Failover).
+    private val laptopApi = FailoverChatApi(
+        server = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.SERVER) },
+        laptop = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) },
+    )
+    // Its own connections: a `send` can hold the chat's for minutes while Jinx waits for Alan's permission,
+    // and this is how that permission is seen and given meanwhile.
+    private val approvalsApi = FailoverChatApi(
+        server = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.SERVER) },
+        laptop = LaptopChatApi(app) { PhoneSettings.profile(app, PhoneSettings.LAPTOP) },
+    )
+    private val shown = MutableStateFlow(false)
     private val modelStore = ModelStore(File(app.filesDir, "models"), GemmaModel.spec)
     private val localBrain = LocalModelBrain(
         modelReady = { modelStore.state() == ModelState.Ready },
@@ -104,6 +125,48 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
             ModelDownloads.percent.collect { p ->
                 _ui.update { it.copy(modelBusy = p >= 0, modelPercent = p) }
             }
+        }
+        // Jinx's questions are looked for while one of this phone's messages waits for her (every 3 s), and
+        // while her tab is on screen (every 10 s, for those asked from the PC). Otherwise nothing runs.
+        viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.flow.combine(shown, _ui.map { it.busy }.distinctUntilChanged()) { s, b -> s to b }
+                .collectLatest { (visible, busy) ->
+                    while (visible || busy) {
+                        pollApprovals()
+                        kotlinx.coroutines.delay(if (busy) 3_000 else 10_000)
+                    }
+                }
+        }
+    }
+
+    /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
+    fun setShown(visible: Boolean) {
+        shown.value = visible
+        com.agupta07505.smartisland.coucou.presence.JinxChatScreen.visible = visible
+    }
+
+    private fun pollApprovals() {
+        // A failed look keeps what was shown: the next one says whether it is still there.
+        val items = runCatching { approvalsApi.approvals() }.getOrNull() ?: return
+        _ui.update { ui -> ui.copy(approvals = items.sortedBy { it.ts }) }
+    }
+
+    /**
+     * Alan's answer to one of Jinx's questions. Allowing has already been confirmed with the fingerprint (or
+     * the screen lock) by the card; [choice] is once, session or deny, never always from the phone.
+     */
+    fun answerApproval(a: JinxApproval, choice: String) {
+        if (choice !in JinxApprovalReview.buttons(a) || _ui.value.answering != null) return
+        _ui.update { it.copy(answering = a.key, notice = "") }
+        viewModelScope.launch(Dispatchers.IO) {
+            val msg = try {
+                approvalsApi.approve(a, choice)
+                if (choice == "deny") "Le dije a Jinx que no." else "Permiso dado a Jinx."
+            } catch (e: ChatException) {
+                "No se pudo contestar: ${e.message}"
+            }
+            _ui.update { ui -> ui.copy(answering = null, notice = msg, approvals = ui.approvals.filter { it.key != a.key }) }
+            pollApprovals()
         }
     }
 
@@ -145,6 +208,8 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
             val line = repo.enqueue(t)
             refresh()
             val r = repo.answer(line)
+            // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
+            if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->
                 when (r) {
                     is SendResult.Answered -> ui.copy(
@@ -250,113 +315,44 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         localBrain.release()
         laptopApi.close()
+        approvalsApi.close()
         super.onCleared()
     }
 }
 
-/** The assistant's panel: the shared conversation, one input, which brain answered, and Claude Code at a glance. */
+/**
+ * The assistant's entry (the side key, Digital assistant app): the Coucou app opened on Jinx's tab, so the
+ * pendientes and the settings are one tap away.
+ */
 class JinxAssistActivity : ComponentActivity() {
-    private val model: AssistModel by viewModels()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0B0B10), surface = Color(0xFF16161C))) {
-                AssistScreen(model)
-            }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        model.onOpen()
+        setContent { CoucouHome(initial = CoucouTab.Jinx) }
     }
 }
 
+/** Jinx's tab with its model: brings the laptop's lines and retries what was pending each time it is shown. */
 @Composable
-private fun AssistScreen(model: AssistModel) {
+internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
     val ui by model.ui.collectAsState()
     val agents by CoucouRuntime.agentUi.collectAsState()
-    var draft by remember { mutableStateOf("") }
-    val list = rememberLazyListState()
-    LaunchedEffect(ui.lines.size) { if (ui.lines.isNotEmpty()) list.animateScrollToItem(ui.lines.lastIndex) }
-
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().imePadding().padding(16.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MochiGlyph(size = 32.dp, tint = MochiEmerald, mood = if (ui.busy) MochiMood.Thinking else MochiMood.Listening)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Jinx", color = Color.White, fontSize = 18.sp)
-                if (ui.badge.isNotEmpty()) Text(ui.badge, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
-            }
-            TextButton(onClick = { model.syncNow() }) { Text("Sincronizar") }
-            TextButton(onClick = { model.provision() }) { Text("Provisionar (1.ª vez)") }
-        }
-        if (agents.sessions.isNotEmpty()) {
-            Text(
-                agents.sessions.joinToString(" · ") { "${it.project}: ${it.state.name.lowercase()}" },
-                color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 2,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        ModelRow(ui, onDownload = { model.downloadModel() }, onTest = { model.testLocalModel() })
-        if (ui.notice.isNotEmpty()) {
-            Text(ui.notice, color = Color(0xFFFFB74D), fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
-        }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp),
-            state = list,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(ui.lines, key = { it.id }) { l -> Bubble(l) }
-        }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { draft = it },
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Escríbele a Jinx") },
-            enabled = !ui.busy,
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { model.send(draft); draft = "" }),
-        )
+    LifecycleResumeEffect(model) {
+        model.onOpen()
+        model.setShown(true)
+        onPauseOrDispose { model.setShown(false) }
     }
-}
-
-@Composable
-private fun ModelRow(ui: AssistUi, onDownload: () -> Unit, onTest: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        val label = when {
-            ui.modelBusy && ui.modelPercent >= 0 -> "Modelo local: descargando ${ui.modelPercent} %"
-            ui.model == ModelState.Ready -> "Modelo local: listo (sin conexión)"
-            ui.model is ModelState.Partial -> "Modelo local: descarga a medias"
-            else -> "Modelo local: no descargado"
-        }
-        Text(label, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, modifier = Modifier.weight(1f))
-        if (ui.model == ModelState.Ready) {
-            TextButton(onClick = onTest, enabled = !ui.modelBusy) { Text("Probar") }
-        } else {
-            TextButton(onClick = onDownload, enabled = !ui.modelBusy) { Text("Descargar 2.6 GB") }
-        }
-    }
-}
-
-@Composable
-private fun Bubble(l: ChatLine) {
-    val mine = !l.fromJinx
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-        Column(
-            Modifier
-                .background(if (mine) Color(0xFF1F3B2E) else Color(0xFF16161C), RoundedCornerShape(14.dp))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Text(l.text, color = Color.White, fontSize = 15.sp)
-            if (l.src == "tg") Text("Telegram", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
-        }
-    }
+    AssistContent(
+        ui = ui,
+        sessions = agents.sessions,
+        onSend = { model.send(it) },
+        onSync = { model.syncNow() },
+        onProvision = { model.provision() },
+        onDownloadModel = { model.downloadModel() },
+        onTestModel = { model.testLocalModel() },
+        onApproval = { a, choice -> model.answerApproval(a, choice) },
+        modifier = modifier,
+    )
 }
 
 private const val MAX_DOWNLOAD_TRIES = 30

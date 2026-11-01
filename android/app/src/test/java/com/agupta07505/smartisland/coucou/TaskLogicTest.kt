@@ -157,4 +157,16 @@ class TaskLogicTest {
         for (i in 0 until TaskLogic.MAX_TASKS) l = TaskLogic.add(l, "t$i", null, now, "id$i")
         assertEquals(0, TaskLogic.importUnlinked(l, listOf(pend("z", "hook", null)), now) { 0L }.second)
     }
+
+    /** The same file the PC's tasks.rs reads: a pendiente's `due` rings at the same moment on both. */
+    @Test fun `due reminders follow the shared vectors`() {
+        val doc = org.json.JSONObject(javaClass.classLoader!!.getResourceAsStream("due-vectors.json")!!.bufferedReader().readText())
+        val off = doc.getLong("offset")
+        val cases = doc.getJSONArray("cases")
+        for (i in 0 until cases.length()) {
+            val c = cases.getJSONObject(i)
+            val want = if (c.isNull("expect")) null else c.getLong("expect")
+            assertEquals(c.getString("due") + ": " + c.getString("note"), want, TaskLogic.dueReminder(c.getString("due")) { off })
+        }
+    }
 }

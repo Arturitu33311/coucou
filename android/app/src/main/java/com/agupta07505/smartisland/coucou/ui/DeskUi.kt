@@ -139,7 +139,7 @@ private fun bubbleMood(lookDir: Float): BubbleMood {
         scene.surprised -> MochiMood.Surprised
         scene.glancing -> MochiMood.Glance
         scene.musicPlaying -> MochiMood.Dancing
-        else -> calm
+        else -> MochiReactions.calmOrJinx(calm, scene.jinxBackground)
     }
     return BubbleMood(mood, if (overdue) ReminderAmber else MochiEmerald, open.size, ring)
 }

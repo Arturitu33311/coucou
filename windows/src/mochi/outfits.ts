@@ -3,6 +3,14 @@
 // MochiOutfitDrawing.swift. Added on the PC only, in "auto" when no season applies: a night cap
 // while he sleeps, headphones while a player plays, sunglasses during a Pomodoro focus period.
 // Mini bots never wear anything.
+//
+// The end of this file also gives upstream's wardrobe API (its src/mochi/wardrobe.ts): the
+// wardrobe view, the desktop Mochi and the phone link use it. Its names and texts, which need
+// the translations, are in wardrobe-labels.ts: this file stays free of them, because the VGA
+// panel (jinx/vga-panel) bundles it. Both sides ported the Mac's
+// wardrobe on their own, with the file names swapped; this fork keeps its own (see
+// docs/ANALISIS_UPSTREAM.md).
+
 
 /** The Mac's wardrobe, then the two the PC adds. */
 export type Outfit =
@@ -94,4 +102,53 @@ export function pickOutfit(setting: OutfitSetting | string | undefined, ctx: Out
   // a heart); glasses chosen in Settings stay on.
   if (pick === "sunglasses" && ctx.eyesBusy) return null;
   return pick;
+}
+
+// ── Upstream's wardrobe API ───────────────────────────────────────────────────
+
+/** What can be stored in the preferences (upstream's name for OutfitSetting). */
+export type OutfitSelection = OutfitSetting;
+
+/** What Mochi wears with "auto" resolved, "none" for nothing (upstream's `Outfit`). */
+export type WornOutfit = Outfit | "none";
+
+/** Every choice, in the wardrobe's order. */
+export const OUTFIT_SELECTIONS: readonly OutfitSelection[] = OUTFIT_CHOICES.map((c) => c.value);
+
+export const DEFAULT_OUTFIT: OutfitSelection = "auto";
+
+/** A stored preference → a selection; anything unknown means "auto", as on the Mac. */
+export function parseOutfit(raw: unknown): OutfitSelection {
+  return typeof raw === "string" && (raw === "auto" || raw === "none" || KNOWN.has(raw))
+    ? (raw as OutfitSelection)
+    : DEFAULT_OUTFIT;
+}
+
+/** Easter Sunday of `year`, as [month 1–12, day]. */
+export const easterDate = easter;
+
+/** The season's outfit, "none" out of season. */
+export function seasonalOutfit(date: Date): WornOutfit {
+  return seasonal(date) ?? "none";
+}
+
+/** "auto" → the season's outfit; anything else is worn as chosen. */
+export function resolveOutfit(selection: OutfitSelection, date: Date): WornOutfit {
+  return selection === "auto" ? seasonalOutfit(date) : selection;
+}
+
+/** Same as resolveOutfit, remembered for the day — it is asked every frame. */
+export class SeasonCache {
+  private key = "";
+  private value: WornOutfit = "none";
+
+  get(selection: OutfitSelection, date = new Date()): WornOutfit {
+    if (selection !== "auto") return selection;
+    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    if (key !== this.key) {
+      this.key = key;
+      this.value = seasonalOutfit(date);
+    }
+    return this.value;
+  }
 }

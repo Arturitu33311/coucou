@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""Comando forzado de las llaves de los teléfonos en el SERVIDOR.
+
+Antes la llave solo corría coucou_pendientes.py. Ahora el servidor es el sitio principal de Jinx (el
+portátil es el respaldo), así que también sirve su gateway. Lo que el cliente pide (SSH_ORIGINAL_COMMAND)
+elige entre DOS programas fijos; nunca se interpreta como línea de comandos:
+  "jinx-chat"            -> ~/bin/jinx-chat (el gateway, instalado con install.sh)
+  cualquier otra cosa    -> coucou_pendientes.py (lo de siempre: así las llaves viejas siguen igual)
+"""
+import os
+import sys
+
+PENDIENTES = ("/home/alan/.hermes/hermes-agent/venv/bin/python", "/home/alan/.hermes/scripts/coucou_pendientes.py")
+
+
+def route(original, home, exists=os.path.exists):
+    if (original or "").strip() == "jinx-chat":
+        gw = home + "/bin/jinx-chat"
+        return [gw] if exists(gw) else None
+    return list(PENDIENTES)
+
+
+def main():
+    r = route(os.environ.get("SSH_ORIGINAL_COMMAND", ""), os.path.expanduser("~"))
+    if r is None:
+        # Sin gateway aquí: el teléfono lo nota (no hay "ev") y usa el portátil.
+        sys.stderr.write("server-dispatch: jinx-chat no está instalado aquí\n")
+        return 2
+    os.execv(r[0], r)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

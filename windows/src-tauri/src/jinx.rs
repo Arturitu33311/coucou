@@ -20,7 +20,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
-use crate::claude::ChatContext;
+use crate::chat::ChatContext;
 use crate::island::WINDOW_LABEL;
 use crate::log;
 use crate::secrets;

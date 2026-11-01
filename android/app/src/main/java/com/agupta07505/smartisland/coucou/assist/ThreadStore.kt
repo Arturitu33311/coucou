@@ -62,7 +62,8 @@ class ThreadStore(private val file: File) {
     fun pending(): List<ChatLine> {
         val lines = all()
         val answered = lines.filter { it.fromJinx }.mapNotNull { it.cid }.toSet()
-        return lines.filter { !it.fromJinx && it.src != "tg" && it.cid != null && it.cid !in answered }
+        // Telegram's and the PC's lines are answered where they were written, never from here.
+        return lines.filter { !it.fromJinx && !it.fromElsewhere && it.cid != null && it.cid !in answered }
     }
 
     companion object {

@@ -52,7 +52,8 @@ fun validMood(name: String?): String? {
     if (name == null) return null
     return name.takeIf {
         it in setOf("Idle", "Happy", "Sleepy", "Alert", "Listening",
-            "Celebrating", "Dancing", "Tired", "Surprised", "Glance")
+            "Celebrating", "Dancing", "Tired", "Surprised", "Glance") ||
+            com.agupta07505.smartisland.coucou.ui.MochiMood.entries.any { m -> m.emote != null && m.name == it }
     }
 }
 
@@ -113,6 +114,11 @@ object PresenceNet {
     }
 }
 
+/** Whether Jinx's chat tab is on screen (set by its screen); her replies then are not repeated on the island. */
+object JinxChatScreen {
+    @Volatile var visible = false
+}
+
 /** What the island shows of Jinx's inbox: one card with the latest text. */
 object IslandJinx {
     const val KEY = "coucou_jinx"
@@ -124,7 +130,8 @@ object IslandJinx {
             return emptySet()
         }
         val last = msgs.last()
-        val mood = validMood(last.mood)
+        // The sender's mood when it gave one, else what her text reads as (the PC's rules, JinxMood).
+        val mood = validMood(last.mood) ?: com.agupta07505.smartisland.coucou.assist.JinxMood.moodOfText(last.text)?.name
         repo.postNotification(
             IslandNotification(
                 key = KEY,
@@ -244,7 +251,7 @@ object MochiPresence {
         ioScope.launch {
             for (id in ids) {
                 PresenceNet.post(base, "/api/mochi/ack", key,
-                    JSONObject().put("id", id).put("by", "s21").toString())
+                    JSONObject().put("id", id).put("by", DeviceActivity.myId).toString())
             }
         }
     }
@@ -285,8 +292,11 @@ object MochiPresence {
             .put("idle_seconds", idleSeconds())
             .put("screen_on", true)
             .toString()
-        val active = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
-            ?.let { runCatching { JSONObject(it).optString("active_device", "?") }.getOrNull() }
+        val answer = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+        // The server calls the laptop "pc"; our ids say "laptop". Its "vga" (nobody in use) is an answer too.
+        val active = answer?.let { Arbiter.fromServer(it.optString("active_device", "?")) }
+        if (answer != null) JinxBackground.set(readJinxMood(answer))
         Log.d(TAG, "heartbeat -> ${active ?: "SIN RESPUESTA"}")
         // What the server says goes to the arbitration, which also hears the laptop and may overrule
         // it when the two of us do not both reach the server (see Arbiter).
@@ -303,10 +313,38 @@ object MochiPresence {
         // Only the device Mochi is on shows Jinx's texts, and it does not ack them while another one is.
         if (!DeviceActivity.active.value) return
         val nowS = System.currentTimeMillis() / 1000
-        val (stale, fresh) = inbox.partition { nowS - it.ts > 3600 }
-        ack(app, stale.map { it.id }.toSet())
-        shownIds = IslandJinx.publish(app, fresh, autoExpandAlert = true)
+        // A reply of Jinx's while her chat is on screen here is already read there: not on the island too.
+        val (seen, fresh) = inbox.partition { alreadyInChat(it, JinxChatScreen.visible) }
+        ack(app, seen.map { it.id }.toSet())
+        // Old messages are shown too, with how old they are. They used to be acked unseen after an hour, so a
+        // briefing that arrived while the phone was off was marked read the moment the screen came on, and lost.
+        shownIds = IslandJinx.publish(app, fresh.map { withAge(it, nowS) }, autoExpandAlert = true)
     }
+
+    /** A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure. */
+    fun withAge(m: PresenceMsg, nowS: Long): PresenceMsg {
+        val hours = (nowS - m.ts) / 3600
+        if (hours < 1) return m
+        val age = if (hours < 24) "$hours h" else "${hours / 24} d"
+        return m.copy(text = "🕓 $age · ${m.text}")
+    }
+
+    /** A Jinx reply (the gateway's `jinx-chat` source) shown in her open chat needs no island card. Pure. */
+    fun alreadyInChat(m: PresenceMsg, chatVisible: Boolean): Boolean = chatVisible && m.source == CHAT_SOURCE
+
+    const val CHAT_SOURCE = "jinx-chat"
+
+    /** Looks at the inbox now (a reply just came while her chat is not on screen), not at the next tick. */
+    fun pokeNow(app: Context) {
+        if (job?.isActive != true) return
+        ioScope.launch { runCatching { tick(app) } }
+    }
+
+    /** Jinx's background mood in a heartbeat answer (`jinx_mood`, one of Mochi's emotes), else null. Pure. */
+    fun readJinxMood(answer: JSONObject): String? =
+        com.agupta07505.smartisland.coucou.assist.JinxMood.validEmote(
+            if (answer.isNull("jinx_mood")) null else answer.optString("jinx_mood"),
+        )
 
     /** Pure parsing, so it can be unit-tested without Android. */
     fun parseInbox(body: String): List<PresenceMsg> {

@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.height
@@ -29,6 +30,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.style.TextOverflow
+import com.agupta07505.smartisland.coucou.CoucouHome
+import com.agupta07505.smartisland.coucou.CoucouTab
+import com.agupta07505.smartisland.coucou.ui.CoucouColors
+import com.agupta07505.smartisland.coucou.ui.GroupLabel
+import com.agupta07505.smartisland.coucou.ui.ScreenHeader
+import com.agupta07505.smartisland.coucou.ui.SectionCard
+import com.agupta07505.smartisland.coucou.ui.StatusLine
+import com.agupta07505.smartisland.coucou.ui.SwitchRow
+import com.agupta07505.smartisland.coucou.ui.Tone
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -74,199 +88,229 @@ import kotlinx.coroutines.withContext
 /**
  * Where the phone connects, and how it is allowed to. The phone makes its own key; the one line to
  * paste on each computer already carries the restriction (`restrict,command=…`), so that key can do
- * one thing there and nothing else.
+ * one thing there and nothing else. Shown as the Coucou app's Ajustes tab.
  */
 class PhoneSetupActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0B0B10), surface = Color(0xFF16161C))) {
-                Setup()
-            }
-        }
+        setContent { CoucouHome(initial = CoucouTab.Settings) }
     }
 }
+
+/** The wardrobe's names in Spanish, for this screen (the ids are the contract; Outfit.label stays the Mac's). */
+private val OUTFIT_ES = mapOf(
+    "none" to "Nada", "partyHat" to "Fiesta", "beanie" to "Gorro", "crown" to "Corona", "sunglasses" to "Gafas de sol",
+    "roundGlasses" to "Gafas", "bow" to "Moño", "scarf" to "Bufanda", "witchHat" to "Bruja", "pumpkin" to "Calabaza",
+    "santaHat" to "Santa", "bunnyEars" to "Conejo", "headphones" to "Cascos", "nightcap" to "Gorro de dormir",
+    "necktie" to "Corbata", "monocle" to "Monóculo", "headband" to "Diadema", "earmuffs" to "Orejeras",
+    "bandana" to "Pañuelo", "wizardHat" to "Mago",
+)
 
 private fun copy(context: Context, label: String, text: String) {
     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text))
 }
 
+private val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = CoucouColors.Accent,
+    unfocusedBorderColor = Color.White.copy(alpha = 0.12f),
+    focusedLabelColor = CoucouColors.Accent,
+    cursorColor = CoucouColors.Accent,
+    focusedTextColor = CoucouColors.Text,
+    unfocusedTextColor = CoucouColors.Text,
+)
+
+private val primaryButton @Composable get() = ButtonDefaults.buttonColors(
+    containerColor = CoucouColors.Accent, contentColor = Color(0xFF04140D),
+)
+
 @Composable
-private fun Setup() {
+internal fun Setup(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var publicLine by remember { mutableStateOf(PhoneKey.publicLine(context)) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()
-            .verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("Phone link", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "The phone talks to your computers over ssh, with a key of its own that can only do one thing on each: " +
-                "the server's key only reaches Jinx's pendientes, the laptop's only follows Claude Code. " +
-                "Use the computers' Tailscale names or addresses.",
-            color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp,
-        )
+        ScreenHeader(title = "Ajustes", subtitle = "Mochi, este teléfono y la conexión con tus computadoras")
 
-        Card("Mochi in the island") {
+        // Installed without a store: banking apps (Nu) will refuse to open beside the island (docs/BANK-APPS.md).
+        val installer = remember { InstallSource.installer(context) }
+        if (InstallSource.bankAppsWillBlock(installer)) {
+            SectionCard(
+                title = "Las apps de banco van a bloquear Coucou",
+                subtitle = "Se instaló sin tienda (instalador: ${installer ?: "ninguno"}), y apps como Nu se niegan a abrir " +
+                    "junto a su servicio de accesibilidad. Reinstálalo desde la laptop con android/scripts/install-phone.sh " +
+                    "(no con adb install a secas); conserva tus datos.",
+            ) {
+                StatusLine("Instalación sin tienda", Tone.Bad)
+            }
+        }
+
+        GroupLabel("Mochi")
+        SectionCard {
             var desk by remember { mutableStateOf(context.showDesk) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(checked = desk, onCheckedChange = { desk = it; context.showDesk = it; CoucouRuntime.apply(context) })
-                Spacer(Modifier.width(10.dp))
-                Text("Keep Mochi in the island, with my tasks", color = Color.White, fontSize = 14.sp)
-            }
-            Text("A small Mochi that is always there: asleep when nothing is open, looking up when something is overdue. Open the island to see the tasks and add one.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+            SwitchRow(
+                title = "Mochi en la isla, con mis pendientes",
+                description = "Un Mochi pequeño siempre ahí: dormido si no hay nada, atento cuando algo vence. Abre la isla para ver y añadir pendientes.",
+                checked = desk,
+                onChange = { desk = it; context.showDesk = it; CoucouRuntime.apply(context) },
+            )
         }
-
-        Card("Cover on the lock screen") {
+        SectionCard {
             var cover by remember { mutableStateOf(with(PhoneSettings) { context.lockCover }) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = cover,
-                    onCheckedChange = {
-                        cover = it
-                        with(PhoneSettings) { context.lockCover = it }
-                        if (!it) com.agupta07505.smartisland.coucou.LockCoverWallpaper.restore(context)
-                    },
-                )
-                Spacer(Modifier.width(10.dp))
-                Text("Show the cover of what's playing", color = Color.White, fontSize = 14.sp)
-            }
-            Text(
-                "While music plays the lock screen shows the cover itself, centred over a blurred copy. " +
-                    "It replaces your lock wallpaper meanwhile and puts it back about 90 seconds after the music stops. " +
-                    "Nothing leaves the phone.",
-                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+            SwitchRow(
+                title = "Portada en la pantalla de bloqueo",
+                description = "Mientras suena música, la pantalla de bloqueo muestra la portada sobre una copia borrosa. Reemplaza tu fondo de bloqueo y lo devuelve unos 90 segundos después de que pare. Nada sale del teléfono.",
+                checked = cover,
+                onChange = {
+                    cover = it
+                    with(PhoneSettings) { context.lockCover = it }
+                    if (!it) com.agupta07505.smartisland.coucou.LockCoverWallpaper.restore(context)
+                },
             )
         }
-
-        Card("Lyrics on the lock screen") {
+        SectionCard {
             var on by remember { mutableStateOf(with(PhoneSettings) { context.lyricsOn }) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Switch(
-                    checked = on,
-                    onCheckedChange = {
-                        on = it
-                        with(PhoneSettings) { context.lyricsOn = it }
-                        if (!it) com.agupta07505.smartisland.coucou.Lyrics.clear()
-                    },
-                )
-                Spacer(Modifier.width(10.dp))
-                Text("Show the lyrics beside the record", color = Color.White, fontSize = 14.sp)
-            }
-            Text(
-                "In the Coucou car wallpaper, the line being sung shows next to the record, in time with the song. " +
-                    "To find them, the artist, title and album of each song are sent once to lrclib.net, a free community " +
-                    "lyrics database (no account, nothing else is sent). Off by default.",
-                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+            SwitchRow(
+                title = "Letra junto al disco",
+                description = "En el fondo del coche, la línea que se canta aparece junto al disco, al compás. Artista, título y álbum se envían una vez a lrclib.net (sin cuenta, nada más). Apagado por defecto.",
+                checked = on,
+                onChange = {
+                    on = it
+                    with(PhoneSettings) { context.lyricsOn = it }
+                    if (!it) com.agupta07505.smartisland.coucou.Lyrics.clear()
+                },
             )
         }
-
-        Card("Mochi's outfit") {
+        SectionCard(
+            title = "Ropa de Mochi",
+            subtitle = "Auto sigue las estaciones (gorro de Santa en diciembre, de bruja en octubre, orejas de conejo en Pascua, " +
+                "gafas de sol en verano, gorro de fiesta en Año Nuevo), gorro de dormir cuando duerme y cascos con música.",
+        ) {
             var choice by remember { mutableStateOf(with(PhoneSettings) { context.mochiOutfit }) }
-            Text(
-                "Auto follows the seasons (Santa hat in December, witch hat in October, bunny ears at Easter, sunglasses " +
-                    "in summer, party hat at New Year), a night cap when he sleeps and headphones when music plays.",
-                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
-            )
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val options = listOf("auto" to "Auto") + Outfit.entries.map { it.id to it.label }
+                val options = listOf("auto" to "Auto") + Outfit.entries.map { it.id to (OUTFIT_ES[it.id] ?: it.label) }
                 for ((id, label) in options) {
                     val on = choice == id
                     Column(
                         Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (on) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.05f))
+                            .width(76.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (on) CoucouColors.AccentSoft else CoucouColors.SurfaceHigh)
+                            .border(1.5.dp, if (on) CoucouColors.Accent else Color.Transparent, RoundedCornerShape(16.dp))
                             .clickable {
                                 choice = id
                                 with(PhoneSettings) { context.mochiOutfit = id }
                             }
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                            .padding(vertical = 10.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         // A live preview of each one (auto previews what it picks today).
                         val shown = if (id == "auto") Wardrobe.pick("auto", MochiMood.Idle) else Outfit.of(id) ?: Outfit.None
-                        MochiGlyph(size = 52.dp, mood = MochiMood.Idle, outfit = shown)
-                        Spacer(Modifier.height(4.dp))
-                        Text(label, color = Color.White.copy(alpha = if (on) 1f else 0.7f), fontSize = 11.sp)
+                        MochiGlyph(size = 46.dp, mood = MochiMood.Idle, outfit = shown)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            label, color = if (on) CoucouColors.Text else CoucouColors.TextSecondary, fontSize = 11.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
         }
 
-        Card("This phone") {
+        GroupLabel("Este teléfono")
+        SectionCard(
+            subtitle = "Cómo se llama en el enlace con la laptop y en el latido del servidor de presencia, para que los dos " +
+                "teléfonos compartan a Mochi (se queda en el que usas). Por defecto sale del modelo.",
+        ) {
             var id by remember { mutableStateOf(PhoneSettings.deviceId(context)) }
-            Text(
-                "What it calls itself on the laptop's link and in the presence server's heartbeat, so two phones can " +
-                    "share Mochi (he stays on the one in use). By default it comes from the model.",
-                color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.clip(RoundedCornerShape(14.dp)).background(CoucouColors.SurfaceHigh).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 for (phone in Arbiter.PHONES.sorted()) {
-                    Button(
-                        onClick = { id = phone; PhoneSettings.saveDeviceId(context, phone); CoucouRuntime.apply(context) },
-                        enabled = id != phone,
-                    ) { Text(phone.uppercase()) }
+                    val on = id == phone
+                    Text(
+                        phone.uppercase(),
+                        color = if (on) Color(0xFF04140D) else CoucouColors.TextSecondary,
+                        fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                            .background(if (on) CoucouColors.Accent else Color.Transparent)
+                            .clickable(enabled = !on) { id = phone; PhoneSettings.saveDeviceId(context, phone); CoucouRuntime.apply(context) }
+                            .padding(horizontal = 22.dp, vertical = 8.dp),
+                    )
                 }
             }
-            Text("Now: ${id.uppercase()} (applies at the next start of the link).", color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+            Text("Se aplica la próxima vez que arranque el enlace.", color = CoucouColors.TextTertiary, fontSize = 12.sp)
         }
 
-        Card("1 · The phone's key") {
+        GroupLabel("Conexiones")
+        Text(
+            "El teléfono habla con tus computadoras por ssh, con una llave propia que en cada una solo puede hacer una " +
+                "cosa: en el servidor, los pendientes de Jinx; en la laptop, seguir a Claude Code y hablar con Jinx. " +
+                "Usa los nombres o direcciones de Tailscale.",
+            color = CoucouColors.TextTertiary, fontSize = 12.5.sp, lineHeight = 17.sp, modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        SectionCard(title = "1 · La llave del teléfono") {
             val line = publicLine
             if (line == null) {
-                Button(onClick = {
+                Button(colors = primaryButton, onClick = {
                     scope.launch {
                         error = runCatching { withContext(Dispatchers.Default) { PhoneKey.create(context) } }
                             .fold({ publicLine = it; null }, { it.message })
                     }
-                }) { Text("Make the key") }
-                Text("An RSA 3072 key, kept encrypted with the Android Keystore. It never leaves the phone.", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp)
+                }) { Text("Crear la llave") }
+                Text("Una llave RSA 3072, cifrada con el Android Keystore. Nunca sale del teléfono.", color = CoucouColors.TextTertiary, fontSize = 12.sp)
             } else {
-                Text("Fingerprint ${PhoneKey.fingerprint(line)}", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                StatusLine("Llave lista", Tone.Good)
+                Text(PhoneKey.fingerprint(line), color = CoucouColors.TextTertiary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             }
         }
 
         publicLine?.let { line ->
             HostCard(
-                name = PhoneSettings.SERVER, title = "2 · The server (Jinx's pendientes)",
+                name = PhoneSettings.SERVER, title = "2 · El servidor (pendientes de Jinx)",
                 authorizedLine = { user -> "restrict,command=\"python3 /home/$user/.hermes/coucou/pendientes-gateway.py\" $line" },
-                switchLabel = "Share my tasks with Jinx", switchOn = context.jinxSync,
+                switchLabel = "Compartir mis pendientes con Jinx", switchOn = context.jinxSync,
                 onSwitch = { context.jinxSync = it; CoucouRuntime.apply(context); CoucouRuntime.kick() },
-                status = { CoucouRuntime.jinx.collectAsState().value.let { o -> o.error ?: "${o.fromJinx.size} of Jinx's own pendientes" } },
+                status = {
+                    CoucouRuntime.jinx.collectAsState().value.let { o ->
+                        o.error?.let { it to Tone.Warn } ?: ("${o.fromJinx.size} pendientes propios de Jinx" to Tone.Good)
+                    }
+                },
             )
             HostCard(
-                name = PhoneSettings.LAPTOP, title = "3 · The laptop (Claude Code)",
+                name = PhoneSettings.LAPTOP, title = "3 · La laptop (Claude Code y Jinx)",
                 authorizedLine = { user -> "restrict,command=\"/home/$user/.local/share/coucou/bin/coucou-hook --remote\" $line" },
-                switchLabel = "Follow Claude Code and answer it", switchOn = context.followClaude,
+                switchLabel = "Seguir a Claude Code y contestarle", switchOn = context.followClaude,
                 onSwitch = { context.followClaude = it; CoucouRuntime.apply(context) },
                 status = {
                     val ui = CoucouRuntime.agentUi.collectAsState().value
                     when (ui.status) {
-                        AgentUi.Status.Off -> ui.detail.ifEmpty { "off" }
-                        AgentUi.Status.Connecting -> "connecting…"
+                        AgentUi.Status.Off -> ui.detail.ifEmpty { "apagado" } to Tone.Neutral
+                        AgentUi.Status.Connecting -> "conectando…" to Tone.Neutral
                         AgentUi.Status.Connected -> {
                             // Who has Mochi right now: it follows whichever device the person is using.
                             val here = com.agupta07505.smartisland.coucou.presence.DeviceActivity.active.collectAsState().value
-                            "connected · ${ui.sessions.size} session(s) · Mochi is " + if (here) "on this phone" else "on the laptop"
+                            ("conectado · ${ui.sessions.size} sesión(es) · Mochi está " + if (here) "en este teléfono" else "en la laptop") to Tone.Good
                         }
-                        AgentUi.Status.Reconnecting -> "reconnecting… ${ui.detail}"
-                        AgentUi.Status.LaptopClosed -> "Coucou is closed on the laptop"
+                        AgentUi.Status.Reconnecting -> "reconectando… ${ui.detail}" to Tone.Warn
+                        AgentUi.Status.LaptopClosed -> "Coucou está cerrado en la laptop" to Tone.Warn
                     }
                 },
             )
             PresenceCard()
             AudioLinkCard()
         }
-        error?.let { Text(it, color = Color(0xFFF5A524), fontSize = 12.sp) }
-        Spacer(Modifier.padding(20.dp))
+        error?.let { Text(it, color = CoucouColors.Warning, fontSize = 12.5.sp) }
+        Spacer(Modifier.padding(12.dp))
     }
 }
 
@@ -282,28 +326,38 @@ private fun PresenceCard() {
     var key by remember { mutableStateOf(PhoneSettings.mochiKey(context)) }
     val status by MochiPresence.status.collectAsState()
 
-    Card("4 · Jinx's texts (presence)") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = on, onCheckedChange = { on = it; context.followJinx = it; CoucouRuntime.apply(context) })
-            Spacer(Modifier.width(10.dp))
-            Text("Hear Jinx's texts on this phone", color = Color.White, fontSize = 14.sp)
-        }
-        Text(
-            "Heartbeat says this phone is looked at; Jinx's texts then land on the island instead of Telegram. Only while the screen is on. The key is the same as ~/.config/mochi-presence/key on the server.",
-            color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp,
+    SectionCard(title = "4 · Los mensajes de Jinx (presencia)") {
+        SwitchRow(
+            title = "Recibir los mensajes de Jinx aquí",
+            description = "El latido dice que miras este teléfono; los mensajes de Jinx llegan entonces a la isla en vez de a " +
+                "Telegram. Solo con la pantalla encendida. La llave es la de ~/.config/mochi-presence/key en el servidor.",
+            checked = on,
+            onChange = { on = it; context.followJinx = it; CoucouRuntime.apply(context) },
         )
         OutlinedTextField(url, { url = it; PhoneSettings.savePresenceUrl(context, it) },
-            label = { Text("Presence URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            label = { Text("URL de presencia") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
+            shape = RoundedCornerShape(14.dp))
         OutlinedTextField(key, { key = it; PhoneSettings.saveMochiKey(context, it) },
-            label = { Text("Inbox key") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            visualTransformation = PasswordVisualTransformation())
-        Text(status, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+            label = { Text("Llave del buzón") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
+            shape = RoundedCornerShape(14.dp), visualTransformation = PasswordVisualTransformation())
+        val (text, tone) = presenceLabel(status)
+        StatusLine(text, tone)
     }
 }
 
+/** MochiPresence's status, in the screen's words and colour. */
+private fun presenceLabel(status: String): Pair<String, Tone> = when {
+    status == "off" -> "apagado" to Tone.Neutral
+    status == "awake" || status == "presencia aquí" -> (if (status == "awake") "activo" else status) to Tone.Good
+    status == "screen off" -> "pantalla apagada" to Tone.Neutral
+    status == "presencia en otro dispositivo" -> status to Tone.Neutral
+    status.startsWith("error") || status.startsWith("no screen events") -> status to Tone.Bad
+    else -> status to Tone.Warn
+}
+
 /**
- * The laptop's sound through the headphones that stay on this phone. It has a key of its own, separate from
- * the Claude Code one: that key may run only `coucou-hook --audio`, so losing it loses the audio and nothing else.
+ * El sonido de la laptop por los audífonos que se quedan en este celular. Tiene una llave propia, aparte de la de
+ * Claude Code: esa llave solo puede ejecutar `coucou-hook --audio`, así que perderla pierde el audio y nada más.
  */
 @Composable
 private fun AudioLinkCard() {
@@ -315,61 +369,50 @@ private fun AudioLinkCard() {
     val status by AudioLinkService.status.collectAsState()
     val user = PhoneSettings.profile(context, PhoneSettings.LAPTOP).user
 
-    Card("5 · Laptop audio through the headphones") {
-        Text(
-            "Keep the Bluetooth headphones on this phone and hear the laptop through them: what plays on the laptop is " +
-                "sent here, and whichever device starts playing pauses the other. Turn it on in the laptop's settings too " +
-                "(Settings → Phone → Phone headphones). It needs the laptop paired above.",
-            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
-        )
+    SectionCard(
+        title = "5 · El audio de la laptop por los audífonos",
+        subtitle = "Los audífonos Bluetooth se quedan en este celular y la laptop suena por ellos: lo que se reproduce allá se " +
+            "manda aquí, y el que empieza a sonar pausa al otro. Actívalo también en la laptop (Ajustes → Teléfono → Audífonos del " +
+            "teléfono). Necesita la laptop emparejada arriba.",
+    ) {
         val line = audioLine
         if (line == null) {
-            Button(onClick = {
+            Button(colors = primaryButton, onClick = {
                 scope.launch {
                     error = runCatching { withContext(Dispatchers.Default) { PhoneKey.create(context, AudioLinkSetup.KEY) } }
                         .fold({ audioLine = it; null }, { it.message })
                 }
-            }) { Text("Make the audio key") }
+            }) { Text("Crear la llave de audio") }
         } else if (user.isBlank()) {
-            Text("Fill in the laptop's user above to get the line to paste.", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+            Text("Rellena el usuario de la laptop arriba para obtener la línea que se pega.", color = CoucouColors.TextSecondary, fontSize = 12.5.sp)
         } else {
             val authorized = AudioLinkSetup.authorizedLine(user, line)
-            Text("Paste this second line in ~/.ssh/authorized_keys on the laptop:", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+            Text("Pega esta segunda línea en ~/.ssh/authorized_keys de la laptop:", color = CoucouColors.TextSecondary, fontSize = 12.5.sp)
             SelectionContainer {
                 Text(
-                    authorized, color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.06f)).padding(8.dp),
+                    authorized, color = CoucouColors.Text.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CoucouColors.SurfaceHigh).padding(10.dp),
                 )
             }
-            OutlinedButton(onClick = { copy(context, "authorized_keys line", authorized) }) { Text("Copy the line") }
+            TextButton(onClick = { copy(context, "authorized_keys line", authorized) }) {
+                Text("Copiar la línea", color = CoucouColors.Accent)
+            }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = on, onCheckedChange = { on = it; context.audioLink = it; CoucouRuntime.apply(context) })
-            Spacer(Modifier.width(10.dp))
-            Text("Hear the laptop through the headphones", color = Color.White, fontSize = 14.sp)
-        }
-        Text(
-            when (status) {
-                AudioLinkService.Status.Off -> "off"
-                AudioLinkService.Status.Idle -> "waiting for the headphones to connect to this phone"
-                AudioLinkService.Status.NeedsSetup -> "pair the laptop and paste the line above"
-                AudioLinkService.Status.Connecting -> "connecting…"
-                AudioLinkService.Status.Streaming -> "connected to the laptop"
-                AudioLinkService.Status.Reconnecting -> "reconnecting…"
-            },
-            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+        SwitchRow(
+            title = "Oír la laptop por los audífonos",
+            checked = on,
+            onChange = { on = it; context.audioLink = it; CoucouRuntime.apply(context) },
         )
-        error?.let { Text(it, color = Color(0xFFF5A524), fontSize = 12.sp) }
-    }
-}
-
-@Composable
-private fun Card(title: String, content: @Composable () -> Unit) {    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surface).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-        content()
+        val (text, tone) = when (status) {
+            AudioLinkService.Status.Off -> "apagado" to Tone.Neutral
+            AudioLinkService.Status.Idle -> "esperando a que los audífonos se conecten a este celular" to Tone.Neutral
+            AudioLinkService.Status.NeedsSetup -> "empareja la laptop y pega la línea de arriba" to Tone.Warn
+            AudioLinkService.Status.Connecting -> "conectando…" to Tone.Warn
+            AudioLinkService.Status.Streaming -> "conectado a la laptop" to Tone.Good
+            AudioLinkService.Status.Reconnecting -> "reconectando…" to Tone.Warn
+        }
+        StatusLine(text, tone)
+        error?.let { StatusLine(it, Tone.Bad) }
     }
 }
 
@@ -381,7 +424,7 @@ private fun HostCard(
     switchLabel: String,
     switchOn: Boolean,
     onSwitch: (Boolean) -> Unit,
-    status: @Composable () -> String,
+    status: @Composable () -> Pair<String, Tone>,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -395,60 +438,68 @@ private fun HostCard(
 
     fun current() = SshProfile(host.trim(), port.toIntOrNull() ?: 22, user.trim(), if (PhoneSettings.changedHost(profile, SshProfile(host, port.toIntOrNull() ?: 22))) "" else profile.hostKey)
 
-    Card(title) {
-        OutlinedTextField(host, { host = it }, label = { Text("Host (name or address)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+    SectionCard(title = title) {
+        val (statusText, tone) = status()
+        StatusLine(if (profile.paired) statusText else "sin emparejar", if (profile.paired) tone else Tone.Neutral)
+        OutlinedTextField(host, { host = it }, label = { Text("Equipo (nombre o dirección)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(), colors = fieldColors, shape = RoundedCornerShape(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(user, { user = it }, label = { Text("User") }, singleLine = true, modifier = Modifier.weight(1f))
-            OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Port") }, singleLine = true, modifier = Modifier.width(96.dp))
+            OutlinedTextField(user, { user = it }, label = { Text("Usuario") }, singleLine = true, modifier = Modifier.weight(1f),
+                colors = fieldColors, shape = RoundedCornerShape(14.dp))
+            OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Puerto") }, singleLine = true,
+                modifier = Modifier.width(96.dp), colors = fieldColors, shape = RoundedCornerShape(14.dp))
         }
         if (user.isNotBlank()) {
-            Text("Paste this line in ~/.ssh/authorized_keys on that computer:", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+            Text("Pega esta línea en ~/.ssh/authorized_keys de ese equipo:", color = CoucouColors.TextSecondary, fontSize = 12.5.sp)
             SelectionContainer {
                 Text(
-                    authorizedLine(user.trim()), color = Color.White.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = 0.06f)).padding(8.dp),
+                    authorizedLine(user.trim()), color = CoucouColors.Text.copy(alpha = 0.85f), fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(CoucouColors.SurfaceHigh).padding(10.dp),
                 )
             }
-            OutlinedButton(onClick = { copy(context, "authorized_keys line", authorizedLine(user.trim())) }) { Text("Copy the line") }
+            TextButton(onClick = { copy(context, "authorized_keys line", authorizedLine(user.trim())) }) {
+                Text("Copiar la línea", color = CoucouColors.Accent)
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
+                colors = primaryButton,
                 enabled = host.isNotBlank() && user.isNotBlank(),
                 onClick = {
-                    note = "meeting ${host.trim()}…"
+                    note = "conectando con ${host.trim()}…"
                     scope.launch {
                         val p = SshProfile(host.trim(), port.toIntOrNull() ?: 22, user.trim())
                         runCatching { withContext(Dispatchers.IO) { Ssh.probe(p) } }
-                            .onSuccess { seen = it; note = "It shows this key. Compare it with the one on that computer, then trust it." }
+                            .onSuccess { seen = it; note = "Muestra esta llave. Compárala con la de ese equipo y, si coincide, confía en ella." }
                             .onFailure { seen = null; note = it.message }
                     }
                 },
-            ) { Text(if (profile.paired) "Meet again" else "Meet") }
+            ) { Text(if (profile.paired) "Volver a emparejar" else "Emparejar") }
             OutlinedButton(
                 enabled = profile.paired,
                 onClick = {
-                    note = "testing…"
+                    note = "probando…"
                     scope.launch {
                         note = withContext(Dispatchers.IO) {
-                            runCatching { Ssh.open(context, profile).use { "Connected as ${profile.user}" } }.getOrElse { it.message }
+                            runCatching { Ssh.open(context, profile).use { "Conectado como ${profile.user}" } }.getOrElse { it.message }
                         }
                     }
                 },
-            ) { Text("Test") }
+            ) { Text("Probar") }
         }
         seen?.let { fp ->
             Text(fp, color = Color(0xFF86EFAC), fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-            Text("On that computer: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-            Button(onClick = {
+            Text("En ese equipo: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub", color = CoucouColors.TextTertiary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            Button(colors = primaryButton, onClick = {
                 val p = SshProfile(host.trim(), port.toIntOrNull() ?: 22, user.trim(), fp)
                 PhoneSettings.save(context, name, p)
                 profile = p
                 seen = null
-                note = "Trusted."
-            }) { Text("It matches: trust it") }
+                note = "Confiado."
+            }) { Text("Coincide: confiar") }
         }
-        if (profile.paired) Text("Trusted: ${profile.hostKey}", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        note?.let { Text(it, color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp) }
+        if (profile.paired) Text("Llave del equipo: ${profile.hostKey}", color = CoucouColors.TextTertiary, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        note?.let { Text(it, color = CoucouColors.TextSecondary, fontSize = 12.5.sp) }
         // Saving what was typed (without pairing) so the line above stays when the screen is left.
         androidx.compose.runtime.LaunchedEffect(host, port, user) {
             val c = current()
@@ -457,11 +508,6 @@ private fun HostCard(
                 profile = c
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(checked = on, enabled = profile.paired, onCheckedChange = { on = it; onSwitch(it) })
-            Spacer(Modifier.width(10.dp))
-            Text(switchLabel, color = Color.White, fontSize = 14.sp)
-        }
-        Text(status(), color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+        SwitchRow(title = switchLabel, checked = on, enabled = profile.paired, onChange = { on = it; onSwitch(it) })
     }
 }

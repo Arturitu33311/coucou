@@ -51,6 +51,38 @@ pub fn local_dir() -> PathBuf {
     xdg("XDG_DATA_HOME", ".local/share").join("coucou")
 }
 
+/// Where a saved image goes, best first: the XDG pictures folder named in
+/// ~/.config/user-dirs.dirs, then ~/Pictures, ~/Downloads and the home folder.
+/// The caller takes the first one that exists.
+pub fn picture_dirs() -> Vec<PathBuf> {
+    let home = home_dir();
+    let mut dirs = Vec::new();
+    let user_dirs = xdg("XDG_CONFIG_HOME", ".config").join("user-dirs.dirs");
+    if let Ok(text) = std::fs::read_to_string(user_dirs) {
+        if let Some(dir) = xdg_user_dir(&text, "XDG_PICTURES_DIR", &home) {
+            dirs.push(dir);
+        }
+    }
+    dirs.push(home.join("Pictures"));
+    dirs.push(home.join("Downloads"));
+    dirs.push(home);
+    dirs
+}
+
+/// `XDG_PICTURES_DIR="$HOME/Pictures"` → /home/me/Pictures. Only the two forms
+/// xdg-user-dirs writes are understood: "$HOME/…" and an absolute path.
+fn xdg_user_dir(text: &str, key: &str, home: &Path) -> Option<PathBuf> {
+    let line = text.lines().map(str::trim).find(|l| l.starts_with(key))?;
+    let value = line.strip_prefix(key)?.trim_start().strip_prefix('=')?.trim();
+    let value = value.strip_prefix('"')?.strip_suffix('"')?;
+    let path = match value.strip_prefix("$HOME") {
+        Some(rest) => home.join(rest.trim_start_matches('/')),
+        None => PathBuf::from(value),
+    };
+    // "$HOME/" alone means "no pictures folder", by the spec.
+    (path.is_absolute() && path != home).then_some(path)
+}
+
 /// Environment the webview must inherit, set before any thread or process
 /// starts.
 ///
@@ -60,6 +92,8 @@ pub fn local_dir() -> PathBuf {
 /// every launch, so each launch would rewrite the system's registry with
 /// plugin paths that vanish once Coucou quits. Give ours its own file.
 pub fn prepare_environment() {
+    prefer_x11_on_gnome();
+    follow_gnome_text_scaling();
     if std::env::var_os("APPIMAGE").is_none() || std::env::var_os("GST_REGISTRY").is_some() {
         return;
     }
@@ -67,6 +101,66 @@ pub fn prepare_environment() {
     if std::fs::create_dir_all(&cache).is_ok() {
         std::env::set_var("GST_REGISTRY", cache.join("gstreamer-registry.bin"));
     }
+}
+
+/// GNOME on Wayland has no layer-shell and ignores where a regular window asks
+/// to go, so the island lands in the middle of the screen. Through XWayland it
+/// can be placed, and a Dock window survives "show desktop" (Super+D).
+/// An inherited GDK_BACKEND=wayland is overridden too: editors and terminals
+/// pass theirs down to every child. COUCOU_X11=0 keeps the Wayland window.
+fn prefer_x11_on_gnome() {
+    let env = |k: &str| std::env::var(k).unwrap_or_default();
+    if should_prefer_x11(
+        &env("XDG_SESSION_TYPE"),
+        &env("XDG_CURRENT_DESKTOP"),
+        &env("COUCOU_X11"),
+        &env("DISPLAY"),
+    ) {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+}
+
+/// Only with XWayland actually there (`DISPLAY` set): forcing x11 without it
+/// would leave GTK with no display at all.
+fn should_prefer_x11(session: &str, desktop: &str, opt: &str, display: &str) -> bool {
+    session.eq_ignore_ascii_case("wayland")
+        && desktop.split(':').any(|d| d.eq_ignore_ascii_case("gnome"))
+        && opt != "0"
+        && !display.trim().is_empty()
+}
+
+fn is_gnome(desktop: &str) -> bool {
+    desktop.split(':').any(|d| d.eq_ignore_ascii_case("gnome"))
+}
+
+/// GNOME's "Large text" (text-scaling-factor > 1) makes WebKitGTK draw every
+/// font larger inside a window sized in fixed pixels, so the island's content
+/// was cut off (#122). The island's layout is its own, so it asks GDK to undo
+/// that factor for this process only. An explicit GDK_DPI_SCALE always wins.
+fn follow_gnome_text_scaling() {
+    if std::env::var_os("GDK_DPI_SCALE").is_some()
+        || !is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+    {
+        return;
+    }
+    let Ok(out) = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "text-scaling-factor"])
+        .output()
+    else {
+        return;
+    };
+    if let Some(scale) = dpi_scale_for(&String::from_utf8_lossy(&out.stdout)) {
+        std::env::set_var("GDK_DPI_SCALE", scale);
+    }
+}
+
+/// `"1.25\n"` → `Some("0.8")`; `None` for 1.0 or anything unreadable.
+fn dpi_scale_for(gsettings_output: &str) -> Option<String> {
+    let factor: f64 = gsettings_output.trim().parse().ok()?;
+    if !(0.5..=3.0).contains(&factor) || (factor - 1.0).abs() < 0.01 {
+        return None;
+    }
+    Some(format!("{:.4}", 1.0 / factor).trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
 pub fn local_time() -> LocalTime {
@@ -119,6 +213,25 @@ pub fn relay_socket_path() -> Option<PathBuf> {
     is_private_dir(&dir).then(|| dir.join("coucou.sock"))
 }
 
+// ── Who we are ────────────────────────────────────────────────────────────────
+
+/// The account's full name: the first field of the passwd GECOS entry
+/// ("Louis Raille,,,"), or nothing when it is unset.
+pub fn user_full_name() -> Option<String> {
+    unsafe {
+        let mut pwd: libc::passwd = std::mem::zeroed();
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        let mut buf = vec![0 as libc::c_char; 16 * 1024];
+        let rc = libc::getpwuid_r(libc::getuid(), &mut pwd, buf.as_mut_ptr(), buf.len(), &mut result);
+        if rc != 0 || result.is_null() || pwd.pw_gecos.is_null() {
+            return None;
+        }
+        let gecos = std::ffi::CStr::from_ptr(pwd.pw_gecos).to_string_lossy().into_owned();
+        let name = gecos.split(',').next().unwrap_or("").trim().to_string();
+        (!name.is_empty()).then_some(name)
+    }
+}
+
 // ── Processes ─────────────────────────────────────────────────────────────────
 
 /// Nothing to hide: a spawned process only gets a terminal if it asks for one.
@@ -144,6 +257,41 @@ pub fn find_on_path(stem: &str) -> Option<PathBuf> {
                 .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
                 .unwrap_or(false)
         })
+}
+
+// ── Session windows ("Open terminal") ─────────────────────────────────────────
+//
+// Finding and raising a session's window lives in linux_focus.rs. There is no
+// Claude desktop app for Linux.
+
+pub fn open_claude_desktop() -> bool {
+    false
+}
+
+/// Where the Codex CLI may be, best first: $PATH, then the usual per-user
+/// install folders, which a desktop launch often leaves out of $PATH (npm's
+/// global prefix, Volta, Bun, pnpm, and nvm with its newest Node first).
+pub fn codex_candidates() -> Vec<PathBuf> {
+    let home = home_dir();
+    let mut out: Vec<PathBuf> = find_on_path("codex").into_iter().collect();
+    for dir in [".local/bin", ".npm-global/bin", ".volta/bin", ".bun/bin", ".local/share/pnpm"] {
+        out.push(home.join(dir).join("codex"));
+    }
+    out.push(PathBuf::from("/usr/local/bin/codex"));
+    out.push(PathBuf::from("/usr/bin/codex"));
+    let nvm = home.join(".nvm/versions/node");
+    if let Ok(entries) = std::fs::read_dir(&nvm) {
+        let mut versions: Vec<String> =
+            entries.filter_map(|e| e.ok()?.file_name().into_string().ok()).collect();
+        versions.sort_by(|a, b| crate::codex_plan::compare_versions(b, a));
+        out.extend(versions.iter().map(|v| nvm.join(v).join("bin/codex")));
+    }
+    out.retain(|p| {
+        std::fs::metadata(p)
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    });
+    out
 }
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
@@ -183,6 +331,22 @@ pub fn pointer_in_window(win: &WebviewWindow) -> Option<(f64, f64)> {
 /// How many window buttons the desktop puts on the left and on the right of a title bar
 /// (`button-layout`, e.g. `appmenu:minimize,maximize,close`: none, then three).
 fn button_sides() -> (usize, usize) {
+    // Asked four times a second by the dodge: the setting is read again every few seconds, not every time.
+    thread_local! {
+        static CACHE: std::cell::Cell<Option<(std::time::Instant, (usize, usize))>> = const { std::cell::Cell::new(None) };
+    }
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+    if let Some((at, sides)) = CACHE.with(|c| c.get()) {
+        if at.elapsed() < FRESH {
+            return sides;
+        }
+    }
+    let sides = read_button_sides();
+    CACHE.with(|c| c.set(Some((std::time::Instant::now(), sides))));
+    sides
+}
+
+fn read_button_sides() -> (usize, usize) {
     use gtk::gio;
     use gtk::gio::prelude::SettingsExt;
     let schema = "org.gnome.desktop.wm.preferences";
@@ -237,32 +401,164 @@ fn shadow_extents(w: &gtk::gdk::Window) -> (i32, i32, i32, i32) {
     (values[0].max(0), values[1].max(0), values[2].max(0), values[3].max(0))
 }
 
+/// What the window manager says about one top-level window: everything the island needs to know to decide
+/// whether the buttons of its title bar are really there to be clicked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WinInfo {
+    /// What is seen of it (its frame without the invisible shadow), in root coordinates.
+    pub visible: (i32, i32, i32, i32),
+    /// A window with a title bar of its own (`_NET_WM_WINDOW_TYPE` NORMAL or DIALOG, or none set).
+    pub normal: bool,
+    /// The process behind it (`_NET_WM_PID`).
+    pub pid: Option<u32>,
+    /// The workspace it is on (`_NET_WM_DESKTOP`; `ALL_DESKTOPS` for every one).
+    pub desktop: Option<u32>,
+    /// Iconified, full screen, or otherwise not on screen.
+    pub hidden: bool,
+}
+
+/// `_NET_WM_DESKTOP` of a window that is on every workspace.
+pub const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
+
+/// Is a window with these `_NET_WM_WINDOW_TYPE` names one that has a title bar? No type set is an ordinary window.
+pub fn has_titlebar(types: &[String]) -> bool {
+    types.is_empty()
+        || types
+            .iter()
+            .any(|t| matches!(t.as_str(), "_NET_WM_WINDOW_TYPE_NORMAL" | "_NET_WM_WINDOW_TYPE_DIALOG"))
+}
+
+/// Does `inner` lie entirely inside `outer`?
+fn within_rect(inner: [i32; 4], outer: (i32, i32, i32, i32)) -> bool {
+    inner[0] >= outer.0
+        && inner[1] >= outer.1
+        && inner[0] + inner[2] <= outer.0 + outer.2
+        && inner[1] + inner[3] <= outer.1 + outer.3
+}
+
+/// The button areas, in root coordinates, that can be clicked: those of the windows on this workspace that
+/// are up against the top of the screen and not covered by a window above them. `stack` is bottom-most first
+/// (as `window_stack` gives it); `own_pid` is Coucou itself, whose own windows (the pill, the Coucou window,
+/// Mochi on the desktop) are not someone's title bar. Pure, so it can be tested.
+pub fn clickable_button_areas(
+    stack: &[WinInfo],
+    current_desktop: Option<u32>,
+    own_pid: u32,
+    left: usize,
+    right: usize,
+) -> Vec<[i32; 4]> {
+    let on_this_desktop = |w: &WinInfo| match (w.desktop, current_desktop) {
+        (Some(d), Some(c)) => d == ALL_DESKTOPS || d == c,
+        _ => true, // not told: shown rather than lost
+    };
+    let counts = |w: &WinInfo| w.normal && !w.hidden && w.pid != Some(own_pid) && on_this_desktop(w);
+    let mut covering: Vec<(i32, i32, i32, i32)> = Vec::new();
+    let mut out = Vec::new();
+    // From the top down: what is already collected hides what lies under it.
+    for w in stack.iter().rev().filter(|w| counts(w)) {
+        for a in button_areas(w.visible, left, right) {
+            if !covering.iter().any(|c| within_rect(a, *c)) {
+                out.push(a);
+            }
+        }
+        covering.push(w.visible);
+    }
+    out
+}
+
+/// The workspace in use (`_NET_CURRENT_DESKTOP` of the root window), if the window manager says.
+fn current_desktop(screen: &gtk::gdk::Screen) -> Option<u32> {
+    cardinal(&screen.root_window()?, "_NET_CURRENT_DESKTOP")
+}
+
+/// A one-number property of a window (`CARDINAL`).
+fn cardinal(w: &gtk::gdk::Window, name: &str) -> Option<u32> {
+    let atom = gtk::gdk::Atom::intern(name);
+    let cardinal = gtk::gdk::Atom::intern("CARDINAL");
+    let (_, _, data) = gtk::gdk::property_get(w, &atom, &cardinal, 0, 8, 0)?;
+    match data.len() {
+        8 => Some(u64::from_ne_bytes(data[..8].try_into().ok()?) as u32),
+        4 => Some(u32::from_ne_bytes(data[..4].try_into().ok()?)),
+        _ => None,
+    }
+}
+
+/// The names in the window's `_NET_WM_WINDOW_TYPE`. GDK hands an `ATOM` property back already as GdkAtoms.
+fn window_types(w: &gtk::gdk::Window) -> Vec<String> {
+    let atom = gtk::gdk::Atom::intern("_NET_WM_WINDOW_TYPE");
+    let kind = gtk::gdk::Atom::intern("ATOM");
+    let Some((_, _, data)) = gtk::gdk::property_get(w, &atom, &kind, 0, 64, 0) else { return Vec::new() };
+    let word = std::mem::size_of::<usize>();
+    let known = [
+        "_NET_WM_WINDOW_TYPE_NORMAL",
+        "_NET_WM_WINDOW_TYPE_DIALOG",
+        "_NET_WM_WINDOW_TYPE_DOCK",
+        "_NET_WM_WINDOW_TYPE_DESKTOP",
+        "_NET_WM_WINDOW_TYPE_UTILITY",
+        "_NET_WM_WINDOW_TYPE_TOOLBAR",
+        "_NET_WM_WINDOW_TYPE_MENU",
+        "_NET_WM_WINDOW_TYPE_SPLASH",
+        "_NET_WM_WINDOW_TYPE_NOTIFICATION",
+        "_NET_WM_WINDOW_TYPE_TOOLTIP",
+        "_NET_WM_WINDOW_TYPE_POPUP_MENU",
+        "_NET_WM_WINDOW_TYPE_DROPDOWN_MENU",
+        "_NET_WM_WINDOW_TYPE_COMBO",
+        "_NET_WM_WINDOW_TYPE_DND",
+    ];
+    let named: Vec<(usize, &str)> = known.iter().map(|n| (gtk::gdk::Atom::intern(n).value(), *n)).collect();
+    data.chunks_exact(word)
+        .map(|c| usize::from_ne_bytes(c.try_into().unwrap_or([0; std::mem::size_of::<usize>()])))
+        .map(|v| named.iter().find(|(a, _)| *a == v).map_or_else(|| "other".to_string(), |(_, n)| (*n).to_string()))
+        .collect()
+}
+
+extern "C" {
+    // GDK's own X error trap (in libgdk-3): errors raised between push and pop are returned, not fatal.
+    fn gdk_error_trap_push();
+    fn gdk_error_trap_pop() -> std::os::raw::c_int;
+}
+
+/// Every top-level window on screen as the window manager describes it, bottom-most first.
+/// A window can be closed between the list and the questions we ask it; X then answers BadWindow, which GDK
+/// treats as fatal unless it is trapped. That one window is left out instead (it killed the island).
+fn window_infos(screen: &gtk::gdk::Screen, own: Option<&gtk::gdk::Window>) -> Vec<WinInfo> {
+    use gtk::gdk::WindowState;
+    screen
+        .window_stack()
+        .into_iter()
+        .filter(|w| own.map_or(true, |o| w != o))
+        .filter_map(|w| {
+            // SAFETY: push/pop are balanced around this window's queries, on the main thread.
+            unsafe { gdk_error_trap_push() };
+            let f = w.frame_extents();
+            let (sl, sr, st, sb) = shadow_extents(&w);
+            let info = WinInfo {
+                visible: (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb),
+                normal: has_titlebar(&window_types(&w)),
+                pid: cardinal(&w, "_NET_WM_PID"),
+                desktop: cardinal(&w, "_NET_WM_DESKTOP"),
+                hidden: !w.is_visible() || w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN),
+            };
+            let failed = unsafe { gdk_error_trap_pop() } != 0;
+            (!failed).then_some(info)
+        })
+        .collect()
+}
+
 /// The button areas of every window up against the top of the screen, in the coordinates of
 /// a window at `(ox, oy)` of size `(own_w, own_h)`; only those that reach into it.
 fn collect_zones(own: Option<&gtk::gdk::Window>, ox: i32, oy: i32, own_w: i32, own_h: i32) -> Vec<[f64; 4]> {
-    use gtk::gdk::WindowState;
     let Some(screen) = gtk::gdk::Screen::default() else { return Vec::new() };
     let (left, right) = button_sides();
-    let mut zones = Vec::new();
-    for w in screen.window_stack() {
-        if own.is_some_and(|o| &w == o) || !w.is_visible() {
-            continue;
-        }
-        if w.state().intersects(WindowState::ICONIFIED | WindowState::FULLSCREEN) {
-            continue;
-        }
-        let f = w.frame_extents();
-        let (sl, sr, st, sb) = shadow_extents(&w);
-        // What is seen of the window: its frame without the shadow.
-        let visible = (f.x() + sl, f.y() + st, f.width() - sl - sr, f.height() - st - sb);
-        for a in button_areas(visible, left, right) {
+    let stack = window_infos(&screen, own);
+    clickable_button_areas(&stack, current_desktop(&screen), std::process::id(), left, right)
+        .into_iter()
+        .filter_map(|a| {
             let (zx, zy) = (a[0] - ox, a[1] - oy);
-            if zx + a[2] > 0 && zx < own_w && zy + a[3] > 0 && zy < own_h {
-                zones.push([f64::from(zx), f64::from(zy), f64::from(a[2]), f64::from(a[3])]);
-            }
-        }
-    }
-    zones
+            (zx + a[2] > 0 && zx < own_w && zy + a[3] > 0 && zy < own_h)
+                .then(|| [f64::from(zx), f64::from(zy), f64::from(a[2]), f64::from(a[3])])
+        })
+        .collect()
 }
 
 /// Where the buttons of the windows up against the top of the screen are, in the island
@@ -293,8 +589,12 @@ mod layer {
     use gtk::ffi::GtkWindow;
     use std::os::raw::{c_char, c_int};
 
+    pub const LAYER_TOP: c_int = 2;
     pub const LAYER_OVERLAY: c_int = 3;
+    pub const EDGE_LEFT: c_int = 0;
+    pub const EDGE_RIGHT: c_int = 1;
     pub const EDGE_TOP: c_int = 2;
+    pub const EDGE_BOTTOM: c_int = 3;
     pub const KEYBOARD_NONE: c_int = 0;
     pub const KEYBOARD_ON_DEMAND: c_int = 2;
 
@@ -305,9 +605,16 @@ mod layer {
         pub fn gtk_layer_set_namespace(window: *mut GtkWindow, name_space: *const c_char);
         pub fn gtk_layer_set_layer(window: *mut GtkWindow, layer: c_int);
         pub fn gtk_layer_set_anchor(window: *mut GtkWindow, edge: c_int, anchor: c_int);
+        pub fn gtk_layer_set_margin(window: *mut GtkWindow, edge: c_int, margin: c_int);
+        pub fn gtk_layer_set_monitor(window: *mut GtkWindow, monitor: *mut gtk::gdk::ffi::GdkMonitor);
         pub fn gtk_layer_set_exclusive_zone(window: *mut GtkWindow, zone: c_int);
         pub fn gtk_layer_set_keyboard_mode(window: *mut GtkWindow, mode: c_int);
     }
+}
+
+/// COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
+fn layer_shell_wanted() -> bool {
+    std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true)
 }
 
 /// True once the island window is a layer-shell surface.
@@ -336,8 +643,11 @@ pub fn unblock_webview_drops(_app: &AppHandle) {}
 /// up to the window manager.
 pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
-    // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
-    let wanted = std::env::var("COUCOU_LAYER_SHELL").map(|v| v != "0").unwrap_or(true);
+    // The pointer watch reports the pointer leaving on every kind of window:
+    // a regular one (GNOME, X11) misses `mouseout` just as a layer surface does.
+    ISLAND_GTK.with(|cell| *cell.borrow_mut() = Some(gw.clone()));
+    watch_pointer_leave(win);
+    let wanted = layer_shell_wanted();
     let supported = unsafe { layer::gtk_layer_is_supported() } != 0;
     if !wanted || !supported || gw.is_realized() {
         let why = if !wanted {
@@ -394,7 +704,9 @@ pub fn make_non_activating(win: &WebviewWindow) {
 /// window — "always on top" included — while mutter places a normal window where it
 /// likes (seen on Zorin 18 / Pop Shell: 36 px down and off-centre). So how the
 /// island is mapped is chosen with `COUCOU_X11_MODE`:
-///   * unset / `normal`: an ordinary window (what upstream does);
+///   * unset: upstream's choice — a Dock, kept above everything and left alone by
+///     "show desktop" (`COUCOU_DOCK=0`: a utility window instead);
+///   * `normal`: an ordinary window (what this fork did before taking upstream's);
 ///   * `utility`: the same, typed as a utility window — mutter keeps it centred,
 ///     directly under the panel;
 ///   * `or`: an override-redirect window. mutter never manages it (no placement,
@@ -434,7 +746,21 @@ fn place_without_layer_shell(gw: &gtk::ApplicationWindow) {
                 window.set_override_redirect(true);
             }
         }
-        _ => {}
+        "normal" => {}
+        _ => {
+            if !gw.is_realized() {
+                // On X11 a Dock is kept above everything and is the only kind of
+                // window, besides the desktop, that "show desktop" leaves alone.
+                // COUCOU_DOCK=0 falls back to a utility window.
+                let dock = std::env::var("COUCOU_DOCK").map(|v| v != "0").unwrap_or(true);
+                gw.set_type_hint(if dock {
+                    gtk::gdk::WindowTypeHint::Dock
+                } else {
+                    gtk::gdk::WindowTypeHint::Utility
+                });
+            }
+            gw.set_keep_above(true);
+        }
     }
     if !mode.is_empty() {
         crate::log::line(format!("X11 window mode: {mode}"));
@@ -468,6 +794,102 @@ fn keep_keyboard_owner(activating: bool) {
             let _ = xdotool(&["windowactivate", &prev]);
         }
     }
+}
+
+thread_local! {
+    /// The island's GTK window, for the pointer watch (GTK main thread only).
+    static ISLAND_GTK: std::cell::RefCell<Option<gtk::ApplicationWindow>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Reports the pointer leaving the island, which the page cannot see by itself.
+///
+/// On a layer surface WebKitGTK does not send `mouseout` when the pointer leaves
+/// for good, and GTK's leave-notify fires spuriously while the pointer is still
+/// over the island (each followed by a re-enter), so neither tells "really
+/// gone". GDK's pointer focus does: it follows the compositor's wl_pointer
+/// enter/leave. It is read every 100 ms while the island is shown; both edges go
+/// to the page as `pointer-inside`, and leaving also emits the far-away cursor
+/// the page uses. While the island is hidden the timer is removed altogether
+/// (set_pointer_watch), so a hidden island costs nothing.
+static POINTER_WIN: std::sync::OnceLock<WebviewWindow> = std::sync::OnceLock::new();
+static WATCH_WANTED: AtomicBool = AtomicBool::new(true);
+static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn watch_pointer_leave(win: &WebviewWindow) {
+    let _ = POINTER_WIN.set(win.clone());
+    start_pointer_watch();
+}
+
+/// Starts or parks the pointer watch. Called with the island's collapsed state;
+/// safe from any thread (the timer itself lives on the GTK main loop).
+pub fn set_pointer_watch(active: bool) {
+    WATCH_WANTED.store(active, Ordering::Relaxed);
+    if active {
+        gtk::glib::MainContext::default().invoke(start_pointer_watch);
+    }
+}
+
+/// Main thread only.
+fn start_pointer_watch() {
+    if !WATCH_WANTED.load(Ordering::Relaxed) || WATCH_RUNNING.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    use tauri::Emitter;
+    let Some(win) = POINTER_WIN.get().cloned() else {
+        WATCH_RUNNING.store(false, Ordering::Relaxed);
+        return;
+    };
+    let inside = std::cell::Cell::new(false);
+    gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        if !WATCH_WANTED.load(Ordering::Relaxed) {
+            WATCH_RUNNING.store(false, Ordering::Relaxed);
+            return gtk::glib::ControlFlow::Break;
+        }
+        let now_inside = ISLAND_GTK
+            .with(|cell| {
+                let gw = cell.borrow().clone()?;
+                let ours = gw.window()?;
+                let pointer = gtk::gdk::Display::default()?.default_seat()?.pointer()?;
+                let (under, _, _) = pointer.window_at_position();
+                Some(under?.toplevel() == ours.toplevel())
+            })
+            .unwrap_or(false);
+        if inside.replace(now_inside) != now_inside {
+            // The page gates its own (late, sometimes stale) mouse events on
+            // this state, so a mousemove queued before the pointer left cannot
+            // pull the island back to "inside".
+            let _ = win.emit("pointer-inside", now_inside);
+            if !now_inside {
+                let _ = win.emit("cursor", crate::island::CursorPayload { x: -10_000.0, y: -10_000.0 });
+            }
+        }
+        gtk::glib::ControlFlow::Continue
+    });
+}
+
+/// Puts the layer surface on the display whose logical origin is (`x`, `y`).
+///
+/// A layer surface ignores `set_position`: without an explicit output the
+/// compositor maps it on whichever display has focus at that moment, so on a
+/// multi-monitor Hyprland or Sway desktop the island wandered from one screen
+/// to the other every time it was remapped. A no-op for a regular window, which
+/// `set_position` already places.
+pub fn pin_to_monitor(win: &WebviewWindow, x: i32, y: i32) {
+    if !LAYER_SURFACE.load(Ordering::Relaxed) {
+        return;
+    }
+    let Ok(gw) = win.gtk_window() else { return };
+    let display = gw.display();
+    let monitor = (0..display.n_monitors())
+        .filter_map(|i| display.monitor(i))
+        .find(|m| {
+            let g = m.geometry();
+            g.x() == x && g.y() == y
+        });
+    let Some(monitor) = monitor else { return };
+    let mon_ptr: *mut gtk::gdk::ffi::GdkMonitor = monitor.to_glib_none().0;
+    unsafe { layer::gtk_layer_set_monitor(gtk_window_ptr(&gw), mon_ptr) };
 }
 
 /// Temporarily allow keyboard focus so a text field inside the island can be
@@ -519,6 +941,201 @@ fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
     }
 }
 
+// ── Global shortcuts ──────────────────────────────────────────────────────────
+
+/// Global shortcuts are X11 key grabs. A Wayland session has no such thing: a
+/// grab made through XWayland only sees keys typed into other X11 windows, so
+/// it would look registered and never fire. On Wayland the shortcuts go to the
+/// desktop through the XDG GlobalShortcuts portal instead (portal.rs), and
+/// where there is none Settings explains how to bind `coucou --shortcut <id>`
+/// in the desktop's own keyboard settings.
+pub fn global_shortcuts_blocked() -> Option<&'static str> {
+    let set = |var: &str| std::env::var_os(var).is_some_and(|v| !v.is_empty());
+    let wayland = set("WAYLAND_DISPLAY")
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|v| v.eq_ignore_ascii_case("wayland"));
+    if wayland {
+        Some("wayland")
+    } else if !set("DISPLAY") {
+        Some("no-display")
+    } else {
+        None
+    }
+}
+
+/// On X11, AltGr is a modifier of its own (ISO_Level3_Shift): Ctrl+Alt+key
+/// never stands for it, so no combination takes a character away.
+pub fn ctrl_alt_types(_vk: u16, _shift: bool) -> Option<String> {
+    None
+}
+
+// ── Desktop Mochi window ──────────────────────────────────────────────────────
+//
+// Where the window may go decides everything here:
+//   * X11 places any window where it is asked: an ordinary always-on-top
+//     window, moved with set_position;
+//   * a layer-shell compositor won't move a toplevel, but anchors a layer
+//     surface wherever its margins say, on the island's display;
+//   * GNOME on Wayland has neither, so the feature is off there.
+// In every case the input region is Mochi's body, so clicks anywhere else go
+// to the desktop underneath without any cursor polling.
+
+/// Which of the three applies. Must run on the GTK main thread.
+pub fn desktop_mode() -> super::DesktopMode {
+    use gtk::glib::prelude::ObjectExt;
+    let wayland = gtk::gdk::Display::default()
+        .map(|d| d.type_().name().contains("Wayland"))
+        .unwrap_or(false);
+    let layer = layer_shell_wanted() && unsafe { layer::gtk_layer_is_supported() } != 0;
+    if layer {
+        super::DesktopMode::Layer
+    } else if !wayland {
+        super::DesktopMode::Window
+    } else {
+        super::DesktopMode::Off
+    }
+}
+
+/// The input shape last asked for the desktop Mochi, re-applied on every map.
+static MOCHI_SHAPE: Mutex<super::MouseShape> = Mutex::new(super::MouseShape::Empty);
+
+/// Sets the window up for `mode` before it is ever shown. False means it can't
+/// be used (a layer surface can't be made from a window already shown).
+pub fn prepare_desktop_window(win: &WebviewWindow, mode: super::DesktopMode) -> bool {
+    let Ok(gw) = win.gtk_window() else { return false };
+    gw.set_accept_focus(false);
+    match mode {
+        super::DesktopMode::Layer => {
+            if gw.is_realized() {
+                crate::log::line("desktop Mochi: window already shown, no layer surface");
+                return false;
+            }
+            gw.set_titlebar(None::<&gtk::Widget>);
+            let ptr = gtk_window_ptr(&gw);
+            unsafe {
+                layer::gtk_layer_init_for_window(ptr);
+                layer::gtk_layer_set_namespace(ptr, c"coucou-mochi".as_ptr());
+                // Above windows, below fullscreen video — like a floating panel.
+                layer::gtk_layer_set_layer(ptr, layer::LAYER_TOP);
+                layer::gtk_layer_set_anchor(ptr, layer::EDGE_TOP, 1);
+                layer::gtk_layer_set_anchor(ptr, layer::EDGE_LEFT, 1);
+                // -1: margins count from the display's corner, panels or not,
+                // the same origin the island uses.
+                layer::gtk_layer_set_exclusive_zone(ptr, -1);
+                layer::gtk_layer_set_keyboard_mode(ptr, layer::KEYBOARD_NONE);
+            }
+            // Same first-frame problem as the island (see make_non_activating).
+            let remapped = std::cell::Cell::new(false);
+            gw.connect_map_event(move |w, _| {
+                apply_mouse_shape(w, *MOCHI_SHAPE.lock().unwrap());
+                if !remapped.replace(true) {
+                    let w = w.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        w.hide();
+                        w.show_all();
+                        apply_mouse_shape(&w, *MOCHI_SHAPE.lock().unwrap());
+                    });
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            true
+        }
+        super::DesktopMode::Window => {
+            gw.connect_map_event(|w, _| {
+                apply_mouse_shape(w, *MOCHI_SHAPE.lock().unwrap());
+                gtk::glib::Propagation::Proceed
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Which part of the desktop Mochi takes the mouse. Main thread.
+pub fn set_desktop_shape(win: &WebviewWindow, shape: super::MouseShape) {
+    *MOCHI_SHAPE.lock().unwrap() = shape;
+    let Ok(gw) = win.gtk_window() else { return };
+    apply_mouse_shape(&gw, shape);
+}
+
+fn apply_mouse_shape(gw: &impl IsA<gtk::Widget>, shape: super::MouseShape) {
+    use gtk::cairo::{RectangleInt, Region};
+    if shape == super::MouseShape::Whole {
+        gw.input_shape_combine_region(None);
+        return;
+    }
+    let Some(gdk_window) = gw.window() else { return };
+    match shape {
+        super::MouseShape::Whole => {}
+        super::MouseShape::Empty => {
+            let region = Region::create_rectangle(&RectangleInt::new(0, 0, 0, 0));
+            gdk_window.input_shape_combine_region(&region, 0, 0);
+        }
+        super::MouseShape::Disc { cx, cy, r } => {
+            // A region is made of rectangles: stack 2 px rows into a disc.
+            let region = Region::create_rectangle(&RectangleInt::new(0, 0, 0, 0));
+            let mut y = (cy - r).floor();
+            while y < cy + r {
+                let mid = y + 1.0 - cy;
+                let half = (r * r - mid * mid).max(0.0).sqrt();
+                let row = RectangleInt::new(
+                    (cx - half).floor() as i32,
+                    y as i32,
+                    (2.0 * half).ceil() as i32,
+                    2,
+                );
+                let _ = region.union_rectangle(&row);
+                y += 2.0;
+            }
+            gdk_window.input_shape_combine_region(&region, 0, 0);
+        }
+    }
+}
+
+/// Layer surface only: puts the top-left corner at (x, y), logical pixels from
+/// the display's corner. Main thread.
+pub fn set_layer_margins(win: &WebviewWindow, x: f64, y: f64) {
+    let Ok(gw) = win.gtk_window() else { return };
+    let ptr = gtk_window_ptr(&gw);
+    unsafe {
+        layer::gtk_layer_set_margin(ptr, layer::EDGE_LEFT, x.round() as i32);
+        layer::gtk_layer_set_margin(ptr, layer::EDGE_TOP, y.round() as i32);
+    }
+}
+
+/// Layer surface only: `on` stretches it over the whole display — how a drag
+/// gets exact pointer positions on Wayland, where a surface that moves under
+/// the pointer can't tell where it is — and `off` folds it back to Mochi's
+/// size in the corner. Main thread.
+pub fn set_layer_overlay(win: &WebviewWindow, on: bool) {
+    let Ok(gw) = win.gtk_window() else { return };
+    let ptr = gtk_window_ptr(&gw);
+    unsafe {
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_RIGHT, on as i32);
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_BOTTOM, on as i32);
+        if on {
+            layer::gtk_layer_set_margin(ptr, layer::EDGE_LEFT, 0);
+            layer::gtk_layer_set_margin(ptr, layer::EDGE_TOP, 0);
+        }
+    }
+}
+
+/// Layer surface only: puts the desktop Mochi on the island's display and
+/// returns that display's logical size. Main thread.
+pub fn layer_display(island: &WebviewWindow, mochi: &WebviewWindow) -> Option<(f64, f64)> {
+    let island_gw = island.gtk_window().ok()?;
+    let display = gtk::gdk::Display::default()?;
+    let monitor = island_gw
+        .window()
+        .and_then(|w| display.monitor_at_window(&w))
+        .or_else(|| display.primary_monitor())
+        .or_else(|| display.monitor(0))?;
+    if let Ok(gw) = mochi.gtk_window() {
+        unsafe { layer::gtk_layer_set_monitor(gtk_window_ptr(&gw), monitor.to_glib_none().0) };
+    }
+    let g = monitor.geometry();
+    Some((g.width() as f64, g.height() as f64))
+}
+
 #[cfg(test)]
 mod zone_tests {
     use super::*;
@@ -529,8 +1146,77 @@ mod zone_tests {
     #[ignore]
     fn real_session_probe() {
         gtk::init().expect("gtk");
+        let screen = gtk::gdk::Screen::default().expect("screen");
+        println!("button layout (left, right): {:?}; current workspace: {:?}", button_sides(), current_desktop(&screen));
+        for w in window_infos(&screen, None) {
+            println!("{w:?} -> areas {:?}", button_areas(w.visible, button_sides().0, button_sides().1));
+        }
         let zones = collect_zones(None, 460, 0, 1000, 320);
-        println!("button areas reaching a 1000x320 window at x=460: {zones:?}");
+        println!("button areas that can be clicked and reach a 1000x320 window at x=460: {zones:?}");
+    }
+
+    fn win(visible: (i32, i32, i32, i32)) -> WinInfo {
+        WinInfo { visible, normal: true, pid: Some(100), desktop: Some(0), hidden: false }
+    }
+
+    #[test]
+    fn a_window_hidden_behind_another_has_no_buttons_to_reach() {
+        // A tiled window under a maximized browser: its buttons are there but nobody can click them.
+        let tiled = win((0, 0, 960, 1080));
+        let maximized = win((0, 0, 1920, 1080));
+        let areas = clickable_button_areas(&[tiled.clone(), maximized.clone()], Some(0), 1, 0, 3);
+        assert_eq!(areas, vec![[1920 - 3 * BUTTON_W, 0, 3 * BUTTON_W, TITLEBAR_H]], "only the maximized window's");
+        // The other way round (the tiled one on top, over a smaller one) its own buttons are there.
+        let areas = clickable_button_areas(&[maximized, tiled], Some(0), 1, 0, 3);
+        assert_eq!(areas.len(), 2, "the tiled one's, and the maximized one's at the far end it does not cover");
+        assert!(areas.contains(&[960 - 3 * BUTTON_W, 0, 3 * BUTTON_W, TITLEBAR_H]));
+    }
+
+    #[test]
+    fn a_window_beside_another_keeps_its_buttons() {
+        let left = win((0, 0, 960, 1080));
+        let right = win((960, 0, 960, 1080));
+        assert_eq!(clickable_button_areas(&[left, right], Some(0), 1, 0, 3).len(), 2);
+    }
+
+    #[test]
+    fn windows_that_are_not_there_or_not_ordinary_or_ours_do_not_count() {
+        let base = win((0, 0, 960, 1080));
+        let counted = |w: WinInfo| clickable_button_areas(&[w], Some(0), 1, 0, 3).len();
+        assert_eq!(counted(base.clone()), 1);
+        assert_eq!(counted(WinInfo { hidden: true, ..base.clone() }), 0, "minimised or full screen");
+        assert_eq!(counted(WinInfo { normal: false, ..base.clone() }), 0, "a dock, the desktop icons, a popup");
+        assert_eq!(counted(WinInfo { pid: Some(1), ..base.clone() }), 0, "Coucou's own windows (the pill, the Coucou window)");
+        assert_eq!(counted(WinInfo { desktop: Some(2), ..base.clone() }), 0, "on another workspace");
+        assert_eq!(counted(WinInfo { desktop: Some(ALL_DESKTOPS), ..base.clone() }), 1, "on every workspace");
+        assert_eq!(counted(WinInfo { desktop: None, ..base.clone() }), 1, "not told: shown rather than lost");
+        assert_eq!(clickable_button_areas(&[base], None, 1, 0, 3).len(), 1, "workspace unknown: shown");
+    }
+
+    #[test]
+    fn a_hidden_or_foreign_window_does_not_hide_what_is_under_it() {
+        // A minimised, a dock and another workspace's window lie "above" in the list but cover nothing.
+        let under = win((0, 0, 960, 1080));
+        let big = (0, 0, 1920, 1080);
+        let covers_nothing = [
+            WinInfo { hidden: true, ..win(big) },
+            WinInfo { normal: false, ..win(big) },
+            WinInfo { desktop: Some(3), ..win(big) },
+        ];
+        for over in covers_nothing {
+            assert_eq!(clickable_button_areas(&[under.clone(), over], Some(0), 1, 0, 3).len(), 1);
+        }
+    }
+
+    #[test]
+    fn only_windows_with_a_title_bar_have_buttons() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(has_titlebar(&[]), "no type set is an ordinary window");
+        assert!(has_titlebar(&names(&["_NET_WM_WINDOW_TYPE_NORMAL"])));
+        assert!(has_titlebar(&names(&["_NET_WM_WINDOW_TYPE_DIALOG", "_NET_WM_WINDOW_TYPE_NORMAL"])));
+        for other in ["_NET_WM_WINDOW_TYPE_DOCK", "_NET_WM_WINDOW_TYPE_DESKTOP", "_NET_WM_WINDOW_TYPE_NOTIFICATION", "other"] {
+            assert!(!has_titlebar(&names(&[other])), "{other}");
+        }
     }
 
     #[test]
@@ -583,6 +1269,26 @@ mod tests {
     }
 
     #[test]
+    fn x11_is_only_preferred_on_gnome_wayland_unless_opted_out() {
+        assert!(should_prefer_x11("wayland", "ubuntu:GNOME", "", ":0"));
+        assert!(!should_prefer_x11("x11", "ubuntu:GNOME", "", ":0"));
+        assert!(!should_prefer_x11("wayland", "KDE", "", ":0"));
+        assert!(!should_prefer_x11("wayland", "GNOME", "0", ":0"));
+        // No XWayland: keep the Wayland window rather than no display at all.
+        assert!(!should_prefer_x11("wayland", "GNOME", "", ""));
+    }
+
+    #[test]
+    fn text_scaling_is_undone_for_the_island() {
+        assert_eq!(dpi_scale_for("1.25\n").as_deref(), Some("0.8"));
+        assert_eq!(dpi_scale_for("1.5").as_deref(), Some("0.6667"));
+        assert_eq!(dpi_scale_for("1.0").as_deref(), None);
+        assert_eq!(dpi_scale_for("").as_deref(), None);
+        assert_eq!(dpi_scale_for("nonsense").as_deref(), None);
+        assert_eq!(dpi_scale_for("40").as_deref(), None);
+    }
+
+    #[test]
     fn private_dirs_are_closed_to_everyone_else() {
         use std::os::unix::fs::MetadataExt;
         let dir = std::env::temp_dir().join(format!("coucou-priv-{}", std::process::id()));
@@ -593,4 +1299,111 @@ mod tests {
         assert_eq!(std::fs::metadata(&dir).unwrap().mode() & 0o777, 0o700);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn the_pictures_folder_comes_from_user_dirs() {
+        let home = Path::new("/home/me");
+        let text = "# written by xdg-user-dirs-update\nXDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_PICTURES_DIR=\"$HOME/Images\"\n";
+        assert_eq!(xdg_user_dir(text, "XDG_PICTURES_DIR", home), Some(PathBuf::from("/home/me/Images")));
+        let absolute = "XDG_PICTURES_DIR=\"/data/pics\"";
+        assert_eq!(xdg_user_dir(absolute, "XDG_PICTURES_DIR", home), Some(PathBuf::from("/data/pics")));
+        // "$HOME/" means the folder is disabled; relative paths are not paths.
+        assert_eq!(xdg_user_dir("XDG_PICTURES_DIR=\"$HOME/\"", "XDG_PICTURES_DIR", home), None);
+        assert_eq!(xdg_user_dir("XDG_PICTURES_DIR=\"pics\"", "XDG_PICTURES_DIR", home), None);
+        assert_eq!(xdg_user_dir("", "XDG_PICTURES_DIR", home), None);
+    }
+}
+
+// ── Flow dictation's pill ─────────────────────────────────────────────────────
+//
+// The pill rests at the bottom (or on the left or right edge) of the screen.
+// On X11 it is an ordinary always-on-top window placed with set_position; on a
+// layer-shell compositor a layer surface anchored to that edge. Either way the
+// input region is the pill and its bubble, so clicks anywhere else go through.
+
+/// The pill's input rectangles, re-applied on every map.
+static PILL_SHAPE: Mutex<Vec<(f64, f64, f64, f64)>> = Mutex::new(Vec::new());
+
+/// Sets the pill's window up before it is ever shown. Main thread.
+pub fn prepare_pill_window(win: &WebviewWindow, mode: super::DesktopMode) -> bool {
+    let Ok(gw) = win.gtk_window() else { return false };
+    gw.set_accept_focus(false);
+    let reapply = |w: &gtk::ApplicationWindow| apply_rects(w, &PILL_SHAPE.lock().unwrap());
+    match mode {
+        super::DesktopMode::Layer => {
+            if gw.is_realized() {
+                return false;
+            }
+            gw.set_titlebar(None::<&gtk::Widget>);
+            let ptr = gtk_window_ptr(&gw);
+            unsafe {
+                layer::gtk_layer_init_for_window(ptr);
+                layer::gtk_layer_set_namespace(ptr, c"coucou-pill".as_ptr());
+                layer::gtk_layer_set_layer(ptr, layer::LAYER_OVERLAY);
+                layer::gtk_layer_set_anchor(ptr, layer::EDGE_BOTTOM, 1);
+                layer::gtk_layer_set_exclusive_zone(ptr, 0);
+                layer::gtk_layer_set_keyboard_mode(ptr, layer::KEYBOARD_NONE);
+            }
+            let remapped = std::cell::Cell::new(false);
+            gw.connect_map_event(move |w, _| {
+                reapply(w);
+                if !remapped.replace(true) {
+                    let w = w.clone();
+                    gtk::glib::idle_add_local_once(move || {
+                        w.hide();
+                        w.show_all();
+                        apply_rects(&w, &PILL_SHAPE.lock().unwrap());
+                    });
+                }
+                gtk::glib::Propagation::Proceed
+            });
+            true
+        }
+        super::DesktopMode::Window => {
+            if !gw.is_realized() {
+                gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+            }
+            gw.set_keep_above(true);
+            gw.connect_map_event(move |w, _| {
+                reapply(w);
+                gtk::glib::Propagation::Proceed
+            });
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Layer surface only: anchors the pill to its edge, centred along it. Main thread.
+pub fn set_pill_edge(win: &WebviewWindow, edge: &str) {
+    let Ok(gw) = win.gtk_window() else { return };
+    let ptr = gtk_window_ptr(&gw);
+    unsafe {
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_BOTTOM, (edge == "bottom") as i32);
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_LEFT, (edge == "left") as i32);
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_RIGHT, (edge == "right") as i32);
+        layer::gtk_layer_set_anchor(ptr, layer::EDGE_TOP, 0);
+    }
+}
+
+/// The parts of the pill's window that take the mouse. Main thread.
+pub fn set_pill_input(win: &WebviewWindow, rects: Vec<(f64, f64, f64, f64)>) {
+    *PILL_SHAPE.lock().unwrap() = rects.clone();
+    let Ok(gw) = win.gtk_window() else { return };
+    apply_rects(&gw, &rects);
+}
+
+fn apply_rects(gw: &impl IsA<gtk::Widget>, rects: &[(f64, f64, f64, f64)]) {
+    use gtk::cairo::{RectangleInt, Region};
+    let Some(gdk_window) = gw.window() else { return };
+    let region = Region::create_rectangle(&RectangleInt::new(0, 0, 0, 0));
+    for &(x, y, w, h) in rects {
+        let _ = region.union_rectangle(&RectangleInt::new(
+            x.floor() as i32,
+            y.floor() as i32,
+            w.ceil().max(0.0) as i32,
+            h.ceil().max(0.0) as i32,
+        ));
+    }
+    gdk_window.input_shape_combine_region(&region, 0, 0);
 }

@@ -11,5 +11,9 @@ check() {
 }
 check windows/scripts/phone/merge-vectors.json    android/app/src/test/resources/merge-vectors.json
 check windows/scripts/phone/presence-vectors.json android/app/src/test/resources/presence-vectors.json
+check windows/scripts/phone/jinx-mood-vectors.json android/app/src/test/resources/jinx-mood-vectors.json
+check windows/scripts/phone/due-vectors.json android/app/src/test/resources/due-vectors.json
+# Lo que Jinx puede pedirle a la isla: el validador de Python (servidor y herramienta de Jinx) y el de Rust (el PC).
+check jinx/jinx-assist/island-vectors.json windows/scripts/phone/island-vectors.json
 check windows/scripts/phone/audiolink-vectors.json android/app/src/test/resources/audiolink-vectors.json
 exit "$bad"

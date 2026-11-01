@@ -1,10 +1,11 @@
 // The Hub's Calendar: the next days of the calendar GNOME keeps (the one Jinx reads), and
-// Jinx's pending tasks. The same events are copied for her to ~/.hermes/state/coucou/.
+// a glance at the open tasks (the Tasks tab holds Jinx's pendientes too). The same events are copied for her to ~/.hermes/state/coucou/.
 
 import { Bridge } from "../core/bridge";
 import { State } from "../core/state";
 import { h, clear } from "../views/dom";
 import { shareReadmeOnce } from "./share";
+import { ensureTasksLoaded, openTasks } from "./tasks";
 import type { HubHost, HubTool } from "./types";
 
 export interface CalEvent {
@@ -13,13 +14,6 @@ export interface CalEvent {
   start: number;
   end: number;
   allDay: boolean;
-}
-
-interface Task {
-  title: string;
-  due: string | null;
-  category: string | null;
-  priority: number;
 }
 
 const DAYS = 7;
@@ -107,19 +101,21 @@ function build(): HubHost {
     }
   }
 
+  /**
+   * No list of its own: Tasks already holds Jinx's pendientes (they are one list on every device), so the
+   * calendar shows the next few of those and a way into the tab.
+   */
   async function loadTasks() {
-    try {
-      const list = ((await Bridge.jinxTasks()) as Task[]) ?? [];
-      clear(tasks);
-      tasks.append(h("div", { class: "cal-day", text: "Pending · Jinx" }));
-      if (list.length === 0) tasks.append(h("div", { class: "hub-hint", text: "Nothing pending." }));
-      for (const t of list.slice(0, 6)) {
-        tasks.append(h("div", { class: "cal-task" }, h("span", { class: "cal-what", text: t.title }), t.due ? h("span", { class: "cal-when", text: dueLabel(t.due) }) : h("span")));
-      }
-    } catch (e) {
-      clear(tasks);
-      const msg = String(e).replace(/^Error:\s*/, "");
-      tasks.append(h("div", { class: "hub-hint", text: msg === "not-configured" ? "Set the server in Settings → Hub to see Jinx's pending tasks." : msg }));
+    await ensureTasksLoaded();
+    const list = openTasks();
+    clear(tasks);
+    const open = h("button", { class: "cal-day", text: "Tasks ›", title: "Open Tasks" });
+    open.addEventListener("click", () => void import("./hub").then((m) => m.selectTool("tasks")));
+    tasks.append(open);
+    if (list.length === 0) tasks.append(h("div", { class: "hub-hint", text: "Nothing pending." }));
+    for (const t of list.slice(0, 5)) {
+      const due = t.remindAt ? dueLabel(new Date(t.remindAt * 1000).toISOString()) : "";
+      tasks.append(h("div", { class: "cal-task" }, h("span", { class: "cal-what", text: t.title }), due ? h("span", { class: "cal-when", text: due }) : h("span")));
     }
   }
 

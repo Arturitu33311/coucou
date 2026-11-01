@@ -57,7 +57,7 @@ class ChatRepository(
         laptop?.let { api ->
             try {
                 val done = api.send(user.text, cid, deviceId)
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored))
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored, done.mood, done.mode.takeIf { it in BACKUP_VIAS }))
                 if (done.mirrored) store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, Via.Laptop)
             } catch (_: ChatException) {
@@ -68,8 +68,10 @@ class ChatRepository(
         for (b in brains) {
             try {
                 val text = b.reply(store.tail(CONTEXT))
-                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, false))
-                flushMirror()
+                val via = if (b.via == Via.Cloud) "or" else "local"
+                // Alan is on this phone (he just wrote here): he reads it here, it does not go to Telegram.
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true, via = via))
+                store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, b.via)
             } catch (e: ChatException) {
                 reason = e.message ?: reason
@@ -83,8 +85,7 @@ class ChatRepository(
         val m = mirror ?: return
         val done = mutableSetOf<String>()
         for (l in store.unmirrored()) {
-            val prefix = if (l.fromJinx) "🟠 " else "📱 "
-            if (!m.deliver((prefix + l.text).take(TG_MAX))) break
+            if (!m.deliver((l.mirrorPrefix + l.text).take(TG_MAX))) break
             done += l.id
         }
         if (done.isNotEmpty()) store.markMirrored(done)
@@ -95,7 +96,7 @@ class ChatRepository(
         val api = laptop ?: return 0
         return try {
             val ours = store.all()
-            val res = api.merge(ours.filter { !it.mirrored || it.src != "tg" }, ours.map { it.id })
+            val res = api.merge(ours.filter { !it.mirrored || !it.fromElsewhere }, ours.map { it.id })
             store.markMirrored(res.mirroredIds.toSet())
             store.merge(res.items)
         } catch (_: ChatException) {

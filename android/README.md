@@ -254,8 +254,10 @@ cd SmartIsland
 
 ### 3. Install on a connected device
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.agupta07505.smartisland/.MainActivity
+# Always through the script: it records Play Store as the installer. A plain `adb install` leaves none, and
+# banking apps (Nu) then refuse to open beside the island (docs/BANK-APPS.md).
+scripts/install-phone.sh            # or: scripts/install-phone.sh <ip:port> over wireless adb
+adb shell am start -n com.agupta07505.smartisland/.coucou.CoucouTasksActivity
 ```
 
 ---

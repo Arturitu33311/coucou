@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
+    <title>Jinx</title>
+    <style>
+      html, body { margin: 0; background: #232323; color: #E5E5E5;
+        font: 15px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        touch-action: manipulation; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+      main { padding: 20px 16px; max-width: 480px; margin: 0 auto; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      p { margin: 6px 0 14px; color: #A8A8A8; }
+      label { display: block; margin: 12px 0 4px; font-size: 13px; color: #A8A8A8; }
+      input { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #444;
+        background: #1a1a1a; color: #E5E5E5; font-size: 15px; }
+      button { margin-top: 16px; width: 100%; padding: 12px; border: 0; border-radius: 8px; font-size: 15px;
+        background: #4ade80; color: #062b14; font-weight: 600; }
+      #msg { margin-top: 14px; min-height: 1.4em; }
+      .ok { color: #4ade80; } .bad { color: #f87171; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Jinx en las gafas</h1>
+      <p>Mantén pulsado el lado de la gafa y habla; suelta para enviar. Doble toque para salir.</p>
+      <label for="base">Dirección del puente (https)</label>
+      <input id="base" type="url" inputmode="url" autocapitalize="off" autocomplete="off" placeholder="https://jinx.tu-red.ts.net" />
+      <label for="key">Llave</label>
+      <input id="key" type="password" autocapitalize="off" autocomplete="off" />
+      <button id="save">Guardar y probar</button>
+      <div id="msg"></div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

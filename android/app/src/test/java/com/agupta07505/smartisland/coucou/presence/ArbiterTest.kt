@@ -51,10 +51,15 @@ class ArbiterTest {
         assertEquals(RemoteMsg.PeerGone("s22"), RemoteProtocol.parse("""{"t":"peer_gone","device":"s22"}""", 0L))
         assertNull(RemoteProtocol.parse("""{"t":"peer_gone","device":"vga"}""", 0L))
         // An id we do not know is no server answer, and an absurd idle is clamped.
-        val odd = JSONObject(line).put("server_active", "vga").put("idle", Long.MAX_VALUE).toString()
+        val odd = JSONObject(line).put("server_active", "tv").put("idle", Long.MAX_VALUE).toString()
         val p = RemoteProtocol.parse(odd, 0L) as RemoteMsg.Peer
         assertNull(p.beat.serverActive)
         assertEquals(RemoteProtocol.MAX_IDLE_S, p.beat.idleS)
+        // The panel is an answer ("nobody in use"), and the server's "pc" is the laptop.
+        val vga = RemoteProtocol.parse(JSONObject(line).put("server_active", "vga").toString(), 0L) as RemoteMsg.Peer
+        assertEquals("vga", vga.beat.serverActive)
+        val pc = RemoteProtocol.parse(JSONObject(line).put("server_active", "pc").toString(), 0L) as RemoteMsg.Peer
+        assertEquals("laptop", pc.beat.serverActive)
     }
 
     @Test

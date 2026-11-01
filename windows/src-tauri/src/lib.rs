@@ -1,6 +1,7 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
 mod activities;
+mod agent_hooks;
 mod agents;
 mod audiolink;
 mod audiolink_logic;
@@ -15,21 +16,38 @@ mod audiolink_sink;
 mod audiolink_wire;
 mod bars;
 mod calendar;
-mod clipboard;
+mod chat;
 mod claude;
-mod drive;
+mod claude_sessions;
+mod remote_agents;
+mod clipboard;
+mod codex_plan;
+mod config_file;
+mod desktop;
 #[cfg(target_os = "linux")]
 mod dictation;
+mod drive;
 mod files;
+mod flow;
+mod github;
 mod hooks;
+mod i18n;
+mod identity;
 mod integrations;
 mod island;
 mod jinx;
+mod jinx_gateway;
+mod local_chat;
 mod log;
 mod music;
+mod net;
+mod hub_notes;
+mod island_cmd;
 mod notes;
 mod notifs;
+mod openai_compat;
 mod opencode;
+mod phone_link;
 mod pipe;
 mod pendientes;
 mod presence;
@@ -37,18 +55,29 @@ mod pomodoro;
 mod remote;
 mod quick;
 mod platform;
+#[cfg(target_os = "linux")]
+mod portal;
+mod recap;
 mod secrets;
-mod sensitive;
-mod settings;
-mod share;
-mod sysmon;
 #[cfg(target_os = "linux")]
 mod peripherals;
+mod sensitive;
+mod session_window;
+mod settings;
+mod share;
+mod shortcuts;
+mod sounds;
+mod speech;
+mod spotify;
+mod sysmon;
 #[cfg(target_os = "linux")]
 mod sysstate;
 mod tasks;
 mod tray;
+mod voice;
 mod weather;
+#[cfg(windows)]
+mod webview_drop;
 mod workspaces;
 
 use std::process::Command;
@@ -59,7 +88,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
-use claude::{Chat, ChatContext, ChatReply};
+use chat::{Chat, ChatContext, ChatReply, ModelInfo};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
@@ -112,7 +141,9 @@ fn presence_local_news() {
 fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
     let mut settings = shared.settings.lock().unwrap().clone();
     // The real state of ~/.claude/settings.json wins over whatever we stored.
-    settings.hooks_installed = hooks::status().installed;
+    let hooks_status = hooks::status();
+    settings.hooks_installed = hooks_status.installed;
+    settings.plan_relay_installed = hooks_status.plan_relay_installed;
     let screen = island::screen_info(&app, &settings.screen);
     BootInfo {
         settings,
@@ -125,18 +156,34 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
-    let (screen_changed, autostart_changed) = {
+    let (screen_changed, autostart_changed, shortcuts_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen || current.island_offset_x != settings.island_offset_x;
         let autostart_changed = current.autostart != settings.autostart;
-        *current = settings.clone();
-        (screen_changed, autostart_changed)
+        let shortcuts_changed = current.shortcuts != settings.shortcuts;
+        // Where Mochi sits on the desktop is desktop.rs's to say, not a webview's.
+        let mut settings = settings.clone();
+        settings.desktop_mochi = current.desktop_mochi.clone();
+        // Same for the phone link: only its own commands turn it on or off.
+        settings.phone_link = current.phone_link;
+        settings.phone_chat = current.phone_chat;
+        settings.phone_details = current.phone_details;
+        settings.phone_answers = current.phone_answers;
+        settings.phone_diffs = current.phone_diffs;
+        settings.phone_usage = current.phone_usage;
+        settings.phone_services = current.phone_services.clone();
+        settings.phone_relay = current.phone_relay;
+        settings.phone_relay_url = current.phone_relay_url.clone();
+        settings.phone_chat_models = current.phone_chat_models.clone();
+        *current = settings;
+        (screen_changed, autostart_changed, shortcuts_changed)
     };
+    let settings = shared.settings.lock().unwrap().clone();
     if let Err(err) = settings::save(&settings) {
-        eprintln!("[coucou] could not save settings: {err}");
+        log::line(format!("could not save settings: {err}"));
     }
     // The Music pill's switch decides whether the players are watched at all.
-    music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
+    music::sync_enabled(&app, music::reader_wanted(&settings.main_pill, &settings.active_integrations));
     notifs::sync_enabled(&app, settings.notification_peek);
     remote::sync_enabled(&app, settings.remote_enabled);
     audiolink::sync_enabled(&app, settings.audiolink_enabled);
@@ -152,8 +199,34 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
         island::apply_geometry(&app, &settings.screen, collapsed);
     }
+    integrations::settings_saved(&app, &settings.active_integrations);
+    spotify::sync(&app, &settings.main_pill, &settings.active_integrations);
+    if shortcuts_changed {
+        shortcuts::apply(&app, &settings.shortcuts);
+    }
+    if i18n::set_picked(&settings.language) {
+        language_changed(&app);
+    }
     // Keep the other window in step (island ⇄ settings window).
     let _ = app.emit("settings-changed", settings);
+}
+
+/// The island reports the system's languages at launch, for "System" in
+/// Settings → Language (WebView2 and WebKitGTK know them best).
+#[tauri::command]
+fn set_system_languages(app: AppHandle, languages: Vec<String>) {
+    if i18n::set_system(languages) {
+        language_changed(&app);
+    }
+}
+
+/// What Rust labels itself follows the new language: the tray menu and the
+/// settings window's title. The webviews switch on their own.
+fn language_changed(app: &AppHandle) {
+    tray::retitle(app);
+    if let Some(window) = app.get_webview_window(HUB_LABEL) {
+        let _ = window.set_title("Coucou");
+    }
 }
 
 /// Hidden island → shrink the window to the invisible wake strip and park the
@@ -166,6 +239,7 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
     // The wake strip must always take the mouse, and a resize invalidates the flag.
     island::refresh_click_through(&app, &shared.gate);
     shared.gate.set_active(!collapsed);
+    platform::set_pointer_watch(!collapsed);
 }
 
 /// The front end pushes the island shape; Rust decides click-through from it.
@@ -192,6 +266,32 @@ fn reposition(app: AppHandle, shared: State<Shared>) {
     let pref = shared.settings.lock().unwrap().screen.clone();
     let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
     island::apply_geometry(&app, &pref, collapsed);
+}
+
+/// The panel is laid out in CSS px against the window's own scale. If the webview
+/// reports a different devicePixelRatio (it ends up bigger than the window and gets
+/// cut), correct its zoom so one CSS px is one logical px again.
+#[tauri::command]
+fn fit_zoom(app: AppHandle, dpr: f64) -> bool {
+    let Some(win) = island::window(&app) else { return false };
+    let scale = win.scale_factor().unwrap_or(1.0);
+    static ZOOM: std::sync::Mutex<f64> = std::sync::Mutex::new(1.0);
+    let mut zoom = ZOOM.lock().unwrap();
+    if let Some(new_zoom) = island::calculate_zoom_correction(*zoom, scale, dpr) {
+        *zoom = new_zoom;
+        log::line(format!("webview dpr {dpr} != window scale {scale} — setting zoom {new_zoom:.3}"));
+        let _ = win.set_zoom(new_zoom);
+        true
+    } else {
+        false
+    }
+}
+
+
+/// The displays the island can be pinned to, for Settings.
+#[tauri::command]
+fn list_monitors(app: AppHandle) -> Vec<island::MonitorChoice> {
+    island::monitor_choices(&app)
 }
 
 #[tauri::command]
@@ -235,6 +335,70 @@ fn open_in_vscode(path: Option<String>) -> bool {
     false
 }
 
+/// "Open terminal": brings forward the terminal or editor window the session
+/// runs in, when it was found (see session_window.rs); otherwise opens the
+/// folder in VS Code, as before.
+#[tauri::command]
+fn open_session(session_id: Option<String>, path: Option<String>) -> bool {
+    let Some(owners) = session_id.as_deref().and_then(session_window::lookup) else {
+        return open_in_vscode(path);
+    };
+    let folder = path.as_deref().map(session_window::folder_name).unwrap_or_default().to_string();
+    #[cfg(windows)]
+    {
+        if platform::focus_session_window(&owners, &folder) {
+            return true;
+        }
+        open_in_vscode(path)
+    }
+    // Linux asks the display server, KWin or the terminal, which can take a
+    // moment: never on the UI thread a sync command runs on. VS Code still
+    // opens when none of them could bring the window forward.
+    #[cfg(target_os = "linux")]
+    {
+        std::thread::spawn(move || {
+            if !platform::focus_session_window(&owners, &folder) {
+                open_in_vscode(path);
+            }
+        });
+        true
+    }
+}
+
+/// The Claude Desktop pill's target: the Claude app (Windows only — it has no
+/// Linux build).
+#[tauri::command]
+fn open_claude_desktop() -> bool {
+    platform::open_claude_desktop()
+}
+
+/// The file behind a live diff, if it may be handed to the editor: an existing
+/// regular file given by its full path. Anything else — a relative path, a
+/// folder, a path `code` could read as an option — goes no further.
+fn diff_file(path: &str) -> Option<&std::path::Path> {
+    let p = std::path::Path::new(path);
+    (p.is_absolute() && p.is_file()).then_some(p)
+}
+
+/// The diff card's ↗: opens the edited file in VS Code when `code` is on PATH,
+/// otherwise shows its folder. The file itself is never opened by its type —
+/// xdg-open or Explorer would run a script that Claude just wrote.
+#[tauri::command]
+fn open_file_in_vscode(path: String) -> bool {
+    let Some(file) = diff_file(&path) else { return false };
+    if let Some(code) = platform::find_on_path("code") {
+        let mut cmd = Command::new(code);
+        cmd.arg(file);
+        if platform::no_console(&mut cmd).spawn().is_ok() {
+            return true;
+        }
+    }
+    if let Some(folder) = file.parent().filter(|d| d.is_dir()) {
+        platform::reveal_folder(&folder.to_string_lossy());
+    }
+    false
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
@@ -253,6 +417,12 @@ fn set_paused(app: AppHandle, paused: bool) {
 #[tauri::command]
 fn hooks_status() -> HookStatus {
     hooks::status()
+}
+
+/// Pill ID → whether that agent's hooks reach Coucou. Read-only.
+#[tauri::command]
+fn agent_hooks_status() -> std::collections::HashMap<String, bool> {
+    agent_hooks::status()
 }
 
 /// Returns the diff the user has to look at before anything is written.
@@ -275,16 +445,95 @@ fn hooks_apply(
     let updated = {
         let mut current = shared.settings.lock().unwrap();
         current.hooks_installed = install;
-        let _ = settings::save(&current);
+        if let Err(err) = settings::save(&current) {
+            log::line(format!("could not save settings: {err}"));
+        }
         current.clone()
     };
     let _ = app.emit("settings-changed", updated);
     Ok(backup)
 }
 
+// ── Other agents' hooks and plugins ──────────────────────────────────────────
+
+#[tauri::command]
+fn agent_hooks_list() -> Vec<agents::AgentStatus> {
+    agents::list()
+}
+
+/// The diff the user has to look at before anything is written.
+#[tauri::command]
+fn agent_hooks_preview(agent: String, install: bool) -> Result<config_file::Plan, String> {
+    agents::preview(&agent, install)
+}
+
+/// Only ever called from an explicit click in the settings window, with the
+/// fingerprint of the preview the user looked at.
+#[tauri::command]
+fn agent_hooks_apply(agent: String, install: bool, fingerprint: String) -> Result<String, String> {
+    let backups = agents::apply(&agent, install, &fingerprint)?;
+    let done = if install { "installed" } else { "removed" };
+    log::line(format!("agent hooks {done} for {agent}"));
+    Ok(backups)
+}
+
+// ── Plan usage ────────────────────────────────────────────────────────────────
+
+/// The diff of putting the plan usage relay into (or taking it out of) the
+/// status line, before anything is written.
+#[tauri::command]
+fn status_line_preview(install: bool) -> Result<HookPreview, String> {
+    hooks::status_line_preview(install)
+}
+
+/// Only ever called from an explicit click in the settings window.
+#[tauri::command]
+fn status_line_apply(
+    app: AppHandle,
+    shared: State<Shared>,
+    install: bool,
+    fingerprint: String,
+) -> Result<String, String> {
+    let backup = hooks::status_line_write(install, &fingerprint)?;
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        current.plan_relay_installed = install;
+        // As on the Mac: taking the relay out turns the pill off with it.
+        if !install {
+            current.show_plan_in_notch = false;
+        }
+        if let Err(err) = settings::save(&current) {
+            log::line(format!("could not save settings: {err}"));
+        }
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
+    Ok(backup)
+}
+
+/// Codex plan usage, asked of the Codex CLI (`codex app-server`) when its pill
+/// shows. Off the main thread: it can take a few seconds.
+#[tauri::command]
+async fn codex_plan_usage() -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(codex_plan::read).await.ok().flatten()
+}
+
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
+    recap::record_decision(&app, &request_id, &decision);
     pipe::answer(&app, &request_id, &decision);
+}
+
+/// An option picked on the island for a question Claude Code asked.
+#[tauri::command]
+fn approval_answer(
+    app: AppHandle,
+    request_id: String,
+    answers: std::collections::HashMap<String, serde_json::Value>,
+) {
+    // An answered question is not an Allow / Deny: nothing for the recap.
+    recap::forget_request(&app, &request_id);
+    pipe::answer_question(&app, &request_id, serde_json::to_value(answers).unwrap_or_default());
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
@@ -299,6 +548,7 @@ fn approval_ack(app: AppHandle, request_id: String) {
 /// already up. Claude Code falls back to asking in the terminal immediately.
 #[tauri::command]
 fn approval_decline(app: AppHandle, request_id: String) {
+    recap::forget_request(&app, &request_id);
     pipe::decline(&app, &request_id);
 }
 
@@ -312,16 +562,39 @@ fn question_answer(app: AppHandle, request_id: String, answers: serde_json::Valu
 
 // ── Chat, files and secrets ───────────────────────────────────────────────────
 
-/// One chat turn. The API key and any file bytes stay on the Rust side.
+/// One chat turn with the provider picked in the chat view. API keys and any
+/// file bytes stay on the Rust side.
 #[tauri::command]
 async fn chat_send(
+    app: AppHandle,
     shared: State<'_, Shared>,
     chat: State<'_, Chat>,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let settings = shared.settings.lock().unwrap().clone();
+    chat::send(&app, &chat, &settings, query, context).await
+}
+
+/// The models a provider offers, for the picker in the chat view. Only asked
+/// once the user picked that provider, and only with its key or address.
+#[tauri::command]
+async fn chat_models(shared: State<'_, Shared>, provider: String) -> Result<Vec<ModelInfo>, String> {
+    let settings = shared.settings.lock().unwrap().clone();
+    chat::models(&settings, &provider).await
+}
+
+/// Settings → Local models → Connect: does the server answer, and with which models?
+#[tauri::command]
+async fn local_connect(provider: String, url: String) -> Result<local_chat::Connected, String> {
+    local_chat::connect(&provider, &url).await
+}
+
+/// Stores the custom server's key for the address typed next to it; it is only
+/// ever sent to that address.
+#[tauri::command]
+fn local_set_key(url: String, key: String) -> Result<(), String> {
+    local_chat::set_custom_key(&url, &key)
 }
 
 /// An audio file the user chose for a sound, as base64 (the page decodes it). Only audio
@@ -351,26 +624,11 @@ async fn calendar_events(days: u32) -> Result<Vec<calendar::Event>, String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Jinx's open pending tasks, read from her state file on the server (needs the server set).
-#[tauri::command]
-async fn jinx_tasks(shared: State<'_, Shared>) -> Result<Vec<calendar::Task>, String> {
-    let host = {
-        let s = shared.settings.lock().unwrap();
-        s.server_host.trim().to_string()
-    };
-    if host.is_empty() {
-        return Err("not-configured".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || sysmon::remote_cat(&host, ".hermes/state/pendientes.json").map(|t| calendar::parse_tasks(&t)))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 // ── Hub: notes, and what Jinx can see of the Hub (see notes.rs, share.rs) ──────
 
 #[tauri::command]
 fn notes_load() -> String {
-    notes::load()
+    hub_notes::load()
 }
 
 /// Where the Hub's data goes for Jinx: the server, if one is set and sharing is on.
@@ -381,7 +639,7 @@ fn share_target(shared: &State<Shared>) -> Option<String> {
 
 #[tauri::command]
 fn notes_save(shared: State<Shared>, text: String) -> Result<(), String> {
-    notes::save(&text)?;
+    hub_notes::save(&text)?;
     if let Some(host) = share_target(&shared) {
         share::schedule(&host, "notes.md", text);
     }
@@ -755,14 +1013,67 @@ async fn jinx_send(
     text: String,
     context: Option<ChatContext>,
 ) -> Result<(), String> {
-    let hub_shared = share_target(&shared).is_some();
+    let (hub_shared, backend) = {
+        let s = shared.settings.lock().unwrap();
+        (s.jinx_share && !s.server_host.trim().is_empty(), s.jinx_backend.clone())
+    };
+    // As on the phones: through the laptop's gateway, into the thread shared with them and Telegram.
+    if jinx_gateway::use_gateway(&backend) {
+        let input = jinx::with_context(&text, context.as_ref())?;
+        jinx_gateway::send(app, input);
+        return Ok(());
+    }
     jinx::send(app, &jinx, text, context, hub_shared).await
 }
 
-/// `choice`: once | session | always | deny.
+/// A coding agent's news for Jinx to pass on (see jinx_gateway::notify). Nothing when the gateway is not used.
 #[tauri::command]
-async fn jinx_approve(run_id: String, request_id: String, choice: String) -> Result<(), String> {
+async fn jinx_notify(shared: State<'_, Shared>, text: String, kind: String) -> Result<bool, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(false);
+    }
+    tauri::async_runtime::spawn_blocking(move || jinx_gateway::notify(&text, &kind))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The tail of Jinx's shared thread (Telegram, the phones and this PC), when the gateway is used.
+#[tauri::command]
+async fn jinx_history(shared: State<'_, Shared>, n: u32) -> Result<Option<Vec<serde_json::Value>>, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(None);
+    }
+    tauri::async_runtime::spawn_blocking(move || jinx_gateway::history(n).map(Some))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// `choice`: once | session | always | deny. Through the gateway when it is used (the question is on the
+/// server), else straight to the Hermes API.
+#[tauri::command]
+async fn jinx_approve(shared: State<'_, Shared>, run_id: String, request_id: String, choice: String) -> Result<(), String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if jinx_gateway::use_gateway(&backend) {
+        return tauri::async_runtime::spawn_blocking(move || jinx_gateway::approve(&run_id, &request_id, &choice))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     jinx::approve(&run_id, &request_id, &choice).await
+}
+
+/// What Jinx waits for Alan to allow, when she is reached through the gateway (the Hermes API streams its
+/// questions as `jinx` events instead: empty then).
+#[tauri::command]
+async fn jinx_approvals(shared: State<'_, Shared>) -> Result<Vec<serde_json::Value>, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if !jinx_gateway::use_gateway(&backend) {
+        return Ok(Vec::new());
+    }
+    tauri::async_runtime::spawn_blocking(jinx_gateway::approvals)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -772,21 +1083,33 @@ async fn jinx_stop(jinx: State<'_, jinx::Jinx>) -> Result<(), String> {
 
 /// Reachable, and is the key accepted?
 #[tauri::command]
-async fn jinx_test() -> Result<String, String> {
+async fn jinx_test(shared: State<'_, Shared>) -> Result<String, String> {
+    let backend = shared.settings.lock().unwrap().jinx_backend.clone();
+    if jinx_gateway::use_gateway(&backend) {
+        return tauri::async_runtime::spawn_blocking(jinx_gateway::test).await.map_err(|e| e.to_string())?;
+    }
     jinx::test().await
 }
 
 // ── Claude Code and OpenCode sessions (see agents.rs, opencode.rs) ────────────
 
 #[tauri::command]
-async fn agents_list() -> Result<serde_json::Value, String> {
+async fn agents_list(shared: State<'_, Shared>) -> Result<serde_json::Value, String> {
+    let server = server_agents_host(&shared);
     // Both CLIs are asked at once: each can take a second, and the chat polls
     // every couple of seconds. One missing is fine; none at all is an error.
-    let claude = tauri::async_runtime::spawn_blocking(agents::list);
+    let claude = tauri::async_runtime::spawn_blocking(claude_sessions::list);
     let open = tauri::async_runtime::spawn_blocking(opencode::list);
+    let remote = server.map(|h| tauri::async_runtime::spawn_blocking(move || remote_agents::list(&h)));
     let (claude, open) = (claude.await, open.await);
     let mut all: Vec<serde_json::Value> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    // The server's own agents (read-only). An unreachable server is not an error of the list: the rest shows.
+    if let Some(r) = remote {
+        if let Ok(Ok(v)) = r.await {
+            all.extend(v.as_array().cloned().unwrap_or_default());
+        }
+    }
     match claude.map_err(|e| e.to_string())? {
         Ok(v) => all.extend(v.as_array().cloned().unwrap_or_default()),
         Err(e) => errors.push(e),
@@ -801,32 +1124,42 @@ async fn agents_list() -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Array(all))
 }
 
-/// The 5-hour / 7-day usage percentages, when the statusline has written them.
-#[tauri::command]
-fn rate_limits() -> Option<serde_json::Value> {
-    agents::limits()
+/// The server to look for Claude Code agents on: only with "Server activity" on and a server set.
+fn server_agents_host(shared: &Shared) -> Option<String> {
+    let s = shared.settings.lock().unwrap();
+    let host = s.server_host.trim().to_string();
+    (s.activities_on && !host.is_empty()).then_some(host)
 }
 
 #[tauri::command]
-async fn agent_messages(session_id: String, offset: u64) -> Result<agents::Messages, String> {
+async fn agent_messages(shared: State<'_, Shared>, session_id: String, offset: u64) -> Result<claude_sessions::Messages, String> {
+    if remote_agents::is_remote(&session_id) {
+        let host = server_agents_host(&shared).ok_or("Server agents are off")?;
+        return tauri::async_runtime::spawn_blocking(move || remote_agents::messages(&host, &session_id, offset))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     if opencode::is_opencode(&session_id) {
         return tauri::async_runtime::spawn_blocking(move || opencode::messages(&session_id, offset))
             .await
             .map_err(|e| e.to_string())?;
     }
-    tauri::async_runtime::spawn_blocking(move || agents::messages(&session_id, offset))
+    tauri::async_runtime::spawn_blocking(move || claude_sessions::messages(&session_id, offset))
         .await
         .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn agent_send(id: String, text: String) -> Result<(), String> {
+    if remote_agents::is_remote(&id) {
+        return Err(remote_agents::READ_ONLY.into());
+    }
     if opencode::is_opencode(&id) {
         return tauri::async_runtime::spawn_blocking(move || opencode::send(&id, &text))
             .await
             .map_err(|e| e.to_string())?;
     }
-    tauri::async_runtime::spawn_blocking(move || agents::send(&id, &text)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || claude_sessions::send(&id, &text)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -836,15 +1169,18 @@ async fn agent_start(cwd: String, prompt: String, backend: String) -> Result<Str
             .await
             .map_err(|e| e.to_string())?;
     }
-    tauri::async_runtime::spawn_blocking(move || agents::start(&cwd, &prompt)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || claude_sessions::start(&cwd, &prompt)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn agent_stop(id: String) -> Result<(), String> {
+    if remote_agents::is_remote(&id) {
+        return Err(remote_agents::READ_ONLY.into());
+    }
     if opencode::is_opencode(&id) {
         return Err("OpenCode sessions run to the end on their own — they cannot be stopped from here".into());
     }
-    tauri::async_runtime::spawn_blocking(move || agents::stop(&id)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || claude_sessions::stop(&id)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -865,13 +1201,35 @@ fn secret_present(key: String) -> bool {
 }
 
 #[tauri::command]
-fn secret_set(key: String, value: String) -> Result<(), String> {
-    secrets::set(&key, &value)
+fn secret_set(app: AppHandle, key: String, value: String) -> Result<(), String> {
+    // Bound to its server's address: only local_set_key may store it.
+    if key == local_chat::CUSTOM_KEY {
+        return Err("use local_set_key".into());
+    }
+    let before = (key == "github-token").then(|| secrets::get(&key));
+    secrets::set(&key, &value)?;
+    if key == claude::KEY {
+        voice::sync(&app);
+    }
+    if let Some(before) = before {
+        if secrets::get(&key) != before {
+            integrations::github_token_changed(&app);
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
-fn secret_clear(key: String) -> Result<(), String> {
-    secrets::clear(&key)
+fn secret_clear(app: AppHandle, key: String) -> Result<(), String> {
+    let had = key == "github-token" && secrets::present(&key);
+    secrets::clear(&key)?;
+    if key == claude::KEY {
+        voice::sync(&app);
+    }
+    if had {
+        integrations::github_token_changed(&app);
+    }
+    Ok(())
 }
 
 /// Opens the configured n8n instance — the URL lives in the Credential Manager.
@@ -888,10 +1246,37 @@ async fn refresh_integration(app: AppHandle, id: String) {
     integrations::poll_once(app, &id).await;
 }
 
+/// The GitHub card was opened: refetch its `section` ("pulse" or "activity")
+/// if it is stale. The pollers still decline while the pill is off or paused.
+#[tauri::command]
+fn github_refresh(section: String) {
+    integrations::github_refresh_if_stale(&section);
+}
+
 /// Lets the island write to the same log as the Rust side.
 #[tauri::command]
 fn log_line(message: String) {
     log::line(format!("ui  {message}"));
+}
+
+// ── Global shortcuts ──────────────────────────────────────────────────────────
+
+/// How each global shortcut went: registered, taken by another app, and so on.
+#[tauri::command]
+fn shortcuts_status(app: AppHandle) -> shortcuts::Report {
+    shortcuts::status(&app)
+}
+
+/// Settings is recording a new combination: let go of ours meanwhile, so the
+/// keys reach the recorder instead of running an action. `false` takes them back.
+#[tauri::command]
+fn shortcuts_suspend(app: AppHandle, shared: State<Shared>, suspended: bool) {
+    if suspended {
+        shortcuts::suspend(&app);
+    } else {
+        let stored = shared.settings.lock().unwrap().shortcuts.clone();
+        shortcuts::apply(&app, &stored);
+    }
 }
 
 // ── Settings window ───────────────────────────────────────────────────────────
@@ -901,7 +1286,7 @@ fn log_line(message: String) {
 /// for the *same* arguments as the island (see `additionalBrowserArgs` in
 /// tauri.conf.json) — a mismatch makes the second window come up blank, with no
 /// error anywhere.
-const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
+pub(crate) const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
 
 /// In a dev build the pages are served by Vite, so the second window needs the
 /// absolute dev URL; a bundled build resolves it inside the app bundle.
@@ -915,26 +1300,28 @@ fn settings_page_url(app: &AppHandle) -> WebviewUrl {
     WebviewUrl::App("settings.html".into())
 }
 
-/// The settings window is created hidden at launch and only ever shown and
+/// The Coucou window (Flow dictation, the Notetaker and every setting of the
+/// island), labelled "settings" since it grew out of the settings window.
+pub const HUB_LABEL: &str = "settings";
+
+/// The Coucou window is created hidden at launch and only ever shown and
 /// hidden afterwards. A WebView2 window created later — on the main thread or
 /// not — silently comes up blank in this app, so the window that works is the
 /// one that exists before the island's webview does.
 fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
-    let builder = WebviewWindowBuilder::new(app, "settings", url)
+    match WebviewWindowBuilder::new(app, HUB_LABEL, url)
         .additional_browser_args(BROWSER_ARGS)
-        .title("Settings — Coucou")
-        .inner_size(560.0, 680.0)
-        .min_inner_size(460.0, 480.0)
+        .title("Coucou")
+        .inner_size(1100.0, 720.0)
+        .min_inner_size(820.0, 560.0)
         .resizable(true)
         .visible(false)
-        .center();
-    // On Linux GNOME lists any ordinary window as a running application (Super,
-    // the dock). Coucou lives in the notch and the tray, so neither window should
-    // appear there; Settings is reopened from the island's gear or the tray.
-    #[cfg(target_os = "linux")]
-    let builder = builder.skip_taskbar(true);
-    match builder.build() {
+        // GNOME/Plank list a normal window as a running app (there is no Coucou launcher to match it to).
+        .skip_taskbar(cfg!(target_os = "linux"))
+        .center()
+        .build()
+    {
         Ok(win) => {
             // Closing it must only hide it, or it could never be reopened.
             let hidden = win.clone();
@@ -945,37 +1332,72 @@ fn create_settings_window(app: &AppHandle) {
                 }
             });
         }
-        Err(err) => log::line(format!("settings window failed: {err}")),
+        Err(err) => log::line(format!("Coucou window failed: {err}")),
     }
 }
 
 pub fn show_settings_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("settings") else {
-        log::line("settings window missing");
+    show_hub(app, Some("general"));
+}
+
+/// Shows the Coucou window, on `page` when given ("dictation", "notes",
+/// "settings", "general", "shortcuts"…).
+pub fn show_hub(app: &AppHandle, page: Option<&str>) {
+    let Some(win) = app.get_webview_window(HUB_LABEL) else {
+        log::line("Coucou window missing");
         return;
     };
+    if let Some(page) = page {
+        let _ = win.emit("hub-page", page.to_string());
+    }
     let _ = win.unminimize();
     let _ = win.show();
     let _ = win.set_focus();
 }
 
+/// The argument the login item starts Coucou with.
+const AUTOSTART_ARG: &str = "--autostart";
+
+/// Coucou started with the computer, not opened by the user: the window stays hidden.
+pub fn launched_at_login() -> bool {
+    std::env::args().any(|a| a == AUTOSTART_ARG)
+}
+
 #[tauri::command]
-fn open_settings_window(app: AppHandle) {
-    show_settings_window(&app);
+fn open_settings_window(app: AppHandle, page: Option<String>) {
+    show_hub(&app, Some(page.as_deref().unwrap_or("general")));
 }
 
 pub fn run() {
     platform::prepare_environment();
     let loaded = settings::load();
+    i18n::set_picked(&loaded.language);
     let gate = Arc::new(PollGate::new());
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // `coucou --toggle` (bound to a keyboard shortcut) opens the island, or closes it if it is open.
-            let what = if argv.iter().any(|a| a == "--toggle") { "toggle" } else { "open" };
-            let _ = app.emit_to(island::WINDOW_LABEL, "tray", what.to_string());
+            // `coucou --shortcut <action>`: what a desktop's own keyboard
+            // settings run where we can't listen for keys ourselves (Wayland).
+            match shortcuts::from_args(&argv) {
+                Some(action) => shortcuts::dispatch(app, action),
+                None => {
+                    if argv.iter().any(|a| a == "--toggle") {
+                        // `coucou --toggle` (bound to a keyboard shortcut) opens the island, or closes it if it is open.
+                        let _ = app.emit_to(island::WINDOW_LABEL, "tray", "toggle".to_string());
+                    } else {
+                        // Opening Coucou again (its shortcut, the Start menu) shows its window.
+                        show_hub(app, None);
+                    }
+                }
+            }
         }))
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![AUTOSTART_ARG])));
+    // Where no global shortcut can work, the plugin isn't even started.
+    if platform::global_shortcuts_blocked().is_none() {
+        builder = builder.plugin(shortcuts::plugin());
+    }
+
+    builder
         .manage(Shared {
             settings: Mutex::new(loaded.clone()),
             gate: gate.clone(),
@@ -983,6 +1405,8 @@ pub fn run() {
         .manage(Pending::default())
         .manage(Chat::default())
         .manage(jinx::Jinx::default())
+        .manage(shortcuts::Registry::default())
+        .manage(recap::load())
         .invoke_handler(tauri::generate_handler![
             boot,
             presence_state,
@@ -990,17 +1414,31 @@ pub fn run() {
             presence_local_news,
             presence_local_limit,
             save_settings,
+            set_system_languages,
             set_collapsed,
             set_island_rect,
             focus_window,
             reposition,
+            fit_zoom,
+            list_monitors,
             open_url,
             open_in_vscode,
+            open_session,
+            open_claude_desktop,
+            open_file_in_vscode,
             quit_app,
             hooks_status,
+            agent_hooks_status,
             hooks_preview,
             hooks_apply,
+            agent_hooks_list,
+            agent_hooks_preview,
+            agent_hooks_apply,
+            status_line_preview,
+            status_line_apply,
+            codex_plan_usage,
             approval_decision,
+            approval_answer,
             approval_ack,
             approval_decline,
             question_answer,
@@ -1012,10 +1450,12 @@ pub fn run() {
             bars::music_bars,
             log_line,
             chat_send,
+            chat_models,
+            local_connect,
+            local_set_key,
             chat_reset,
             read_sound,
             calendar_events,
-            jinx_tasks,
             notes_load,
             notes_save,
             share_push,
@@ -1057,13 +1497,15 @@ pub fn run() {
             sys_sample,
             server_sample,
             agents_list,
-            rate_limits,
             agent_messages,
             agent_send,
             agent_start,
             agent_stop,
             jinx_send,
+            jinx_history,
+            jinx_notify,
             jinx_approve,
+            jinx_approvals,
             jinx_stop,
             jinx_test,
             ingest_file,
@@ -1071,18 +1513,121 @@ pub fn run() {
             secret_set,
             secret_clear,
             refresh_integration,
+            github_refresh,
             open_n8n,
             open_settings_window,
             set_paused,
+            shortcuts_status,
+            shortcuts_suspend,
+            phone_link::phone_link_status,
+            phone_link::phone_link_set_enabled,
+            phone_link::phone_link_pairing,
+            phone_link::phone_link_new_pairing,
+            phone_link::phone_link_publish,
+            phone_link::phone_link_publish_question,
+            phone_link::phone_link_publish_prefs,
+            phone_link::phone_answers_status,
+            phone_link::phone_answers_set_enabled,
+            phone_link::phone_diffs_status,
+            phone_link::phone_diffs_set_enabled,
+            phone_link::phone_link_send_diff,
+            phone_link::phone_usage_status,
+            phone_link::phone_usage_set_enabled,
+            phone_link::phone_relay_status,
+            phone_link::phone_relay_set,
+            phone_link::phone_relay_set_access,
+            phone_link::phone_link_publish_usage,
+            phone_link::phone_services_status,
+            phone_link::phone_services_set,
+            phone_link::phone_link_publish_services,
+            phone_link::phone_details_status,
+            phone_link::phone_details_set_enabled,
+            phone_link::phone_chat_status,
+            phone_link::phone_chat_set_enabled,
+            phone_link::phone_chat_set_models,
+            recap::recap_history,
+            recap::recap_prefs,
+            recap::recap_set_enabled,
+            recap::recap_set_hide_projects,
+            recap::recap_mark_shown,
+            recap::recap_clear,
+            recap::recap_save_png,
+            recap::recap_reveal_saved,
+            desktop::desktop_mochi_info,
+            desktop::desktop_mochi_pick_up,
+            desktop::desktop_mochi_carry,
+            desktop::desktop_mochi_carry_end,
+            desktop::desktop_mochi_drag_begin,
+            desktop::desktop_mochi_drag_move,
+            desktop::desktop_mochi_drag_end,
+            desktop::desktop_mochi_fly_out,
+            desktop::desktop_mochi_fly_home,
+            desktop::desktop_mochi_set_asleep,
+            sounds::custom_sounds,
+            sounds::custom_sound,
+            sounds::reveal_sounds_folder,
+            sounds::reload_sounds,
+            spotify::spotify_refresh,
+            spotify::spotify_control,
+            spotify::spotify_open,
+            spotify::spotify_installed,
+            flow::flow_status,
+            flow::flow_set_prefs,
+            flow::flow_history,
+            flow::flow_delete,
+            flow::flow_clear,
+            flow::flow_stats,
+            flow::flow_words,
+            flow::flow_set_words,
+            flow::flow_snippets,
+            flow::flow_set_snippets,
+            flow::flow_styles,
+            flow::flow_set_styles,
+            flow::flow_running_apps,
+            flow::flow_copy,
+            flow::flow_paste_again,
+            flow::flow_models_download,
+            flow::flow_models_remove,
+            flow::pill_state,
+            flow::pill_hot,
+            flow::pill_hover,
+            flow::pill_action,
+            notes::notes_state,
+            notes::notes_start,
+            notes::notes_stop,
+            notes::notes_rename,
+            notes::notes_rename_speaker,
+            notes::notes_toggle_todo,
+            notes::notes_delete,
+            notes::notes_summarize,
+            notes::notes_retry,
+            notes::notes_markdown,
+            notes::notes_export,
+            voice::voice_done,
+            voice::voice_say_native,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
+            app.manage(phone_link::PhoneLink::new(handle.clone()));
             tray::build(&handle)?;
             // Before the island: see create_settings_window.
             create_settings_window(&handle);
+            // Same rule for Mochi's desktop window and the dictation pill.
+            desktop::setup(&handle);
+            flow::setup(&handle);
+            notes::setup(&handle);
 
             if let Some(win) = island::window(&handle) {
+                // Where Tauri takes the drop itself (Linux), its paths are the
+                // ones ingest_file may copy (files.rs).
+                win.on_window_event(|event| {
+                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                        files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
+                    }
+                });
                 platform::make_non_activating(&win);
+                #[cfg(windows)]
+                webview_drop::install(&handle);
                 island::apply_geometry(&handle, &loaded.screen, false);
                 let _ = win.show();
             }
@@ -1100,11 +1645,9 @@ pub fn run() {
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            phone_link::start_if_enabled(&handle);
             integrations::start(handle.clone());
-            music::sync_enabled(
-                &handle,
-                loaded.active_integrations.iter().any(|x| x == "integration_music"),
-            );
+            music::sync_enabled(&handle, music::reader_wanted(&loaded.main_pill, &loaded.active_integrations));
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
             audiolink::sync_enabled(&handle, loaded.audiolink_enabled);
@@ -1114,14 +1657,57 @@ pub fn run() {
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);
+            // Jinx's orders for the island (music, pills, Mochi, the Hub, apps), from the server's queue.
+            island_cmd::start(&handle);
             // Battery, mains power and internet, announced by the system itself (no polling).
             #[cfg(target_os = "linux")]
             sysstate::start(&handle);
             // Bluetooth devices' and controllers' batteries, announced by UPower (no polling).
             #[cfg(target_os = "linux")]
             peripherals::start(&handle);
+            spotify::sync(&handle, &loaded.main_pill, &loaded.active_integrations);
+            shortcuts::apply(&handle, &loaded.shortcuts);
+            if loaded.autostart {
+                // Login items written before 0.5 start Coucou without --autostart:
+                // writing it again adds it, so the window stays hidden at login.
+                let _ = handle.autolaunch().enable();
+            }
+            let open_window = flow::get(&handle).map(|f| f.store.lock().unwrap().prefs.open_at_launch).unwrap_or(true);
+            if open_window && !launched_at_login() {
+                show_hub(&handle, None);
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Coucou");
+        .build(tauri::generate_context!())
+        .expect("error while building Coucou")
+        .run(|app, event| {
+            // Withdraw the phone link's announcement on the local network before the process ends.
+            if let tauri::RunEvent::Exit = event {
+                phone_link::stop_on_exit(app);
+                notes::shutdown(app);
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diff_file;
+
+    #[test]
+    fn only_an_existing_file_by_its_full_path_reaches_the_editor() {
+        let dir = std::env::temp_dir().join(format!("coucou-diff-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("edited.ts");
+        std::fs::write(&file, "x").unwrap();
+
+        assert!(diff_file(&file.to_string_lossy()).is_some());
+        // A folder, a missing file, a relative path or an option never pass.
+        assert!(diff_file(&dir.to_string_lossy()).is_none());
+        assert!(diff_file(&dir.join("missing.ts").to_string_lossy()).is_none());
+        assert!(diff_file("edited.ts").is_none());
+        assert!(diff_file("--help").is_none());
+        assert!(diff_file("").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

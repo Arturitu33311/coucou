@@ -6,7 +6,8 @@
 | `windows/` | Desktop app for Windows and Linux (Tauri + Rust + TypeScript) | MIT |
 | `relay/` | Relay (upstream) | MIT |
 | `android/` | Android app: the island and Coucou on the phone. Derived from SmartIsland | **GPL-3.0** (`android/LICENSE`) |
-| `jinx/` | Jinx's side: laptop assistant (`jinx-assist/`), the VGA panel on the server (`vga-panel/`) | MIT |
+| `jinx/` | Jinx's side: laptop assistant (`jinx-assist/`), the VGA panel on the server (`vga-panel/`), the G2 glasses' bridge (`g2-bridge/`) | MIT |
+| `glasses/` | Jinx on the Even Realities G2 glasses (an Even Hub app: Vite + TypeScript) | MIT |
 | `linux-wallpaper/` | The phone's cover / clock / lyrics / status-gauge wallpaper as a live web wallpaper for Linux (local server + canvas page) | MIT |
 | `scripts/check-contracts.sh` | Fails if the PC's and the phone's shared test vectors differ | — |
 
@@ -22,6 +23,7 @@ homelab dashboard's edited files). `docs/history/` keeps the working notes of th
 - Android: `cd android && JAVA_HOME=<jdk21> ./gradlew :app:assembleDebug` (needs `android/local.properties` with `sdk.dir`,
   which is machine-specific and ignored by git).
 - Jinx tooling: `jinx/jinx-assist/install.sh` (laptop side), `jinx/jinx-assist/deploy-server.sh`, `jinx/vga-panel/deploy.sh`.
+- Glasses: `cd glasses && npm ci && npm test && npm run typecheck` (the simulator: `npm run dev` + `npm run simulate`).
 - Before sending anything: `bash scripts/check-contracts.sh`.
 
 ## Shared contracts
@@ -34,14 +36,207 @@ The PC (Rust) and the phone (Kotlin) must behave the same on two things, and eac
 
 Change both together, then run `scripts/check-contracts.sh`.
 
+### Jinx's mood (gateway contract)
+
+Where Jinx's mood comes from, in the order the clients use it (`windows/src-tauri/src/jinx_gateway.rs`, `windows/src/core/jinx-mood.ts`,
+`android/.../coucou/assist/JinxMood.kt`; gateway side `jinx/jinx-assist/jinx_chat.py`):
+
+1. `done.mood` (and `mood` on a `history`/`merge` line of hers): one of the 19 names `happy love proud surprised excited
+   confused shy sad curious bored scared grumpy smug laughing crying relieved determined flustered sleepy`, or absent.
+   Never her background mood: only a mood that came with that reply (the hidden tag `[[mood:<emote>]]`, stripped by the
+   gateway before the thread and Telegram; **not enabled**: nothing asks the brain for it yet).
+2. Else the text rules pinned by `jinx-mood-vectors.json`.
+3. `{"op":"mood"}` → `{"ev":"mood","emote":<emote>|null,"source":"state"|"text","emotion_state":{…}|null}`: her background
+   mood now, from `emotion_state` in the server's `~/.hermes/STATE.md` (read over ssh) by `baseline_emote(state, hour)`.
+   Dimensions are 0–120; `source:"text"` means the state could not be read.
+
+An unknown name is ignored by every client. Hermes itself returns no mood with its replies (only text).
+
+**Her background mood on her Mochi** (what she feels between messages): the presence server (`mochi_presence.py`, on the
+server, where `~/.hermes/STATE.md` is local) answers every heartbeat with `jinx_mood` (`<emote>|null`, read at most once
+a minute). The rules live in one module, `jinx/jinx-assist/jinx_baseline.py` (`baseline_emote`, all ten dimensions plus
+`emotion_score`), used by the gateway's `op: mood` too; `deploy.sh` copies it next to the server. The PC
+(`presence.rs` → `Presence.jinxMood` → `mochi/scene.ts wornEmote`) and the phone (`MochiPresence` → `JinxBackground` →
+`MochiReactions.calmOrJinx`, and the chat header) wear it whenever nothing else moves him; null means calm.
+
+### Where things run (server first, the laptop as fallback)
+
+| Piece | Main (server) | Fallback (laptop) | Clients' rule |
+|---|---|---|---|
+| Jinx's gateway `jinx-chat` + shared thread + Telegram mirror | `~/bin/jinx-chat` (`deploy-gateway-server.sh`); phones reach it through `server-dispatch` (forced command of their key) | `~/bin/jinx-chat` (`install.sh`) | `Failover` (ChatApi.kt) / `jinx_gateway.rs`: server first; unreachable → laptop, server skipped 2 min; server without the gateway → laptop, skipped 10 min; a `send` that broke after reaching the server is never re-sent to the laptop |
+| Lines the laptop answered while the server was down | — | `jinx-chat --sync-to-server` (op merge both ways; run it on a timer) | — |
+| Presence + her background mood | `mochi_presence.py` (`deploy.sh`) | devices decide among themselves (`decide`/`Arbiter`) | presence contract below |
+| Pendientes | `coucou_pendientes.py` (`deploy-server.sh`) | — | — |
+| Hermes | server | — | the gateway finds it locally on the server (`default_hermes_host`), over ssh from the laptop |
+
+The laptop finds the server as the ssh host `server` (`~/.ssh/config`; `COUCOU_JINX_SERVER` overrides it, `""` turns it off).
+
+### Where Jinx's replies show up (island first, Telegram only when nobody is looking)
+
+The gateway sends each reply to the presence server (`source: jinx-chat`). When a device is in use
+(`watched: true`), the reply shows on that device's island and does not go to Telegram; both lines are marked
+handled, so they are never sent there later. When nobody is looking (`vga`), or there is no presence (the
+laptop's fallback gateway), it goes to Telegram as before. The device whose Jinx chat is open does not repeat
+the reply on its island. The laptop reads the presence inbox only while it is the device in use
+(`presence.rs inbox_round`), as the phone does.
+
+Telegram gets the lines as written, without any mark of who or where. The only mark is `⚠️`, in front of a
+reply that a backup (OpenRouter, a local model) gave instead of Hermes. The thread keeps that in `via`.
+
+### Jinx asking for permission (approvals)
+
+Hermes asks before a command it flags as dangerous only when someone can answer. Its plain session chat
+(`/api/sessions/{id}/chat`, what the gateway used) has nobody, so Hermes applied `approvals.unattended_mode`
+(deny by default) and Jinx silently could not run those commands from the phones or the PC. Now:
+
+1. The bridge (`jinx_hermes_chat.py`, on the server) sends through `/api/sessions/{id}/chat/stream`. An
+   `approval.request` is written to `~/.hermes/state/coucou/approvals.json` and announced on the device in use
+   (presence, kind `alert`). The turn then waits for Alan (Hermes gives 300 s). A Hermes without the stream
+   endpoint falls back to the old `/chat`.
+2. Gateway ops `approvals` (the list) and `approve` (`run_id`, `request_id`, `choice`) pass through to the bridge.
+   It answers only what is in that file, with a choice Hermes offered (`POST /v1/runs/{run_id}/approval`).
+3. Phone: Jinx's tab shows the card while a message waits (every 3 s) and while the tab is open (every 10 s).
+   Allowing (once / this session) asks for the fingerprint or the screen lock (`ConfirmActivity`, the same as
+   Claude Code's permissions on the island); denying does not. "Always" is never offered from the phone. A
+   command the server had to cut (2000 characters) cannot be allowed there.
+4. PC: while a message waits, the island polls the same list and uses the Hermes API's card; a click answers it.
+   A question answered on the phone loses its card on the PC.
+5. Telegram keeps Hermes's own approval prompt there.
+
+Timeouts follow: a `send` may last ~490 s with a question (the bridge cuts at 80 s without one); the gateway
+waits 500 s and the phone and PC 520 s.
+
+The fingerprint is checked on the phone only: the server trusts the phone's ssh key, as it does for everything else.
+
+### Jinx runs the island (the server's order queue)
+
+Jinx (Hermes) lives on the server and cannot reach the PC, so the presence server keeps her orders in a queue and the
+PC asks for them (a long request the server answers the moment an order arrives; nothing is pushed in, the laptop may be
+off). One closed list of what she may ask, **checked three times** (her tool, the server, the PC) because what she reads
+is not to be trusted:
+
+| | where |
+|---|---|
+| The list and its rules (Python) | `jinx/jinx-assist/island_commands.py` |
+| The same rules (Rust) | `windows/src-tauri/src/island_cmd.rs`; both held to `island-vectors.json` (`scripts/check-contracts.sh`) |
+| The queue: `POST /api/island/command`, `GET /api/island/poll`, `POST`/`GET /api/island/result` | `jinx/vga-panel/server/mochi_presence.py` (in memory; an order the PC does not take in 90 s expires; 30 a minute) |
+| Her tool and its skill | `jinx/jinx-assist/jinx_island.py`, `island/SKILL.md` → `~/.hermes/skills/devops/coucou-island/` |
+| The actions | « OK Coucou »'s `voice::run_tool` (music, pills, open_app): one layer, two ways in; Mochi's mood and the Hub on the page (`island/island-cmd.ts`) |
+
+Actions: `state` (what the island shows, now playing included, cut down: no items), `music` (play/pause, next, previous,
+volume on whatever player runs — the MPRIS one Jinx's pill carries; search is Spotify's),
+`pills` (list, add, remove, set main), `mochi` (a mood for 1–8 s), `hub` (open a tool), `open_app` (by the start of the
+name, and never a terminal entry, a shell, an interpreter or a `#!` script), `close_app`.
+Never in the list: approving or denying an agent's permission, sending mail, settings, keys, addresses, files, commands.
+`close_app` asks the window to close (`wmctrl -ic`: the app asks to save) and only for the apps in Settings → Jinx and
+Hub → *Apps Jinx may close* (whole names; Coucou itself never). Settings → *Jinx runs the island* turns all of it off.
+Deploy from the laptop: `jinx/jinx-assist/deploy-island.sh` (the tool, and the presence server with the queue).
+The PC needs `wmctrl` to close apps (`sudo apt install wmctrl`). Only the PC executes orders; the phones do not.
+
+### Jinx on the Even G2 glasses
+
+The G2 has a 576×288 green HUD, microphones and touch pads, no camera and no speaker; it needs the Even phone app, and
+a third-party app is a web page that runs inside that app (Even Hub SDK). So Jinx reaches the glasses through two new
+pieces, and the glasses are a **secondary surface**: they are not a presence device (`DEVICES`, the arbiter and its
+vectors are untouched), they only add to whoever has the island.
+
+| | where |
+|---|---|
+| The bridge (server, loopback `:8898`, HTTPS from Tailscale Serve) | `jinx/g2-bridge/g2_bridge.py`, voice in `g2_stt.py`, unit `hermes-jinx-g2.service`, `deploy.sh` |
+| The glasses app | `glasses/` (`state.ts` the screens, `events.ts` the touch events, `client.ts` the bridge, `app.ts` the glue) |
+| Gateway side | `jinx_chat.py`: source `g2` (held answer) and op `deliver` |
+
+- Asking: `POST /api/g2/ask {text}` (and `POST /api/g2/voice`, raw PCM 16 kHz mono) go through the gateway's `send` with
+  `src: "g2"`, so the shared thread has the glasses' lines like the phones' (labelled « Gafas »; a phone never answers
+  them). The OpenAI-compatible `POST /v1/chat/completions` is there for Even AI's *Agent Configuration* (developer-gated
+  in the Even app; it answers within 25 s or says it is still thinking).
+- **A held answer is never lost.** The gateway does not deliver a `g2` answer to the island or Telegram: the glasses
+  collect it. If nobody collects it in 180 s (the glasses came off), the bridge asks `deliver` and it goes the normal way
+  (the active device's island, else Telegram).
+- Notices: `GET /api/g2/notices` long-polls the presence inbox **without acknowledging** (`GET /api/mochi/inbox?…&all=1`:
+  `all=1` also returns what the PC or a phone already accepted, which they do at once; without it the glasses would
+  mostly miss notices while another device is active). Jinx's chat replies (`source: jinx-chat`) and anything older than
+  30 min are left out. The glasses show the notices on the home screen. This needs the presence server redeployed.
+- **Deploy order**: the phones (`android/scripts/install-phone.sh`) and the PC first — an old phone build would treat a
+  `g2` line as its own unanswered one and send it again — then the gateway, then the presence server and the bridge.
+  Held answers live only in the bridge's memory: restarting it between the answer and its collection loses that
+  answer from the glasses (it stays in the thread).
+- Controls: hold the side to talk, release to send; tap pages through an answer or a notice and goes back; **double-tap
+  always exits** (the store's rule). Taking the glasses off pauses the microphone and the polling.
+- The address and the key are typed once on the phone (the app's companion page) and kept in the Even app's storage;
+  the manifest (`glasses/app.json`, generated, not committed) whitelists the bridge's exact origin:
+  `JINX_G2_ORIGIN=https://… npm run pack` → `jinx.ehpk`. The key lives in `~/.config/jinx-g2/key` (0600) on the server.
+- Verified without hardware: unit tests, `tsc`, `vite build`, `evenhub pack`, and the **simulator** (boots, seeded
+  settings; notices through the real bridge render — against a stand-in presence server, so the `all=1` fix is covered
+  by unit tests only). **Not verified: the microphone and long-press on real
+  glasses, voice transcription, the reply time, and whether notices pop up while the app is not in the foreground.**
+- Verify: `python3 -m unittest discover -s jinx/g2-bridge`, `python3 jinx/jinx-assist/test_g2_held.py`,
+  `cd glasses && npm test && npm run typecheck && npm run build`.
+- Even AI's *Agent Configuration* may call the endpoint from Even's cloud and not from the phone; a tailnet-only Serve
+  cannot be reached from there. Check where its requests come from before enabling it, and do **not** open Tailscale
+  Funnel by default: that would put an agent that can run commands on the public internet behind a single key.
+
+### Fast Jinx on the glasses, and the server's Claude Code agents
+
+**Fast Jinx** (`jinx/g2-bridge/g2_lite.py`, the glasses' default mode): the full Jinx (Hermes) loads her whole persona and memory
+and can take tens of seconds, which is wrong for a voice on your face. Fast mode is a small model with a ~150-word persona,
+no long memory (the last 4 exchanges, forgotten after 10 minutes) and four tools: look up a Home Assistant device, read its
+state, act on it, and **hand the request to the full Jinx** (`pasar_a_jinx`: she answers on the island or Telegram, and Telegram
+gets the question with it). It writes nothing to the shared thread. If the fast model fails, the full Jinx answers instead.
+Model: `JINX_G2_MODEL` on OpenRouter with the vault's key (default `deepseek/deepseek-v4-flash`, the one the backup already
+uses; a Haiku-class model is the obvious one to try for tool calls and tone). `mode: "full"` on `/ask` or `?mode=full` on
+`/voice` forces Hermes; `JINX_G2_DEFAULT_MODE=full` flips the default. The Even AI endpoint (`/v1/chat/completions`) uses it too.
+
+Home Assistant is reached with a long-lived token (`~/.config/jinx-g2/ha_token`, 0600, or the vault) at `JINX_HA_URL`
+(`http://127.0.0.1:8123`). What a voice may ask is a closed policy, **checked in code, not in the prompt**: lights, switches,
+input booleans, fans, scenes, media players and climate (16–30 °C), one entity at a time, with bounded data. **Never**: locks,
+alarm panels, covers (garage, doors), automations, scripts, restarts. They can be *read* ("is the door locked?").
+
+**The server's Claude Code agents** (`windows/src-tauri/src/remote_agents.rs` + `remote_agents.py`): with *Server activity* on,
+the PC runs a fixed script over the shared ssh connection (`claude agents --json`, and the session transcript read from an
+offset), and the agents appear in the island's list marked « · server » (ids `srv:…`), with their messages and state. It is
+**read-only**: sending to or stopping one returns an error, and a permission request on the server is not forwarded to the
+island's approve card (that would need the server's hook to reach the PC; not built).
+
+### Which device has Mochi (presence contract)
+
+One device at a time: the rules are `presence.rs decide` and `Arbiter.kt` (twins), pinned by `presence-vectors.json`.
+The server calls the laptop `pc` (clients send `pc` and read `pc` as `laptop`; the server also accepts `laptop`).
+Its `vga` means nobody is in use: the VGA panel has Mochi and no device shows him, unless one of them, screen on, was
+touched less than 300 s ago (its answer is up to a heartbeat old). The panel itself draws Mochi only when it is the
+active one. `POST /api/mochi/message` answers `watched: false` when the panel has him (maybe nobody in front of it):
+whoever sends the notice must then also send it by Telegram.
+
 ## Taking changes from Coucou's upstream
 
 ```
+git remote add upstream https://github.com/Louis-CFM/coucou   # once
 git fetch upstream
-git merge upstream/main        # or: git log HEAD..upstream/main --oneline  to look first
+git merge-tree --write-tree --name-only HEAD upstream/main    # dry run: lists the conflicts, touches nothing
+git merge --no-commit upstream/main
 ```
 
-Upstream only touches the directories it knows (`windows/`, `NotchBuddy/`, `relay/`, docs); `android/` and `jinx/` are ours.
+**`android/` is never taken from upstream.** Since its 0.4.0, upstream has its own Android app (MIT, by another author)
+in `android/`, the same directory as ours (GPL-3.0, SmartIsland-based). They are unrelated apps. On every merge:
+
+```
+git checkout HEAD -- android/                                   # our side for the files both have
+git diff --name-only --diff-filter=A HEAD -- android/ | xargs -r git rm -qf  # drop the files only upstream has
+git diff --cached --stat HEAD -- android/                       # must print nothing
+```
+
+Upstream's `windows/src-tauri/src/phone_link/` pairs with *its* Android app, not ours (ours goes over ssh, see
+`android/COUCOU.md`). It is off by default; keep it rather than delete it, or every merge conflicts on it again.
+
+Last full merge: upstream `98a767c` (Coucou for Windows/Linux 0.5.0, Mac 0.5.1), on 19 Oct 2026; before it `1456bd3` (0.4.0).
+What was decided — which side of each overlapping feature stays — is in `docs/MERGE-UPSTREAM-0.4.md` and
+`docs/MERGE-UPSTREAM-0.5.md`; keep those choices on the next merge.
+Upstream's `.github/workflows/android*.yml` and the Android jobs of `phone-link.yml` are left out for the same reason as
+`android/`: delete them again if a merge brings them back.
+
+`jinx/` is ours alone. `windows/` has our own features on top of upstream's (Jinx, presence, tasks, the ssh phone link):
+expect conflicts there, and run the checks in `CLAUDE.md` plus `scripts/check-contracts.sh` before committing a merge.
+`jinx/vga-panel` bundles `windows/src/mochi/wardrobe.ts`: run its tests whenever a merge touches `windows/src/mochi/`.
 
 ## The VGA panel
 

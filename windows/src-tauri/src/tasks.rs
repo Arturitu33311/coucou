@@ -410,6 +410,19 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 
 /// When a pendiente with only a day gets its reminder: 09:00 that day, in this computer's time zone.
 pub fn due_reminder(due: &str, offset: &dyn Fn(i64) -> i64) -> Option<i64> {
+    let due = due.trim();
+    // A full date and time (her gateway sends one for Teams tasks: "2026-10-17T05:59:00Z") rings then: in its own
+    // zone when it says one, in this computer's when not. Same as the phone (TaskLogic.dueReminder, due-vectors.json).
+    if due.len() > 10 {
+        let ts = iso_to_unix(due)?;
+        let field = |from: usize| due.get(from..from + 2)?.parse::<i64>().ok();
+        let (mo, d, h, mi, se) = (field(5)?, field(8)?, field(11)?, field(14)?, field(17)?);
+        if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 59 {
+            return None;
+        }
+        let zoned = due[19..].contains(['Z', '+', '-']);
+        return Some(if zoned { ts } else { ts - offset(ts) });
+    }
     let b = due.as_bytes();
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
         return None;
@@ -874,6 +887,18 @@ mod tests {
         t
     }
 
+    /// The adapter lists only the closed rows of the last month, so an old closed row may be absent: a linked task whose
+    /// row is gone loses its link, and a finished one is never handed over again (it cannot reopen her old row).
+    #[test]
+    fn a_linked_task_whose_row_is_absent_loses_its_link_and_a_finished_one_is_not_re_added() {
+        let mut done = vec![shared("old", Some("abc123"))];
+        done[0].done = true;
+        let plan = reconcile(&mut done, &[], NOW);
+        assert!(plan.to_add.is_empty() && plan.to_resolve.is_empty());
+        assert_eq!(done[0].jinx_id, None);
+        assert!(reconcile(&mut done, &[], NOW).to_add.is_empty(), "the next round neither");
+    }
+
     #[test]
     fn a_shared_task_not_yet_hers_is_handed_over_while_it_is_open() {
         let mut l = vec![shared("a", None)];
@@ -1320,4 +1345,16 @@ mod tests {
         // No time in the sentence → the default hour on the picked day.
         assert_eq!(with_day(104 * DAY, None, 9, off), 104 * DAY + 9 * 3600);
     }
+
+    /// The same file the phone's TaskLogicTest reads: a pendiente's `due` rings at the same moment on both.
+    #[test]
+    fn due_reminders_follow_the_shared_vectors() {
+        let doc: serde_json::Value = serde_json::from_str(include_str!("../../scripts/phone/due-vectors.json")).unwrap();
+        let off = doc["offset"].as_i64().unwrap();
+        for c in doc["cases"].as_array().unwrap() {
+            let due = c["due"].as_str().unwrap();
+            assert_eq!(due_reminder(due, &|_| off), c["expect"].as_i64(), "{due}: {}", c["note"]);
+        }
+    }
+
 }

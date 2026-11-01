@@ -5,6 +5,7 @@ import com.agupta07505.smartisland.coucou.assist.ThreadStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -31,6 +32,26 @@ class ThreadStoreTest {
         assertNotNull(s.answerFor("c1"))
         assertNull(s.answerFor("c2"))
         assertEquals(listOf("c2:s21"), s.pending().map { it.id })
+    }
+
+    @Test fun linesFromThePcOrTelegramAreNeverAnsweredHere() {
+        val s = store()
+        s.append(line("p1:pc", 1.0, src = "pc", cid = "p1"))
+        s.append(line("t1:tg", 2.0, src = "tg", cid = "t1"))
+        s.append(line("c3:s21", 3.0, cid = "c3"))
+        assertEquals(listOf("c3:s21"), s.pending().map { it.id })
+    }
+
+    @Test fun eachSourceHasItsLabelAndItsTelegramPrefix() {
+        assertEquals("PC", line("a", 1.0, src = "pc").sourceLabel)
+        assertEquals("Telegram", line("a", 1.0, src = "tg").sourceLabel)
+        assertEquals("Gafas", line("a", 1.0, src = "g2").sourceLabel)
+        assertTrue(line("a", 1.0, src = "g2").fromElsewhere) // never a phone's to answer
+        assertNull(line("a", 1.0, src = "s22").sourceLabel)
+        assertEquals("", line("a", 1.0, src = "pc").mirrorPrefix)
+        assertEquals("", line("a", 1.0, src = "s21").mirrorPrefix)
+        assertEquals("", line("a", 1.0, src = "jinx").mirrorPrefix)
+        assertEquals("⚠️ ", line("a", 1.0, src = "jinx").copy(via = "or").mirrorPrefix)
     }
 
     @Test fun mergeAddsOnlyUnknownAndOrdersByTs() {

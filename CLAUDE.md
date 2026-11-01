@@ -16,14 +16,22 @@ This is Alan's fork. Work from the branch **`unify/monorepo`** (not `main`: `mai
 build). Branch from it and merge back into it; never start from `main` or from an old branch, that is how work got stranded.
 
 - `windows/` desktop (Tauri) · `NotchBuddy/` macOS · `relay/` · `android/` the phone app (SmartIsland-derived, **GPL-3.0**,
-  its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`).
+  its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`) · `glasses/` Jinx on the Even G2 glasses (with `jinx/g2-bridge/`).
 - Layout, shared contracts and how to pull Louis's upstream: `docs/MONOREPO.md`. Read it before touching `android/` or `windows/`.
 - The PC and the phone share two JSON vectors (`merge-vectors.json`, `presence-vectors.json`). Change both sides, then run
   `bash scripts/check-contracts.sh`.
 - Verify before saying "done": desktop `cd windows && npx tsc --noEmit`; hook `cd windows/hook && cargo test`;
   Android `cd android && ./gradlew :app:compileDebugKotlin` (needs `local.properties`); Jinx panel
-  `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`.
+  `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`; glasses `cd glasses && npm test && npm run typecheck`, bridge `python3 -m unittest discover -s jinx/g2-bridge`.
+- Install the Android app on a phone **only** with `android/scripts/install-phone.sh [ip:port]`, never a plain
+  `adb install`: without Play Store as the installer, banking apps (Nu) refuse to open beside the island
+  (`android/docs/BANK-APPS.md`). Never `adb uninstall` (it loses the Keystore key and the phone link).
 - Swift (`NotchBuddy/`) can only be compiled on a Mac: say so explicitly when you changed it and could not build it.
+- **Where things run: the server first, the PC only as the fallback.** Everything that must stay up for the
+  system to work (Jinx's gateway and shared thread, presence, her mood, the Telegram mirror, the pendientes,
+  migrations/sync…) runs on the home server; the laptop keeps a copy that clients use only when the server fails,
+  and gives back what it did meanwhile when the server returns. New pieces follow the same rule. What is the PC's by
+  nature (Claude Code's hooks, the island itself) stays on the PC. See `docs/MONOREPO.md`, "Where things run".
 - Do not push to `upstream`. Do not deploy to the home server from a cloud session (no access); the `deploy.sh` scripts are
   for Alan's laptop.
 - Secrets never go in the repo. Server-side code under `jinx/server-side/` is a snapshot of what is deployed.
@@ -32,6 +40,7 @@ build). Branch from it and merge back into it; never start from `main` or from a
 ```
 cd NotchBuddy && xcodegen && xcodebuild -scheme NotchBuddy -configuration Debug build
 ```
+To run it day to day on the Mac (signed, iPhone link, permissions kept across builds): `./scripts/dev-install.sh` — it installs the only Coucou in /Applications and removes the copies earlier builds left.
 Windows and Linux: `cd windows && npm install && npm run tauri dev`
 
 ## Rules

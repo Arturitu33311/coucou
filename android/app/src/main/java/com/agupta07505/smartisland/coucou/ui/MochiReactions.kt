@@ -47,6 +47,8 @@ data class MochiScene(
     val working: Boolean = false,
     /** Jinx is saying something right now, in this mood: it is her state he shows. */
     val jinxMood: MochiMood? = null,
+    /** What Jinx feels between messages (her emotion state, from the server): his face when all is calm. */
+    val jinxBackground: MochiMood? = null,
     /** Claude Code just finished what it was doing: he is glad (a short happy moment). */
     val finished: Boolean = false,
     /** A tool of Claude Code just failed: flat eyes and a red dot for a moment (as on the laptop). */
@@ -147,6 +149,13 @@ object MochiReactions {
     fun latchCelebration(previousUntil: Long, previousOpen: Int, open: Int, now: Long): Long =
         if (previousOpen > 0 && open == 0) now + CELEBRATE_MS else previousUntil
 
+    /**
+     * His face when nothing moves him: Jinx's background mood, if she has one, in place of the plain calm face.
+     * Night naps and a coming reminder (the calm moods that mean something) keep theirs. Pure, tested.
+     */
+    fun calmOrJinx(calm: MochiMood, background: MochiMood?): MochiMood =
+        if (calm == MochiMood.Idle && background != null) background else calm
+
     /** Night (00:00–05:59 local): he naps through calm tasks, overdue ones still wake him. */
     fun isNight(nowMs: Long = System.currentTimeMillis()): Boolean {
         val hour = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }.get(java.util.Calendar.HOUR_OF_DAY)
@@ -168,9 +177,11 @@ object MochiReactions {
         searching: Boolean = false,
         thinking: Boolean = false,
         jinxMood: MochiMood? = null,
+        jinxBackground: MochiMood? = null,
     ): MochiScene =
         MochiScene(
             jinxMood = jinxMood,
+            jinxBackground = jinxBackground,
             errored = errorUntil > now,
             searching = working && searching,
             thinking = working && thinking && !searching,
@@ -275,6 +286,7 @@ fun rememberMochiScene(): MochiScene {
     // (Claude Code's work is not shown on him: the Mochi of the island is Jinx's, and its own card on the
     // main pill says what Claude Code is doing. Only what Jinx herself says moves his face.)
     val peerMusic by DeviceActivity.peerMusic.collectAsState()
+    val background by com.agupta07505.smartisland.coucou.presence.JinxBackground.emote.collectAsState()
     // Every unlock re-opens the hello (same moment the padlock badge shows)…
     val unlockMs = rememberUnlockMs()
     LaunchedEffect(unlockMs) {
@@ -292,6 +304,7 @@ fun rememberMochiScene(): MochiScene {
         notifications, System.currentTimeMillis(), surprisedUntil, greetedUntil, glanceUntil, 0L,
         peerMusic = peerMusic,
         jinxMood = MochiReactions.jinxMood(notifications),
+        jinxBackground = com.agupta07505.smartisland.coucou.assist.JinxMood.moodOf(background),
     )
 }
 

@@ -11,6 +11,7 @@ import { etaWords, summarize } from "./activities";
 import { h } from "../views/dom";
 import { dropReminder, reminderDone, reminderSnooze } from "../hub/tasks";
 import { pomodoroPill, startPause } from "../hub/pomodoro";
+import { t } from "../i18n/i18n";
 
 export interface PillActions {
   /** The Pomodoro's own panel in the Hub. */
@@ -80,7 +81,7 @@ export function buildStatusPill(a: PillActions): PillHost {
       const time = h("span", { class: "sp-time", text: "0:00" });
       el.append(
         h("span", { class: "sp-dot rec" }),
-        h("span", { class: "sp-text", text: "Listening…" }),
+        h("span", { class: "sp-text", text: t("Listening…") }),
         time,
         h("span", { class: "sp-bars" }, ...Array.from({ length: 5 }, (_, i) => h("i", { style: `animation-delay:${i * 0.13}s` }))),
       );
@@ -104,7 +105,7 @@ export function buildStatusPill(a: PillActions): PillHost {
     el.append(
       bell,
       title,
-      button("✓", "Done", () => reminderDone(r.id)),
+      button("✓", t("Done"), () => reminderDone(r.id)),
       button("+10m", "Remind me in 10 minutes", () => reminderSnooze(r.id, 600)),
       button("×", "Dismiss (it stays in the list)", () => dropReminder(r.id)),
     );

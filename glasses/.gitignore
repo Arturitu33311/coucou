@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.ehpk
+.env*
+# app.json lo genera scripts/make-manifest.mjs con el origen del puente (no se versiona)
+app.json
