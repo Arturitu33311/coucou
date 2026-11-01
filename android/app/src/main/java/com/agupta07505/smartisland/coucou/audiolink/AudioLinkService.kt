@@ -245,7 +245,7 @@ class AudioLinkService : Service(), PhoneSignals {
         val player = RelayPlayer(getSystemService(Context.AUDIO_SERVICE) as AudioManager)
         val lastHeard = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
         val reader = Thread {
-            val buf = ByteArray(32 * 1024)
+            val buf = ByteArray(128 * 1024)
             var have = 0
             try {
                 while (true) {
@@ -257,6 +257,7 @@ class AudioLinkService : Service(), PhoneSignals {
                     while (true) {
                         when (val d = AudioLinkWire.decode(buf.copyOfRange(at, have), have - at)) {
                             is Decoded.Got -> {
+                                if (d.frame.kind != FrameKind.Audio && d.frame.kind != FrameKind.Heartbeat) Log.d(TAG, "from the laptop: ${d.frame.kind} ${d.frame.payload.size} B")
                                 when (d.frame.kind) {
                                     FrameKind.Audio -> player.feed(d.frame.payload)
                                     FrameKind.PausePhone -> watchers.pausePhoneMedia()
@@ -268,21 +269,22 @@ class AudioLinkService : Service(), PhoneSignals {
                                         if (laptopReadsNow) sendLine(AudioLinkWire.capsLine())
                                         pushNow()
                                     }
-                                    FrameKind.PcArt -> pcCover = NowArt.decodeSmall(d.frame.payload)
-                                    FrameKind.PcNow -> showPcNow(d.frame.payload)
+                                    FrameKind.PcArt -> runCatching { pcCover = NowArt.decodeSmall(d.frame.payload) }
+                                    FrameKind.PcNow -> runCatching { showPcNow(d.frame.payload) }.onFailure { Log.d(TAG, "could not show the laptop track: $it") }
                                     FrameKind.Heartbeat -> {}
                                 }
                                 at += d.consumed
                             }
                             Decoded.NeedMore -> break
-                            is Decoded.Bad -> return@Thread // a frame this phone does not understand ends the link
+                            is Decoded.Bad -> { Log.d(TAG, "the laptop sent a frame this phone does not accept: ${d.why}"); return@Thread } // ends the link
                         }
                     }
                     System.arraycopy(buf, at, buf, 0, have - at)
                     have -= at
                     if (have >= buf.size) break // cannot happen with frames this small; never grow without bound
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                Log.d(TAG, "the laptop reader stopped: $e")
             }
         }
         // Everything written to the laptop goes through this one thread (see Outbox).

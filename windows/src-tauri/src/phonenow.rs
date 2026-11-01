@@ -38,6 +38,8 @@ struct Now {
 
 static NOW: Mutex<Option<Now>> = Mutex::new(None);
 static BUS: Mutex<Option<Connection>> = Mutex::new(None);
+/// `file://` URL of the current cover; empty when there is none.
+static ART_URL: Mutex<String> = Mutex::new(String::new());
 
 // ── The other way: what this computer plays, for the phone ─────────────────────────────────────────────────────────────
 
@@ -50,6 +52,7 @@ static SENT: Mutex<String> = Mutex::new(String::new());
 
 /// The phone announced (or lost) the ability to show this computer's music.
 pub fn phone_can_read(on: bool) {
+    crate::log::line(format!("phonenow: the phone {} show this computer's music", if on { "can" } else { "cannot" }));
     PHONE_READS.store(on, Ordering::Relaxed);
     if on {
         let (art, now) = LAST.lock().unwrap().clone();
@@ -135,10 +138,9 @@ pub fn share_pc_track(track: Option<&crate::music::Track>) {
         }
         last.1 = encode(FrameKind::PcNow, json.as_bytes());
         if PHONE_READS.load(Ordering::Relaxed) {
-            if art_changed {
-                crate::audiolink::send_control(last.0.clone());
-            }
-            crate::audiolink::send_control(last.1.clone());
+            let a = art_changed && crate::audiolink::send_control(last.0.clone());
+            let n = crate::audiolink::send_control(last.1.clone());
+            crate::log::line(format!("phonenow: sent the computer's track to the phone (cover {a}, track {n}, {} B)", last.1.len()));
         }
         *LAST.lock().unwrap() = last;
     });
@@ -183,7 +185,6 @@ pub fn apply(msg: &PhoneMsg) {
         PhoneMsg::Now { title, artist, album, status, pos_ms, len_ms } => {
             {
                 let mut now = NOW.lock().unwrap();
-                let art_url = if title.is_empty() { String::new() } else { now.as_ref().map(|n| n.art_url.clone()).unwrap_or_default() };
                 *now = Some(Now {
                     title: title.clone(),
                     artist: artist.clone(),
@@ -192,16 +193,15 @@ pub fn apply(msg: &PhoneMsg) {
                     pos_ms: *pos_ms,
                     len_ms: *len_ms,
                     at: Some(Instant::now()),
-                    art_url,
+                    art_url: String::new(),
                 });
             }
             sync_bus();
         }
         PhoneMsg::Art { hash, image } => {
             let url = store_art(hash, image);
-            if let Some(n) = NOW.lock().unwrap().as_mut() {
-                n.art_url = url;
-            }
+            // The cover comes before the track it belongs to, so it is kept on its own.
+            *ART_URL.lock().unwrap() = url;
             sync_bus();
         }
         _ => {}
@@ -212,6 +212,7 @@ pub fn apply(msg: &PhoneMsg) {
 pub fn clear() {
     PHONE_READS.store(false, Ordering::Relaxed);
     *NOW.lock().unwrap() = None;
+    ART_URL.lock().unwrap().clear();
     clear_art_files(&art_dir(), None);
     sync_bus();
 }
@@ -240,7 +241,9 @@ fn sync_bus() {
 }
 
 fn track() -> Option<Now> {
-    NOW.lock().unwrap().clone()
+    let mut n = NOW.lock().unwrap().clone()?;
+    n.art_url = ART_URL.lock().unwrap().clone();
+    Some(n)
 }
 
 /// Sends a MPRIS call to the KDE Connect mirror of the phone's player, if there is one.
