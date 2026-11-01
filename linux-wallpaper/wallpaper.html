@@ -29,6 +29,7 @@ if (!CanvasRenderingContext2D.prototype.roundRect) {
 const TOKEN ='__TOKEN__';          // this launch's secret, put here by the server; every request carries it as ?k=
 const DEMO = new URLSearchParams(location.search).has('demo');
 const STILL = new URLSearchParams(location.search).has('still');
+const NOCLOCK = new URLSearchParams(location.search).has('noclock');
 const WANT_CAR = new URLSearchParams(location.search).get('mode') !== 'classic';   // the car layout, when the car image is there
 let carImg = null;
 if (WANT_CAR) {
@@ -194,6 +195,10 @@ const tint = () => mix(saturate(dispA || [94, 234, 212]), [255, 255, 255], 0.25)
 // ---------- drawing ----------
 const N = 60, dots = Array.from({ length: N }, (_, i) => ({ x: Math.random(), y: Math.random(), r: 1.5 + Math.random() * 4, v: .012 + Math.random() * .03, a: .15 + Math.random() * .4, p: Math.random() * 6.28, c: i % 2 }));
 function ensureClock() {
+  if (NOCLOCK) {
+    clockFill = null; clockEcho = null; clockBox = null; clockKey = '';
+    return;
+  }
   const d = new Date(), h12 = d.getHours() % 12 || 12, text = `${h12}:${String(d.getMinutes()).padStart(2, '0')}`;
   const carOn = !!carImg && WANT_CAR;
   const col = tint(), key = text + '|' + W + 'x' + H + '|' + col.map(v => v | 0).join(',') + carOn;
@@ -419,11 +424,13 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   // the clock, behind the car and turned a little: the roof hides about a fifth of the digits' height at its highest point
   // (less at the sides), for depth, never so much that a 3 / 8 or a 6 / 0 could be mistaken
   ensureClock();
-  const ey = Math.max(H * .06, roofY - clockBox.h * .80) + dY * 4, ccx = cx + dX * 10, ccy = ey + clockBox.h / 2;
-  ctx.save(); ctx.translate(ccx, ccy);
-  ctx.drawImage(clockEcho, -clockBox.w / 2 - 5 + dX * 4, -clockBox.h / 2 + 6);
-  ctx.drawImage(clockFill, -clockBox.w / 2, -clockBox.h / 2);
-  ctx.restore();
+  if (clockBox && clockEcho && clockFill) {
+    const ey = Math.max(H * .06, roofY - clockBox.h * .80) + dY * 4, ccx = cx + dX * 10, ccy = ey + clockBox.h / 2;
+    ctx.save(); ctx.translate(ccx, ccy);
+    ctx.drawImage(clockEcho, -clockBox.w / 2 - 5 + dX * 4, -clockBox.h / 2 + 6);
+    ctx.drawImage(clockFill, -clockBox.w / 2, -clockBox.h / 2);
+    ctx.restore();
+  }
 
   // the car, in front: as it is, with no reflection or overlay (nothing that would not belong to the real background)
   ctx.drawImage(carTint, x0 - carBox.w / 2, base - carBox.h + dY * 4);
@@ -588,12 +595,14 @@ function frame(now) {
 
   // clock, centre of the left half
   ensureClock();
-  const cx0 = W * .30, ey = H * .09, ex = cx0 - clockBox.w / 2, sway = Math.sin(t / 5);
-  ctx.drawImage(clockEcho, ex - 5 + sway * 4, ey + 6);
-  ctx.drawImage(clockFill, ex, ey);
+  if (clockBox && clockEcho && clockFill) {
+    const cx0 = W * .30, ey = H * .09, ex = cx0 - clockBox.w / 2, sway = Math.sin(t / 5);
+    ctx.drawImage(clockEcho, ex - 5 + sway * 4, ey + 6);
+    ctx.drawImage(clockFill, ex, ey);
+  }
 
   // cover, overlapping the clock's lower part
-  if (coverMix > .02 && coverImg) {
+  if (coverMix > .02 && coverImg && clockBox) {
     const en = clamp((now - enterAt) / 500, 0, 1), ee = 1 - Math.pow(1 - en, 3);
     const side = clockBox.w * .55 * (.92 + .08 * coverMix) * (1 + .012 * Math.sin(t / 3));
     const cy = ey + clockBox.h * .72 + side / 2 + 5 * Math.sin(t / 4), cx = cx0 + 10 * sway;

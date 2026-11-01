@@ -92,11 +92,12 @@ if [ "$PROFILE" = 1 ]; then
       cp "$HID/config-daily.json" "$HID/config-daily.json.bak-coucou-$STAMP"
       set_profile_web "$HID/config-daily.json" && ok "config-daily.json -> página web (copia: config-daily.json.bak-coucou-$STAMP)" || fail "no se pudo editar config-daily.json"
     fi
-    [ -f "$HID/config.json" ] && set_profile_web "$HID/config.json" && ok "config.json (la sesión actual) también"
   else
     fail "no encuentro $HID/config-daily.json"
   fi
-  echo "     (work y school se dejan con su video; el perfil game usa el de daily)"
+  [ -f "$HID/config.json" ] && set_profile_web "$HID/config.json" && ok "config.json (la sesión actual) también"
+  [ -f "$HID/config-work.json" ] && set_profile_web "$HID/config-work.json" && ok "config-work.json también"
+  echo "     (game usa el de daily; work se actualiza arriba)"
 else
   echo "  omitido (--no-profile)"
 fi
