@@ -40,6 +40,12 @@ function elevenKey(): HTMLElement {
   return box;
 }
 
+function voiceIdInput(value: string, save: (v: string) => void): HTMLElement {
+  const input = h("input", { class: "hub-input", type: "text", value, placeholder: "smfxcYtxs2hlvFrxbKIg", autocomplete: "off", spellcheck: "false", style: "width:220px" }) as HTMLInputElement;
+  input.addEventListener("change", () => save(input.value.trim()));
+  return input;
+}
+
 export async function voicePage(page: HTMLElement, ctx: HubContext) {
   const status = await ctx.refresh();
   const prefs = status.prefs;
@@ -68,7 +74,11 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
   if (prefs.voiceOutput === "elevenlabs") {
     answers.append(
       divider(),
-      row(t("Voice"), null, segmented([["female", t("Female")], ["male", t("Male")]], prefs.voiceGender, (g) => void ctx.setPrefs((p) => (p.voiceGender = g)))),
+      row(t("Voice"), t("Paste an ElevenLabs voice id (Jinx's by default); leave it empty to pick by gender."), voiceIdInput(prefs.voiceId, (v) => void ctx.setPrefs((p) => (p.voiceId = v)))),
+      divider(),
+      row(t("Gender (when no voice id)"), null, segmented([["female", t("Female")], ["male", t("Male")]], prefs.voiceGender, (g) => void ctx.setPrefs((p) => (p.voiceGender = g)))),
+      divider(),
+      row(t("Model"), t("Fast answers by default; Eleven v4 sounds richer but takes longer to start."), segmented([["eleven_flash_v2_5", t("Fast")], ["eleven_v4", "Eleven v4"]], prefs.voiceModel === "eleven_v4" ? "eleven_v4" : "eleven_flash_v2_5", (m) => void ctx.setPrefs((p) => (p.voiceModel = m)))),
       divider(),
       row(t("ElevenLabs key"), null, elevenKey()),
     );

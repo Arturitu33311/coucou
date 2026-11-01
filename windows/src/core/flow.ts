@@ -38,6 +38,9 @@ export interface FlowPrefs {
   voice: boolean;
   voiceOutput: VoiceOutput;
   voiceGender: "female" | "male";
+  /** ElevenLabs voice id ("" = pick by gender) and model. */
+  voiceId: string;
+  voiceModel: string;
 }
 
 export type ModelState =

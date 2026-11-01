@@ -82,6 +82,10 @@ pub enum SummaryEngine {
     Off,
 }
 
+/// Jinx's ElevenLabs voice and the fast model « OK Coucou » speaks with by default.
+pub const DEFAULT_VOICE_ID: &str = "smfxcYtxs2hlvFrxbKIg";
+pub const DEFAULT_VOICE_MODEL: &str = "eleven_flash_v2_5";
+
 /// The preferences of dictation and of the window.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -107,6 +111,10 @@ pub struct Prefs {
     pub voice_output: String,
     /// The ElevenLabs voice: "female" or "male".
     pub voice_gender: String,
+    /// The ElevenLabs voice by id; empty = pick one by `voice_gender`. Jinx's by default in this fork.
+    pub voice_id: String,
+    /// The ElevenLabs model: fast by default (`eleven_flash_v2_5`); `eleven_v4` for richer, slower speech.
+    pub voice_model: String,
 }
 
 impl Default for Prefs {
@@ -124,6 +132,8 @@ impl Default for Prefs {
             voice: false,
             voice_output: "system".into(),
             voice_gender: "female".into(),
+            voice_id: DEFAULT_VOICE_ID.into(),
+            voice_model: DEFAULT_VOICE_MODEL.into(),
         }
     }
 }
