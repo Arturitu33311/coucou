@@ -32,18 +32,25 @@ fn status_of(conn: &Connection, name: &str) -> Option<String> {
     Proxy::new(conn, name, PATH, PLAYER).ok()?.get_property::<String>("PlaybackStatus").ok()
 }
 
-/// Pauses every player that is playing; returns how many it asked. A player that is paused, stopped or gone
-/// is left alone.
-pub fn pause_all_playing() -> usize {
-    let Ok(conn) = Connection::session() else { return 0 };
-    let mut asked = 0;
+/// True when a player that is not a mirror reports "playing". Used together with real sound: it only makes the relay
+/// notice sooner that this computer started playing.
+pub fn non_mirror_playing() -> bool {
+    let Ok(conn) = Connection::session() else { return false };
+    player_names(&conn).iter().any(|n| status_of(&conn, n).as_deref() == Some("Playing"))
+}
+
+/// Pauses every player that is playing; returns the names of the ones it asked. A player that is paused, stopped or
+/// gone is left alone.
+pub fn pause_all_playing() -> Vec<String> {
+    let Ok(conn) = Connection::session() else { return Vec::new() };
+    let mut asked = Vec::new();
     for name in player_names(&conn) {
         if status_of(&conn, &name).as_deref() != Some("Playing") {
             continue;
         }
         if let Ok(player) = Proxy::new(&conn, name.as_str(), PATH, PLAYER) {
             if player.call_method("Pause", &()).is_ok() {
-                asked += 1;
+                asked.push(name.strip_prefix(PREFIX).unwrap_or(&name).to_string());
             }
         }
     }
