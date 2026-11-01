@@ -45,13 +45,23 @@ impl Edge {
     }
 }
 
+/// True for the MPRIS players that are only a mirror of the *phone's* media (KDE Connect / GSConnect show what the
+/// phone plays here as a player). They are not sound made on this computer: counting them would make the phone's own
+/// music look like the computer's, and pausing them would pause the phone.
+pub fn is_mirror(bus_name: &str) -> bool {
+    let n = bus_name.to_ascii_lowercase();
+    n.contains("kdeconnect") || n.contains("gsconnect")
+}
+
 // ── D-Bus ──────────────────────────────────────────────────────────────────────
 
 fn player_names(conn: &Connection) -> Vec<String> {
     DBusProxy::new(conn)
         .ok()
         .and_then(|p| p.list_names().ok())
-        .map(|names| names.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX)).collect())
+        .map(|names| {
+            names.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX) && !is_mirror(n)).collect()
+        })
         .unwrap_or_default()
 }
 
@@ -153,6 +163,15 @@ mod tests {
         assert!(any_playing(&["Paused", "Playing"]));
         assert!(!any_playing(&[]));
         assert!(!any_playing(&["playing"]), "the status is matched exactly");
+    }
+
+    #[test]
+    fn the_phones_mirror_is_not_a_player_of_this_computer() {
+        assert!(is_mirror("org.mpris.MediaPlayer2.kdeconnect.mpris_47f59de111914df59ee2abdb5d537b3e"));
+        assert!(is_mirror("org.mpris.MediaPlayer2.GSConnect.Something"));
+        assert!(!is_mirror("org.mpris.MediaPlayer2.sonora"));
+        assert!(!is_mirror("org.mpris.MediaPlayer2.brave.instance3255140"));
+        assert!(!is_mirror("org.mpris.MediaPlayer2.vlc"));
     }
 
     #[test]
