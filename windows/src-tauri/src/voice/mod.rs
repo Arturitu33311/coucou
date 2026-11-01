@@ -236,17 +236,17 @@ struct Say {
 
 /// Says `text` and returns once it is said (or after a sensible time).
 fn speak(app: &AppHandle, text: &str) {
-    let (output, gender) = crate::flow::get(app)
+    let (output, gender, voice_id, voice_model) = crate::flow::get(app)
         .map(|f| {
             let p = &f.store.lock().unwrap().prefs;
-            (p.voice_output.clone(), p.voice_gender.clone())
+            (p.voice_output.clone(), p.voice_gender.clone(), p.voice_id.clone(), p.voice_model.clone())
         })
-        .unwrap_or_else(|| ("system".into(), "female".into()));
+        .unwrap_or_else(|| ("system".into(), "female".into(), String::new(), String::new()));
     if output == "off" {
         std::thread::sleep(Duration::from_millis(1500));
         return;
     }
-    let audio = if output == "elevenlabs" { elevenlabs(text, &gender).map(|mp3| base64(&mp3)) } else { None };
+    let audio = if output == "elevenlabs" { elevenlabs(text, &gender, &voice_id, &voice_model).map(|mp3| base64(&mp3)) } else { None };
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = mpsc::channel();
     pending().lock().unwrap().insert(id, tx);
@@ -301,26 +301,39 @@ pub async fn voice_say_native(text: String, lang: Option<String>) -> bool {
 }
 
 /// ElevenLabs' MP3 for `text`, with the user's key; None and the system voice speaks.
-fn elevenlabs(text: &str, gender: &str) -> Option<Vec<u8>> {
+fn elevenlabs(text: &str, gender: &str, voice_id: &str, model: &str) -> Option<Vec<u8>> {
     let key = crate::secrets::get("elevenlabs-api-key")?;
     tauri::async_runtime::block_on(async {
         let client = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
-        let voices: Value = client.get("https://api.elevenlabs.io/v1/voices").header("xi-api-key", &key).send().await.ok()?.json().await.ok()?;
-        let voice = pick_voice(voices["voices"].as_array()?, gender)?;
+        // A voice chosen by id is used as is; otherwise one is picked by gender from the account's list.
+        let voice = match valid_voice_id(voice_id) {
+            Some(id) => id,
+            None => {
+                let voices: Value = client.get("https://api.elevenlabs.io/v1/voices").header("xi-api-key", &key).send().await.ok()?.json().await.ok()?;
+                pick_voice(voices["voices"].as_array()?, gender)?
+            }
+        };
+        let model = if model.trim().is_empty() { crate::flow::store::DEFAULT_VOICE_MODEL } else { model.trim() };
         let response = client
             .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"))
             .header("xi-api-key", &key)
             .header("accept", "audio/mpeg")
-            .json(&json!({ "text": text, "model_id": "eleven_flash_v2_5" }))
+            .json(&json!({ "text": text, "model_id": model }))
             .send()
             .await
             .ok()?;
         if !response.status().is_success() {
-            crate::log::line(format!("voice: ElevenLabs {}", response.status()));
+            crate::log::line(format!("voice: ElevenLabs {} (model {model})", response.status()));
             return None;
         }
         Some(response.bytes().await.ok()?.to_vec())
     })
+}
+
+/// A voice id as ElevenLabs writes them (letters and digits), or None for "pick one for me".
+fn valid_voice_id(id: &str) -> Option<String> {
+    let id = id.trim();
+    (!id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_alphanumeric())).then(|| id.to_string())
 }
 
 /// First English voice of the gender (a young one first for a man); else any
@@ -522,6 +535,14 @@ mod tests {
         assert_eq!(base64(b"Ma"), "TWE=");
         assert_eq!(base64(b"M"), "TQ==");
         assert_eq!(base64(b""), "");
+    }
+
+    #[test]
+    fn a_voice_id_is_letters_and_digits_only() {
+        assert_eq!(valid_voice_id(" smfxcYtxs2hlvFrxbKIg ").as_deref(), Some("smfxcYtxs2hlvFrxbKIg"));
+        assert_eq!(valid_voice_id(""), None);
+        assert_eq!(valid_voice_id("a/../b"), None);
+        assert_eq!(valid_voice_id(&"x".repeat(41)), None);
     }
 
     #[test]
