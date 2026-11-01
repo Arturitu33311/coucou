@@ -243,7 +243,8 @@ class AudioLinkService : Service(), PhoneSignals {
                 .setAudioAttributes(attrs)
                 .setAudioFormat(format)
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                // The default path, not the low-latency one: that one skips the mixer's effects and uses a simpler resampler,
+                // and over Bluetooth the delay is dominated by the codec anyway.
                 .setBufferSizeInBytes(bufferBytes)
                 .build()
             Log.d(TAG, "track buffer ${bufferBytes / BYTES_PER_FRAME * 1000 / RATE} ms (system minimum $minMs ms), queue limit $maxQueueMs ms")
