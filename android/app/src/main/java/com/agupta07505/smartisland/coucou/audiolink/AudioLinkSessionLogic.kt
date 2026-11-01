@@ -67,6 +67,20 @@ enum class GateStep {
 /** How long a sound must go on before it counts as something playing (a ping or a click is shorter). */
 const val SUSTAIN_MS = 4_000L
 
+/** Silence up to this long inside a sound does not end it (music and speech have gaps). */
+const val SOUND_GAP_MS = 1_000L
+
+/** True when every 16-bit little-endian sample is within [peak]: the silent tail the laptop sends after a sound. */
+fun isSilentPcm(pcm: ByteArray, peak: Int = 8): Boolean {
+    var i = 0
+    while (i + 1 < pcm.size) {
+        val sample = (pcm[i].toInt() and 0xff) or (pcm[i + 1].toInt() shl 8)
+        if (kotlin.math.abs(sample) > peak) return false
+        i += 2
+    }
+    return true
+}
+
 /**
  * Decides, chunk by chunk, whether the phone may play and when it takes audio focus. Taking the focus pauses the
  * phone's own music, so it is only done for sound that goes on ([SUSTAIN_MS]): a notification, a click of the island or
@@ -78,20 +92,29 @@ class PlayerGate(private val gapMs: Long = 400, private val sustainMs: Long = SU
     private var hasFocus = false
     private var lost = false
     private var last = -1L
-    private var burstStart = -1L
+    private var loudSince = -1L
+    private var lastLoud = -1L
 
-    fun next(nowMs: Long): GateStep {
+    /**
+     * [loud] is whether this chunk holds sound. The laptop also sends a second of silence after a sound ends, so
+     * duration is measured on real sound only: otherwise the focus would be taken right after the sound had stopped,
+     * pausing music the phone had just started.
+     */
+    fun next(nowMs: Long, loud: Boolean = true): GateStep {
         val gap = last >= 0 && nowMs - last > gapMs
         last = nowMs
-        if (burstStart < 0 || gap) burstStart = nowMs
+        if (loud) {
+            if (lastLoud < 0 || gap || nowMs - lastLoud > SOUND_GAP_MS) loudSince = nowMs
+            lastLoud = nowMs
+        }
         return when {
             gap -> {
                 hasFocus = false
                 lost = false
                 GateStep.Reset
             }
-            lost -> GateStep.AskFocus
-            !hasFocus && nowMs - burstStart >= sustainMs -> GateStep.AskFocus
+            loud && lost -> GateStep.AskFocus
+            loud && !hasFocus && lastLoud - loudSince >= sustainMs -> GateStep.AskFocus
             else -> GateStep.Play
         }
     }

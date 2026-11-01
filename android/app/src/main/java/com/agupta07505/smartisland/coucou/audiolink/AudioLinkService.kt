@@ -337,7 +337,7 @@ class AudioLinkService : Service(), PhoneSignals {
         }
 
         private fun feedInner(pcm: ByteArray, now: Long) {
-            when (gate.next(now)) {
+            when (gate.next(now, loud = !isSilentPcm(pcm))) {
                 GateStep.Reset -> {
                     // The sound stopped for a while and is back: start the speaker over. No focus yet: a short sound
                     // (a ping) must not pause the phone's music; it is asked for only once the sound goes on.
