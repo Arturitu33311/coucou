@@ -251,12 +251,17 @@ class AudioLinkService : Service(), PhoneSignals {
             focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
                 .setOnAudioFocusChangeListener { change ->
-                    // A call or another app took the speaker: stop and start over cleanly when it is ours again.
-                    if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        synchronized(this) {
+                    // A call or another app took the speaker: stop, and do not ask for it back (see PlayerGate). If
+                    // Android gives it back (after a call or a notification), play on.
+                    when (change) {
+                        AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> synchronized(this) {
                             holdsFocus = false
                             gate.focusLost()
                             restart()
+                        }
+                        AudioManager.AUDIOFOCUS_GAIN -> synchronized(this) {
+                            holdsFocus = true
+                            gate.focusGranted()
                         }
                     }
                 }
@@ -346,6 +351,7 @@ class AudioLinkService : Service(), PhoneSignals {
                 }
                 GateStep.AskFocus -> if (!takeFocus()) { nNoFocus++; return } // refused (a call, say): the chunk is dropped
                 GateStep.Play -> {}
+                GateStep.Silent -> { nNoFocus++; return } // someone else holds the focus: dropped, not fought over
             }
             when (playbackPlan(queuedMs(), started, maxQueueMs)) {
                 PlaybackAction.Drop -> { nDrop++; return }

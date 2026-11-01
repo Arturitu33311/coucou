@@ -62,6 +62,9 @@ enum class GateStep {
 
     /** Play this chunk. */
     Play,
+
+    /** Someone else holds the focus (the user's own music, a call): drop this chunk and do not ask for it back. */
+    Silent,
 }
 
 /** How long a sound must go on before it counts as something playing (a ping or a click is shorter). */
@@ -113,7 +116,9 @@ class PlayerGate(private val gapMs: Long = 400, private val sustainMs: Long = SU
                 lost = false
                 GateStep.Reset
             }
-            loud && lost -> GateStep.AskFocus
+            // Someone took the focus: stay quiet. Asking for it back would take it from whatever the user just started
+            // (their music). It comes back on its own after a call, or with a new sound from the laptop (see `gap`).
+            lost -> GateStep.Silent
             loud && !hasFocus && lastLoud - loudSince >= sustainMs -> GateStep.AskFocus
             else -> GateStep.Play
         }

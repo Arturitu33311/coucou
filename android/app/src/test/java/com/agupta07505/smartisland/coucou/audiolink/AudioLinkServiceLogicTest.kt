@@ -133,15 +133,46 @@ class AudioLinkServiceLogicTest {
     }
 
     @Test
-    fun losing_focus_stops_playing_until_it_is_back() {
+    fun when_someone_takes_the_focus_the_relay_goes_quiet_and_does_not_fight_for_it() {
+        // The user starts music on the phone while the laptop still sounds: the phone's music takes the focus. Asking
+        // for it back at once (with the next chunk of the laptop's sound) took it from the music and paused it.
         val gate = PlayerGate()
         feed(gate, 0, 4_000)
         gate.focusGranted()
         assertEquals(GateStep.Play, gate.next(4_020))
-        gate.focusLost() // a call, or another app took the speaker
-        assertEquals(GateStep.AskFocus, gate.next(4_040))
+        gate.focusLost()
+        val after = (1..100L).map { gate.next(4_020 + it * 20) }
+        assertTrue("it asked for the focus back: ${after.distinct()}", after.all { it == GateStep.Silent })
+    }
+
+    @Test
+    fun the_focus_coming_back_on_its_own_resumes_playing() {
+        // A call or a notification took it for a moment and Android gives it back.
+        val gate = PlayerGate()
+        feed(gate, 0, 4_000)
+        gate.focusGranted()
+        gate.focusLost()
+        assertEquals(GateStep.Silent, gate.next(4_040))
         gate.focusGranted()
         assertEquals(GateStep.Play, gate.next(4_060))
+    }
+
+    @Test
+    fun a_new_sound_after_the_loss_must_be_sustained_before_it_asks_again() {
+        val gate = PlayerGate()
+        feed(gate, 0, 4_000)
+        gate.focusGranted()
+        gate.focusLost()
+        assertEquals(GateStep.Reset, gate.next(4_000 + 500)) // the laptop went quiet and came back
+        assertTrue(feed(gate, 4_520, 3_000).all { it == GateStep.Play })
+        var asks = 0
+        for (i in 0..75L) {
+            if (gate.next(7_540 + i * 20) == GateStep.AskFocus) {
+                asks++
+                gate.focusGranted() // the request is granted: it is not asked again
+            }
+        }
+        assertEquals("sustained sound asks once", 1, asks)
     }
 
     @Test
@@ -170,7 +201,7 @@ class AudioLinkServiceLogicTest {
         val lost = PlayerGate()
         lost.next(0)
         lost.focusGranted()
-        lost.focusLost() // taken by someone else: must ask again before playing, even in a young burst
-        assertEquals(GateStep.AskFocus, lost.next(20))
+        lost.focusLost() // taken by someone else: it stays quiet instead of asking again
+        assertEquals(GateStep.Silent, lost.next(20))
     }
 }
