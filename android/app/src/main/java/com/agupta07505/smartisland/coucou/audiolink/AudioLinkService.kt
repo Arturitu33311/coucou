@@ -275,7 +275,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private fun giveFocusBack() {
             audio.abandonAudioFocusRequest(focus)
             holdsFocus = false
-            gate.focusLost()
+            gate.focusReleased()
         }
 
         /** Called about once a second: after a couple of seconds without sound, stop holding the speaker. */
@@ -338,10 +338,10 @@ class AudioLinkService : Service(), PhoneSignals {
         private fun feedInner(pcm: ByteArray, now: Long) {
             when (gate.next(now)) {
                 GateStep.Reset -> {
-                    // The sound stopped for a while and is back: start the speaker over and ask again.
+                    // The sound stopped for a while and is back: start the speaker over. No focus yet: a short sound
+                    // (a ping) must not pause the phone's music; it is asked for only once the sound goes on.
                     restart()
                     giveFocusBack()
-                    if (!takeFocus()) { nNoFocus++; return }
                 }
                 GateStep.AskFocus -> if (!takeFocus()) { nNoFocus++; return } // refused (a call, say): the chunk is dropped
                 GateStep.Play -> {}

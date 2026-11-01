@@ -54,7 +54,7 @@ const val LEAVE_AFTER_MS = 7_000L
 fun shouldLeave(goneSinceMs: Long?, nowMs: Long): Boolean = goneSinceMs != null && nowMs - goneSinceMs >= LEAVE_AFTER_MS
 
 enum class GateStep {
-    /** Start the speaker over (stop, flush) and ask for focus. */
+    /** Start the speaker over (stop, flush), give the focus back and play this chunk without focus. */
     Reset,
 
     /** Ask for audio focus; play only once it is granted. */
@@ -64,33 +64,52 @@ enum class GateStep {
     Play,
 }
 
+/** How long a sound must go on before it counts as something playing (a ping or a click is shorter). */
+const val SUSTAIN_MS = 4_000L
+
 /**
- * Decides, chunk by chunk, whether the phone may play: the laptop sends sound only while it has some, so audio focus
- * is taken when sound starts (not when the link opens, which would pause the phone's own music for nothing), and
- * everything starts over after a pause in the sound.
+ * Decides, chunk by chunk, whether the phone may play and when it takes audio focus. Taking the focus pauses the
+ * phone's own music, so it is only done for sound that goes on ([SUSTAIN_MS]): a notification, a click of the island or
+ * a "done" chime on the laptop plays (mixed over the phone's music for a moment) but never pauses it. Opening the link
+ * takes no focus either. Everything starts over after a pause in the sound. If someone else takes the focus (a call), the
+ * gate asks again before playing.
  */
-class PlayerGate(private val gapMs: Long = 400) {
+class PlayerGate(private val gapMs: Long = 400, private val sustainMs: Long = SUSTAIN_MS) {
     private var hasFocus = false
+    private var lost = false
     private var last = -1L
+    private var burstStart = -1L
 
     fun next(nowMs: Long): GateStep {
         val gap = last >= 0 && nowMs - last > gapMs
         last = nowMs
+        if (burstStart < 0 || gap) burstStart = nowMs
         return when {
             gap -> {
                 hasFocus = false
+                lost = false
                 GateStep.Reset
             }
-            !hasFocus -> GateStep.AskFocus
+            lost -> GateStep.AskFocus
+            !hasFocus && nowMs - burstStart >= sustainMs -> GateStep.AskFocus
             else -> GateStep.Play
         }
     }
 
     fun focusGranted() {
         hasFocus = true
+        lost = false
     }
 
+    /** Someone else took the focus. */
     fun focusLost() {
         hasFocus = false
+        lost = true
+    }
+
+    /** The focus was handed back on purpose. */
+    fun focusReleased() {
+        hasFocus = false
+        lost = false
     }
 }
