@@ -60,7 +60,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
     row(t("Parakeet, on your computer"), t("Hears « OK Coucou » here, without the internet."), modelsControl(ctx, () => ctx.navigate("voice"))),
   );
   if (prefs.voice && !status.hasClaudeKey) {
-    main.append(h("div", { class: "hub-warn", text: t("Coucou answers with Claude: add your Claude key in Notch → Chat.") }));
+    main.append(h("div", { class: "hub-warn", text: t("Coucou needs an OpenRouter or Claude key to answer: add it in Notch → Chat.") }));
   } else if (prefs.voice && !ready) {
     main.append(h("div", { class: "hub-warn", text: t("Download the voice model so Coucou can hear you.") }));
   }

@@ -38,7 +38,7 @@ export async function stylesPage(page: HTMLElement, ctx: HubContext) {
     });
   };
 
-  const keyNote = h("div", { class: "hub-warn", text: t("The clean-up uses your Claude key. Add it in Notch → Chat.") });
+  const keyNote = h("div", { class: "hub-warn", text: t("The clean-up needs an OpenRouter or Claude key. Add it in Notch → Chat.") });
   keyNote.style.display = status.hasClaudeKey ? "none" : "";
   const defaultRow = row(t("Other apps"), null, select(styleOptions(), status.prefs.defaultStyle, (style) => void ctx.setPrefs((p) => (p.defaultStyle = style))));
   page.append(card(

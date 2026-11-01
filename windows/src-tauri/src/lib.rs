@@ -46,6 +46,7 @@ mod island_cmd;
 mod notes;
 mod notifs;
 mod openai_compat;
+mod or_brain;
 mod opencode;
 mod phone_link;
 mod pipe;

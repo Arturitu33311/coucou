@@ -1,8 +1,8 @@
 // The clean-up of Flow dictation: Claude removes the "um", the repeats and the
 // corrections said on the way ("at 3, no, at 4" → "at 4"), fixes the
 // punctuation and writes in the app's style. Only when it is turned on in the
-// Coucou window and a Claude key is set; the text (never the audio) then goes
-// to Anthropic with that key, and nowhere else. Any problem (no network, slow
+// Coucou window and an OpenRouter or Claude key is set; the text (never the
+// audio) then goes to that provider with that key, and nowhere else. Any problem (no network, slow
 // answer, odd reply) and the words are pasted as they were heard. Port of
 // FlowCleanup.swift.
 
@@ -15,8 +15,18 @@ pub const MODEL: &str = "claude-haiku-4-5";
 /// Past this, the words are pasted as heard rather than keeping you waiting.
 const TIMEOUT: Duration = Duration::from_secs(4);
 
+/// A language-model key is set: OpenRouter's or Claude's.
 pub fn has_key() -> bool {
-    crate::secrets::present(crate::claude::KEY)
+    crate::or_brain::present() || crate::secrets::present(crate::claude::KEY)
+}
+
+async fn ask(system: &str, user: &str) -> Result<String, String> {
+    // OpenRouter first when its key is set, as « OK Coucou » does; Claude otherwise.
+    if crate::or_brain::present() {
+        crate::or_brain::complete(system, user, 2048, TIMEOUT).await
+    } else {
+        crate::claude::complete(MODEL, system, user, 2048, TIMEOUT).await
+    }
 }
 
 pub async fn clean(raw: &str, style: Style, app: Option<&str>, words: &[String]) -> String {
@@ -24,7 +34,7 @@ pub async fn clean(raw: &str, style: Style, app: Option<&str>, words: &[String])
         return raw.to_string();
     }
     let user = format!("<dictation>\n{raw}\n</dictation>");
-    match crate::claude::complete(MODEL, &system(style, app, words), &user, 2048, TIMEOUT).await {
+    match ask(&system(style, app, words), &user).await {
         Ok(reply) => {
             let cleaned = reply.replace("<dictation>", "").replace("</dictation>", "").trim().to_string();
             if plausible(&cleaned, raw) {

@@ -812,9 +812,12 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [
       { key: "jinx-url", label: "Hermes address", placeholder: "http://100.x.y.z:8642", secret: false },
       { key: "jinx-api-key", label: N_("API key"), placeholder: "the gateway's API_SERVER_KEY", secret: true },
+      { key: "jinx-g2-url", label: "House bridge address", placeholder: "https://… (Tailscale Serve, port 8898)", secret: false },
+      { key: "jinx-g2-key", label: "House bridge key", placeholder: "~/.config/jinx-g2/key on the server", secret: true },
     ],
     note: "Talk to Jinx from the island: her replies and her permission requests show up here. " +
-      "Both values are stored in the Secret Service, never on disk." },
+      "The last two let « OK Coucou » ask the quick Jinx for the house (TV, lights, volume). " +
+      "All values are stored in the Secret Service, never on disk." },
   { id: "integration_music", name: "Music", color: "#FA2D48", fields: [],
     note: "What is playing — Spotify, a browser tab, VLC… No key needed. Options are under Music below." },
   // Nothing to enter: Spotify is read from the OS (src-tauri/src/spotify.rs).
