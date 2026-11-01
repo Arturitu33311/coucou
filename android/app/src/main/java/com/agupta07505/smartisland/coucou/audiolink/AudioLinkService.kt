@@ -19,6 +19,7 @@ import android.media.AudioTrack
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.agupta07505.smartisland.R
@@ -224,19 +225,29 @@ class AudioLinkService : Service(), PhoneSignals {
         private var written = 0L
         private var baseHead = 0L
         private val focus: AudioFocusRequest
+        private val bufferMs: Int
+        private val maxQueueMs: Int
         private val gate = PlayerGate()
         private var holdsFocus = false
         private var lastFeedAt = 0L
 
         init {
-            val min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+            val minBytes = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+            // The system mixes a streaming track only once its buffer is completely full, so the buffer must be one the
+            // queue limit allows to fill (see trackBufferMs); a short one also keeps the delay low.
+            val minMs = (minBytes.toLong() * 1000 / (RATE * BYTES_PER_FRAME)).toInt()
+            bufferMs = trackBufferMs(minMs)
+            maxQueueMs = queueLimitMs(bufferMs)
+            val bufferBytes = max(minBytes, RATE * bufferMs / 1000 * BYTES_PER_FRAME)
             track = AudioTrack.Builder()
                 .setAudioAttributes(attrs)
                 .setAudioFormat(format)
                 .setTransferMode(AudioTrack.MODE_STREAM)
-                .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-                .setBufferSizeInBytes(max(min, RATE * BYTES_PER_FRAME * (MAX_QUEUE_MS + 100) / 1000))
+                // The default path, not the low-latency one: that one skips the mixer's effects and uses a simpler resampler,
+                // and over Bluetooth the delay is dominated by the codec anyway.
+                .setBufferSizeInBytes(bufferBytes)
                 .build()
+            Log.d(TAG, "track buffer ${bufferBytes / BYTES_PER_FRAME * 1000 / RATE} ms (system minimum $minMs ms), queue limit $maxQueueMs ms")
             focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
                 .setOnAudioFocusChangeListener { change ->
@@ -265,7 +276,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private fun giveFocusBack() {
             audio.abandonAudioFocusRequest(focus)
             holdsFocus = false
-            gate.focusLost()
+            gate.focusReleased()
         }
 
         /** Called about once a second: after a couple of seconds without sound, stop holding the speaker. */
@@ -291,30 +302,69 @@ class AudioLinkService : Service(), PhoneSignals {
             baseHead = head()
         }
 
+        // What happened to the chunks since the last log line, so a silent relay can be told from a starved one.
+        private var nFed = 0
+        private var nDrop = 0
+        private var nWait = 0
+        private var nPlay = 0
+        private var nNoFocus = 0
+        private var nWriteErr = 0
+        private var lastWrite = 0
+        private var lastLogAt = 0L
+
+        private fun logStats(now: Long) {
+            if (now - lastLogAt < 1000) return
+            lastLogAt = now
+            Log.d(
+                TAG,
+                "fed=$nFed play=$nPlay wait=$nWait drop=$nDrop noFocus=$nNoFocus writeErr=$nWriteErr lastWrite=$lastWrite " +
+                    "queuedMs=${queuedMs()} head=${head()} base=$baseHead written=$written started=$started focus=$holdsFocus " +
+                    "trackState=${track.playState}",
+            )
+            nFed = 0; nDrop = 0; nWait = 0; nPlay = 0; nNoFocus = 0; nWriteErr = 0
+        }
+
         @Synchronized
         fun feed(pcm: ByteArray) {
             val now = SystemClock.elapsedRealtime()
             lastFeedAt = now
+            nFed++
+            try {
+                feedInner(pcm, now)
+            } finally {
+                logStats(now)
+            }
+        }
+
+        private fun feedInner(pcm: ByteArray, now: Long) {
             when (gate.next(now)) {
                 GateStep.Reset -> {
-                    // The sound stopped for a while and is back: start the speaker over and ask again.
+                    // The sound stopped for a while and is back: start the speaker over. No focus yet: a short sound
+                    // (a ping) must not pause the phone's music; it is asked for only once the sound goes on.
                     restart()
                     giveFocusBack()
-                    if (!takeFocus()) return
                 }
-                GateStep.AskFocus -> if (!takeFocus()) return // refused (a call, say): the chunk is dropped
+                GateStep.AskFocus -> if (!takeFocus()) { nNoFocus++; return } // refused (a call, say): the chunk is dropped
                 GateStep.Play -> {}
             }
-            when (playbackPlan(queuedMs(), started)) {
-                PlaybackAction.Drop -> return
-                PlaybackAction.Wait -> {}
-                PlaybackAction.Play -> if (!started) {
-                    track.play()
-                    started = true
+            when (playbackPlan(queuedMs(), started, maxQueueMs)) {
+                PlaybackAction.Drop -> { nDrop++; return }
+                PlaybackAction.Wait -> nWait++
+                PlaybackAction.Play -> {
+                    nPlay++
+                    if (!started) {
+                        track.play()
+                        started = true
+                    }
                 }
             }
-            val n = track.write(pcm, 0, pcm.size)
+            // Never block the reader thread: what does not fit in the buffer is dropped, which also keeps the delay bounded.
+            val n = track.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING)
+            lastWrite = n
             if (n > 0) written += n / BYTES_PER_FRAME
+            if (n < pcm.size) {
+                if (n < 0) nWriteErr++ else nDrop++
+            }
         }
 
         @Synchronized
@@ -386,6 +436,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private const val RATE = 48_000
         private const val BYTES_PER_FRAME = 4
         private const val SILENCE_MS = 3_000L
+        private const val TAG = "AudioLink"
         private const val IDLE_MS = 2_000L
 
         private val _status = MutableStateFlow(Status.Off)

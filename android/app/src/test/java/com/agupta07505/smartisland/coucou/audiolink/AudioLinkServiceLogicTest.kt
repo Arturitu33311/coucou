@@ -57,36 +57,72 @@ class AudioLinkServiceLogicTest {
         assertTrue(shouldLeave(goneSinceMs = 10_000, nowMs = 10_000 + 7_000))
     }
 
-    // ── I4: audio focus is taken only when sound arrives, again after a gap, and never assumed ───
+    // ── Audio focus: only for sound that goes on, never for a ping ────────────────────────────
+
+    /** Chunks 20 ms apart from [from] for [ms] milliseconds, returning each step. */
+    private fun feed(gate: PlayerGate, from: Long, ms: Long): List<GateStep> =
+        (0..ms / 20).map { gate.next(from + it * 20) }
 
     @Test
-    fun the_first_chunk_asks_for_focus_and_nothing_plays_until_it_is_granted() {
-        val gate = PlayerGate()
-        assertEquals(GateStep.AskFocus, gate.next(1_000))
-        // The request was refused: the next chunk asks again and is not played.
-        assertEquals(GateStep.AskFocus, gate.next(1_020))
-        gate.focusGranted()
-        assertEquals(GateStep.Play, gate.next(1_040))
+    fun a_short_sound_plays_without_ever_taking_the_focus() {
+        // A notification, a click of the island, a Claude Code "done": a few seconds at most.
+        val steps = feed(PlayerGate(), 1_000, 3_900)
+        assertTrue("a short sound must never ask for focus: it would pause the phone's music", steps.all { it == GateStep.Play })
     }
 
     @Test
-    fun a_gap_in_the_sound_starts_over_and_gives_focus_back() {
+    fun a_sound_that_goes_on_asks_for_focus_once_and_plays_after_it_is_granted() {
         val gate = PlayerGate()
-        gate.next(0)
+        val steps = feed(gate, 0, 4_000)
+        assertEquals("only the chunk that makes it sustained asks", 1, steps.count { it == GateStep.AskFocus })
         gate.focusGranted()
-        assertEquals(GateStep.Play, gate.next(20))
-        assertEquals(GateStep.Reset, gate.next(20 + 401))
-        // After a reset focus must be asked for again.
-        assertEquals(GateStep.AskFocus, gate.next(20 + 421))
+        assertEquals(GateStep.Play, gate.next(4_020))
+    }
+
+    @Test
+    fun a_refused_request_is_asked_again_and_the_chunk_is_not_played() {
+        val gate = PlayerGate()
+        feed(gate, 0, 4_000)
+        assertEquals(GateStep.AskFocus, gate.next(4_020))
+        assertEquals(GateStep.AskFocus, gate.next(4_040))
+        gate.focusGranted()
+        assertEquals(GateStep.Play, gate.next(4_060))
+    }
+
+    @Test
+    fun a_gap_in_the_sound_starts_over_and_the_next_burst_must_be_sustained_again() {
+        val gate = PlayerGate()
+        feed(gate, 0, 4_000)
+        gate.focusGranted()
+        assertEquals(GateStep.Reset, gate.next(4_000 + 401))
+        // After the reset the focus has been given back and a new short sound must not take it.
+        assertTrue(feed(gate, 4_421, 3_000).all { it == GateStep.Play })
     }
 
     @Test
     fun losing_focus_stops_playing_until_it_is_back() {
         val gate = PlayerGate()
-        gate.next(0)
+        feed(gate, 0, 4_000)
         gate.focusGranted()
-        assertEquals(GateStep.Play, gate.next(20))
-        gate.focusLost()
-        assertNotEquals(GateStep.Play, gate.next(40))
+        assertEquals(GateStep.Play, gate.next(4_020))
+        gate.focusLost() // a call, or another app took the speaker
+        assertEquals(GateStep.AskFocus, gate.next(4_040))
+        gate.focusGranted()
+        assertEquals(GateStep.Play, gate.next(4_060))
+    }
+
+    @Test
+    fun giving_the_focus_back_on_purpose_is_not_a_loss() {
+        val young = PlayerGate()
+        young.next(0)
+        young.focusGranted()
+        young.focusReleased() // handed back on purpose: a young burst just plays on
+        assertEquals(GateStep.Play, young.next(20))
+
+        val lost = PlayerGate()
+        lost.next(0)
+        lost.focusGranted()
+        lost.focusLost() // taken by someone else: must ask again before playing, even in a young burst
+        assertEquals(GateStep.AskFocus, lost.next(20))
     }
 }

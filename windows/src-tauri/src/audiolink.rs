@@ -167,8 +167,6 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
         let _ = EVENTS.set(tx);
         let engine_app = app.clone();
         std::thread::spawn(move || engine(engine_app, rx));
-        // Told only when "something plays here" changes; the logic decides whether that matters.
-        crate::audiolink_players::start(|playing| send_event(Event::PcMedia(playing)));
         let app = app.clone();
         tauri::async_runtime::spawn(async move { serve(app).await });
     }
@@ -288,6 +286,82 @@ impl SilenceGate {
             self.quiet = 0;
             true
         }
+    }
+}
+
+/// Make-up gain for what goes to the phone. A desktop plays quietly into its own speakers (its amplifier and the volume
+/// keys make up for it); music on the phone is mastered close to full scale, so the same source arrives about 20 dB
+/// lower. A little gain, softly limited, closes most of that gap without distorting loud passages.
+pub const GAIN_DB: f32 = 6.0;
+
+/// The multiplier for a gain in decibels.
+pub fn gain_for_db(db: f32) -> f32 {
+    10f32.powf(db / 20.0)
+}
+
+/// Multiplies every 16-bit little-endian sample of `chunk` by `gain`, in place. Up to 70 % of full scale the result is
+/// exactly `sample * gain`; above that it bends smoothly towards full scale instead of clipping, so it never exceeds it.
+/// A gain of 1.0 leaves the chunk untouched.
+pub fn apply_gain(chunk: &mut [u8], gain: f32) {
+    // Where the soft knee starts, as a fraction of full scale.
+    const KNEE: f32 = 0.7;
+    if gain == 1.0 {
+        return;
+    }
+    for b in chunk.chunks_exact_mut(2) {
+        let x = i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0 * gain;
+        let a = x.abs();
+        let y = if a <= KNEE { x } else { x.signum() * (KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh()) };
+        let out = (y * 32768.0).round().clamp(-32767.0, 32767.0) as i16;
+        b.copy_from_slice(&out.to_le_bytes());
+    }
+}
+
+/// Sound that goes on this long counts as "this computer is playing" (a ping or a click is shorter).
+pub const PLAYING_AFTER_MS: u64 = 3_000;
+/// Silence up to this long inside a sound does not end it (music and speech have gaps).
+pub const SOUND_GAP_MS: u64 = 1_000;
+/// This long without sound and the computer is no longer playing.
+pub const PLAYING_ENDS_MS: u64 = 3_000;
+
+/// Whether this computer is really playing, told by the sound itself, chunk by chunk. A media player's own status
+/// cannot be trusted for this: some players only mirror another device (Sonora shows what plays on the phone's
+/// Spotify, KDE Connect shows the phone's media) and report "playing" without making any sound here.
+pub struct SoundWatch {
+    playing: bool,
+    /// When the current sound (gaps under `SOUND_GAP_MS` included) began.
+    since: Option<u64>,
+    last_loud: Option<u64>,
+}
+
+impl SoundWatch {
+    pub const fn new() -> Self {
+        SoundWatch { playing: false, since: None, last_loud: None }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        self.playing
+    }
+
+    /// One 20 ms chunk at `now_ms`; `loud` is whether it holds sound. Returns the new state when it changes.
+    pub fn feed(&mut self, now_ms: u64, loud: bool) -> Option<bool> {
+        if loud {
+            // A silence longer than the allowed gap ended the previous sound: this chunk starts a new one.
+            if self.last_loud.map_or(true, |l| now_ms - l > SOUND_GAP_MS) {
+                self.since = Some(now_ms);
+            }
+            self.last_loud = Some(now_ms);
+            // How long it has gone on is measured to its last chunk with sound, so two short sounds never add up.
+            if !self.playing && self.since.is_some_and(|s| now_ms - s >= PLAYING_AFTER_MS) {
+                self.playing = true;
+                return Some(true);
+            }
+        } else if self.playing && self.last_loud.map_or(true, |l| now_ms - l >= PLAYING_ENDS_MS) {
+            self.playing = false;
+            self.since = None;
+            return Some(false);
+        }
+        None
     }
 }
 
@@ -484,12 +558,24 @@ fn start_capture() {
     std::thread::spawn(move || {
         let mut chunk = [0u8; CHUNK];
         let mut gate = SilenceGate::new();
+        let mut watch = SoundWatch::new();
+        let gain = gain_for_db(GAIN_DB);
+        let started = std::time::Instant::now();
         // A blocking read: it sleeps until parec has sound to give, and ends when parec is stopped. Silence
         // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
         while let Ok(true) = capture.read_chunk(&mut chunk) {
-            if gate.pass(&chunk) {
-                send_frame(encode(FrameKind::Audio, &chunk));
+            // Whether this computer is playing is told by the sound itself, not by a player's status (see SoundWatch).
+            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk)) {
+                send_event(Event::PcMedia(playing));
             }
+            if gate.pass(&chunk) {
+                let mut out = chunk;
+                apply_gain(&mut out, gain);
+                send_frame(encode(FrameKind::Audio, &out));
+            }
+        }
+        if watch.is_playing() {
+            send_event(Event::PcMedia(false));
         }
         let mut current = CAPTURE_PID.lock().unwrap();
         if *current == Some(pid) {
@@ -686,6 +772,116 @@ mod tests {
         // Sound again: through, and the tail starts over.
         assert!(gate.pass(&loud));
         assert!(gate.pass(&quiet));
+    }
+
+    fn samples(chunk: &[u8]) -> Vec<i16> {
+        chunk.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect()
+    }
+
+    fn bytes(samples: &[i16]) -> Vec<u8> {
+        samples.iter().flat_map(|s| s.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn six_decibels_is_about_twice_the_amplitude() {
+        assert!((gain_for_db(6.0) - 1.995).abs() < 0.01);
+        assert_eq!(gain_for_db(0.0), 1.0);
+        assert!((gain_for_db(-6.0) - 0.501).abs() < 0.01);
+    }
+
+    #[test]
+    fn quiet_sound_is_multiplied_exactly() {
+        let mut c = bytes(&[0, 1000, -1000, 5000, -5000, 10000]);
+        apply_gain(&mut c, 2.0);
+        assert_eq!(samples(&c), vec![0, 2000, -2000, 10000, -10000, 20000]);
+    }
+
+    #[test]
+    fn unity_gain_leaves_the_chunk_untouched() {
+        let original = bytes(&[0, 1, -1, 12345, -32768, 32767, 30000]);
+        let mut c = original.clone();
+        apply_gain(&mut c, 1.0);
+        assert_eq!(c, original);
+    }
+
+    #[test]
+    fn loud_sound_never_exceeds_full_scale_and_keeps_its_sign() {
+        let mut c = bytes(&[30000, -30000, 32767, -32768, 25000]);
+        apply_gain(&mut c, 4.0);
+        for s in samples(&c) {
+            assert!(s.unsigned_abs() <= 32768, "{s}");
+        }
+        let out = samples(&c);
+        assert!(out[0] > 0 && out[1] < 0 && out[0] == -out[1]);
+        assert!(out[0] > 25000, "a loud passage must stay loud, not collapse: {}", out[0]);
+    }
+
+    #[test]
+    fn the_limiter_never_makes_a_louder_input_quieter() {
+        let input: Vec<i16> = (-32768i32..=32767).step_by(257).map(|v| v as i16).collect();
+        let mut c = bytes(&input);
+        apply_gain(&mut c, 2.0);
+        let out = samples(&c);
+        assert!(out.windows(2).all(|w| w[0] <= w[1]), "output must rise with the input");
+    }
+
+    /// Feeds `ms` of chunks (20 ms apart) from `from`, `loud` or silent; returns every change reported.
+    fn feed_for(w: &mut SoundWatch, from: u64, ms: u64, loud: bool) -> Vec<(u64, bool)> {
+        (0..=ms / 20).filter_map(|i| w.feed(from + i * 20, loud).map(|b| (from + i * 20, b))).collect()
+    }
+
+    #[test]
+    fn a_ping_or_a_click_is_not_the_computer_playing() {
+        let mut w = SoundWatch::new();
+        assert!(feed_for(&mut w, 0, 2_900, true).is_empty());
+        assert!(feed_for(&mut w, 2_920, 8_000, false).is_empty());
+    }
+
+    #[test]
+    fn sound_that_goes_on_makes_the_computer_playing_exactly_once() {
+        let mut w = SoundWatch::new();
+        let changes = feed_for(&mut w, 0, 10_000, true);
+        assert_eq!(changes, vec![(PLAYING_AFTER_MS, true)]);
+    }
+
+    #[test]
+    fn small_gaps_inside_music_do_not_break_it() {
+        let mut w = SoundWatch::new();
+        let mut changes = Vec::new();
+        // 800 ms of sound, 200 ms of silence, over and over: music with breathing room.
+        for second in 0..6u64 {
+            changes.extend(feed_for(&mut w, second * 1_000, 780, true));
+            changes.extend(feed_for(&mut w, second * 1_000 + 800, 180, false));
+        }
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].1 && changes[0].0 <= 3_200, "{changes:?}");
+    }
+
+    #[test]
+    fn two_short_sounds_with_a_pause_between_are_not_one_long_one() {
+        let mut w = SoundWatch::new();
+        let mut changes = feed_for(&mut w, 0, 2_000, true);
+        changes.extend(feed_for(&mut w, 2_020, 1_200, false)); // a gap of more than a second ends the first sound
+        changes.extend(feed_for(&mut w, 3_240, 2_000, true));
+        assert!(changes.is_empty(), "{changes:?}");
+    }
+
+    #[test]
+    fn playing_ends_after_three_seconds_of_silence() {
+        let mut w = SoundWatch::new();
+        feed_for(&mut w, 0, 4_000, true);
+        assert!(feed_for(&mut w, 4_020, 2_900, false).is_empty(), "less than three seconds of silence is still playing");
+        let ended = feed_for(&mut w, 6_940, 400, false);
+        assert_eq!(ended.len(), 1);
+        assert!(!ended[0].1);
+    }
+
+    #[test]
+    fn a_ping_after_playing_ended_does_not_start_it_again() {
+        let mut w = SoundWatch::new();
+        feed_for(&mut w, 0, 4_000, true);
+        feed_for(&mut w, 4_020, 3_100, false);
+        assert!(feed_for(&mut w, 7_140, 600, true).is_empty());
     }
 
     #[test]

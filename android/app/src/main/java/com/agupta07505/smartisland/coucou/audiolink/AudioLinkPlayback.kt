@@ -12,11 +12,20 @@ enum class PlaybackAction { Play, Wait, Drop }
  * become a stutter; once playing it writes at once; and if more than [MAX_QUEUE_MS] piled up (the network
  * stalled and then caught up) the oldest chunk is dropped, so the delay does not grow for good.
  */
-fun playbackPlan(queuedMs: Int, started: Boolean): PlaybackAction = when {
-    queuedMs > MAX_QUEUE_MS -> PlaybackAction.Drop
+fun playbackPlan(queuedMs: Int, started: Boolean, maxQueueMs: Int = MAX_QUEUE_MS): PlaybackAction = when {
+    queuedMs > maxQueueMs -> PlaybackAction.Drop
     !started && queuedMs < PREBUFFER_MS -> PlaybackAction.Wait
     else -> PlaybackAction.Play
 }
 
 const val PREBUFFER_MS = 60
 const val MAX_QUEUE_MS = 200
+
+/** How much sound the speaker's buffer holds (and so about the delay it adds) unless the system needs more. */
+const val BUFFER_MS = 120
+
+/** The buffer to ask the system for, given the smallest it accepts (in ms). */
+fun trackBufferMs(minBufferMs: Int): Int = maxOf(minBufferMs, BUFFER_MS)
+
+/** How much may be queued before chunks are dropped, given the buffer: always above it, so the buffer can fill. */
+fun queueLimitMs(bufferMs: Int): Int = maxOf(MAX_QUEUE_MS, bufferMs + 40)
