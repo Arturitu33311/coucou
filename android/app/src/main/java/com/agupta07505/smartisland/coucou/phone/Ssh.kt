@@ -97,7 +97,7 @@ object Ssh {
     }
 
     /** A connection, logged in with the phone's key; the host key must be the one pinned at pairing. */
-    fun open(context: Context, profile: SshProfile, connectTimeoutMs: Int = CONNECT_MS): Connection {
+    fun open(context: Context, profile: SshProfile, connectTimeoutMs: Int = CONNECT_MS, keyName: String = "phone"): Connection {
         if (!profile.paired) throw SshException("Not paired: pair ${profile.host.ifBlank { "the host" }} in Coucou's phone settings")
         val client = newClient(object : HostKeyVerifier {
             override fun verify(hostname: String?, port: Int, key: PublicKey) = fingerprint(key) == profile.hostKey
@@ -106,7 +106,7 @@ object Ssh {
         try {
             client.connect(profile.host, profile.port)
             client.connection.keepAlive.keepAliveInterval = 15
-            client.authPublickey(profile.user, KeyPairWrapper(PhoneKey.load(context)))
+            client.authPublickey(profile.user, KeyPairWrapper(PhoneKey.load(context, keyName)))
         } catch (e: Exception) {
             runCatching { client.disconnect() }
             throw SshException(explain(e, profile), e)

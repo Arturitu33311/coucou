@@ -123,9 +123,113 @@ fn server_is_same_user(stream: &UnixStream) -> bool {
 /// does nothing else: no shell, no arguments, no file. If Coucou is closed, or the phone link is
 /// off, it says so in one line and ends.
 pub fn run_remote() -> ! {
+    pipe_to("coucou-remote.sock")
+}
+
+/// `coucou-hook --audio`: what the phone's second ssh key (audio only) is allowed to run. Same pipe as
+/// `--remote`, to the audio relay's own socket, so losing that key loses the audio and nothing else.
+pub fn run_audio() -> ! {
+    pipe_to("coucou-audio.sock")
+}
+
+/// `coucou-hook --audio-watchdog`: started by Coucou while the audio relay has the computer's output on
+/// its silent sink, with a pipe on stdin that Coucou keeps open. It does nothing until that pipe closes
+/// (Coucou quit, was killed, crashed) and then puts the output back where the marker file says it was.
+/// It only ever runs `pactl`, with names it has checked.
+pub fn run_audio_watchdog() -> ! {
+    use std::io::Read;
+
+    let mut sink = [0u8; 64];
+    let mut stdin = io::stdin();
+    while let Ok(n) = stdin.read(&mut sink) {
+        if n == 0 {
+            break;
+        }
+    }
+    restore_audio_sink();
+    std::process::exit(0)
+}
+
+const AUDIO_SINK: &str = "coucou_audiolink";
+
+/// `<local dir>/audiolink-sink.json`; must match `settings::local_dir()` in the app.
+fn audio_marker_path() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+    Some(data.join("coucou").join("audiolink-sink.json"))
+}
+
+fn pactl(args: &[&str]) -> String {
+    std::process::Command::new("pactl")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// The first column of each line of a `pactl list short …` whose second column satisfies `pick`.
+fn short_column(text: &str, pick: impl Fn(&str) -> bool) -> Vec<u32> {
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let first: u32 = f.next()?.trim().parse().ok()?;
+            pick(f.next()?).then_some(first)
+        })
+        .collect()
+}
+
+fn restore_audio_sink() {
+    let Some(path) = audio_marker_path() else { return };
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let Some(previous) = v["previous"]
+        .as_str()
+        .filter(|p| !p.is_empty() && *p != AUDIO_SINK && !p.chars().any(|c| c.is_whitespace() || c.is_control()))
+    else {
+        return;
+    };
+    let module = v["module"].as_u64().and_then(|m| u32::try_from(m).ok()).unwrap_or(0);
+
+    // Where our sink is now: its streams are the ones to bring back.
+    let ours = short_column(&pactl(&["list", "short", "sinks"]), |name| name == AUDIO_SINK).first().copied();
+    pactl(&["set-default-sink", previous]);
+    if let Some(sink) = ours {
+        let inputs = pactl(&["list", "short", "sink-inputs"]);
+        let on_ours: Vec<u32> = inputs
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.split('\t');
+                let input: u32 = f.next()?.trim().parse().ok()?;
+                (f.next()?.trim().parse::<u32>().ok()? == sink).then_some(input)
+            })
+            .collect();
+        for input in on_ours {
+            pactl(&["move-sink-input", &input.to_string(), previous]);
+        }
+    }
+    // The module id may not have been written yet if the crash came in between: find it by its sink name.
+    let module = if module > 0 {
+        Some(module)
+    } else {
+        pactl(&["list", "short", "modules"])
+            .lines()
+            .find(|l| l.contains(&format!("sink_name={AUDIO_SINK}")))
+            .and_then(|l| l.split('\t').next()?.trim().parse().ok())
+    };
+    if let Some(m) = module {
+        pactl(&["unload-module", &m.to_string()]);
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+fn pipe_to(socket_name: &str) -> ! {
     use std::io::{Read, Write};
 
-    let path = private_runtime_dir().map(|d| d.join("coucou-remote.sock"));
+    let path = private_runtime_dir().map(|d| d.join(socket_name));
     let stream = path.and_then(|p| UnixStream::connect(p).ok()).filter(server_is_same_user);
     let Some(stream) = stream else {
         println!("{{\"t\":\"offline\"}}");

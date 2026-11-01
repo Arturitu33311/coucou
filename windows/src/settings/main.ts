@@ -29,6 +29,20 @@ function toggle(on: boolean, onChange: (v: boolean) => void): HTMLElement {
   return el;
 }
 
+/** A button that moves the Bluetooth headphones by hand and says how it went. */
+function swapButton(text: string, to: "pc" | "phone", say: (msg: string) => void): HTMLElement {
+  return h("button", {
+    text,
+    onclick: async () => {
+      say("working…");
+      const err = await Bridge.audiolinkSwap(to);
+      say(err ?? (to === "pc"
+        ? "Asked the phone to let go: tap its notification and disconnect them there."
+        : "Let go. Tap the phone's notification and connect them there."));
+    },
+  });
+}
+
 function statusDot(ok: boolean): HTMLElement {
   return h("i", { class: "dot", style: `background:${ok ? "#22c55e" : "#f4505e"}` });
 }
@@ -643,6 +657,19 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Let your phone follow Claude Code and answer its permission requests and questions. It listens to a private " +
         "socket that only an ssh key restricted to `coucou-hook --remote` can reach; nothing is opened on the network." })),
+    h("div", { class: "row" }, h("label", { text: "Phone headphones" }),
+      toggle(settings.audiolinkEnabled === true, (v) => { settings.audiolinkEnabled = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Keep your Bluetooth headphones on the phone and hear this computer through it. What plays here is sent to the phone " +
+        "(the computer goes silent while it is on). It listens to a second private socket that only an ssh key restricted to " +
+        "`coucou-hook --audio` can reach; nothing is opened on the network." })),
+    (() => {
+      const note = h("span", { class: "hint", text: "Move the real Bluetooth connection by hand (for a video, where the relay's small delay shows)." });
+      return h("div", { class: "row" }, h("label", { text: "Headphones" }),
+        swapButton("To this computer", "pc", (m) => { note.textContent = m; }),
+        swapButton("Back to the phone", "phone", (m) => { note.textContent = m; }),
+        note);
+    })(),
     h("div", { class: "row" }, h("label", { text: "Server activity" }),
       toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
       h("span", { class: "hint", text:

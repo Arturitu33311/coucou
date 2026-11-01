@@ -228,6 +228,8 @@ export interface Settings {
   notificationPeek: boolean;
   /** Let a phone follow Claude Code and answer its requests, through ssh (off until turned on). */
   remoteEnabled: boolean;
+  /** Send what plays on this computer to the phone's headphones, through a second audio-only ssh key (off until turned on). */
+  audiolinkEnabled: boolean;
   /** What Mochi wears: "auto" (headphones with music, a night cap asleep, shades while focusing), "none" or one of them. */
   mochiOutfit: string;
   /** A dot on the island, with the program's name, while something records the microphone. */
@@ -273,6 +275,7 @@ export const DEFAULT_SETTINGS: Settings = {
   weatherCity2: "",
   notificationPeek: false,
   remoteEnabled: false,
+  audiolinkEnabled: false,
   mochiOutfit: "auto",
   micIndicator: true,
   clipboardHistory: false,

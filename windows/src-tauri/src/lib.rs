@@ -2,6 +2,15 @@
 
 mod activities;
 mod agents;
+mod audiolink;
+mod audiolink_logic;
+#[cfg(target_os = "linux")]
+mod audiolink_bt;
+#[cfg(target_os = "linux")]
+mod audiolink_players;
+#[cfg(target_os = "linux")]
+mod audiolink_sink;
+mod audiolink_wire;
 mod bars;
 mod calendar;
 mod clipboard;
@@ -128,6 +137,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     music::sync_enabled(&app, settings.active_integrations.iter().any(|x| x == "integration_music"));
     notifs::sync_enabled(&app, settings.notification_peek);
     remote::sync_enabled(&app, settings.remote_enabled);
+    audiolink::sync_enabled(&app, settings.audiolink_enabled);
     clipboard::sync_enabled(&app, settings.clipboard_history);
     if autostart_changed {
         let manager = app.autolaunch();
@@ -994,6 +1004,7 @@ pub fn run() {
             question_answer,
             music::music_state,
             music::music_control,
+            audiolink::audiolink_swap,
             music::music_art,
             music::music_lyrics,
             bars::music_bars,
@@ -1094,6 +1105,7 @@ pub fn run() {
             );
             notifs::sync_enabled(&handle, loaded.notification_peek);
             remote::sync_enabled(&handle, loaded.remote_enabled);
+            audiolink::sync_enabled(&handle, loaded.audiolink_enabled);
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
             // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
             presence::start(&handle);
