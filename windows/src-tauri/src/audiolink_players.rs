@@ -14,8 +14,19 @@ const PLAYER: &str = "org.mpris.MediaPlayer2.Player";
 /// True for the MPRIS players that are only a mirror of the *phone's* media (KDE Connect / GSConnect show what the
 /// phone plays here as a player). Pausing them would pause the phone.
 pub fn is_mirror(bus_name: &str) -> bool {
+    is_kdeconnect(bus_name) || is_phone_player(bus_name)
+}
+
+/// KDE Connect's / GSConnect's mirror of the phone's media.
+pub fn is_kdeconnect(bus_name: &str) -> bool {
     let n = bus_name.to_ascii_lowercase();
     n.contains("kdeconnect") || n.contains("gsconnect")
+}
+
+/// Coucou's own player for what the phone plays (`phonenow.rs`). It is never sound made here: if it counted, phone
+/// music would look like the computer playing and the relay would pause the phone.
+pub fn is_phone_player(bus_name: &str) -> bool {
+    bus_name.to_ascii_lowercase().starts_with("org.mpris.mediaplayer2.coucou.phone")
 }
 
 /// The names (lower case) of the programs that have a stream playing on this computer, from `pactl list sink-inputs`
@@ -167,6 +178,9 @@ Sink Input #901
     fn the_phones_mirror_is_not_a_player_of_this_computer() {
         assert!(is_mirror("org.mpris.MediaPlayer2.kdeconnect.mpris_47f59de111914df59ee2abdb5d537b3e"));
         assert!(is_mirror("org.mpris.MediaPlayer2.GSConnect.Something"));
+        // Coucou's own player for the phone's music must never count as the computer playing (it would pause the phone).
+        assert!(is_mirror("org.mpris.MediaPlayer2.coucou.phone"));
+        assert!(!is_mirror("org.mpris.MediaPlayer2.coucou"));
         assert!(!is_mirror("org.mpris.MediaPlayer2.sonora"));
         assert!(!is_mirror("org.mpris.MediaPlayer2.brave.instance3255140"));
         assert!(!is_mirror("org.mpris.MediaPlayer2.vlc"));

@@ -67,6 +67,11 @@ impl<T> Slot<T> {
         }
     }
 
+    /// True when connection `id` is the one in the slot.
+    pub fn is_current(&self, id: u64) -> bool {
+        self.current.as_ref().is_some_and(|(cur, _)| *cur == id)
+    }
+
     /// Empties the slot, handing back whoever was in it.
     pub fn take(&mut self) -> Option<T> {
         self.current.take().map(|(_, c)| c)
@@ -91,7 +96,7 @@ where
 {
     use tokio::io::AsyncReadExt;
 
-    use crate::audiolink_wire::{parse_phone_line, MAX_LINE};
+    use crate::audiolink_wire::{parse_phone_line, MAX_ART_LINE, MAX_LINE, MAX_NOW_LINE};
 
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 1024];
@@ -113,8 +118,16 @@ where
                 Err(_) => return End::Bad,
             }
         }
-        // No newline yet and already longer than any line may be: a flood, not a message.
-        if buf.len() > MAX_LINE {
+        // No newline yet and already longer than its kind of line may be: a flood, not a message. Only the two
+        // now-playing ops may pass 512 bytes, and they say so first (`op` is the first key).
+        let allowed = if buf.starts_with(br#"{"op":"art""#) {
+            MAX_ART_LINE
+        } else if buf.starts_with(br#"{"op":"now""#) {
+            MAX_NOW_LINE
+        } else {
+            MAX_LINE
+        };
+        if buf.len() > allowed {
             return End::Bad;
         }
     }
@@ -175,6 +188,7 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
         if let Some(c) = CURRENT.lock().unwrap().take() {
             let _ = c.kill.shutdown(std::net::Shutdown::Both);
         }
+        crate::phonenow::clear();
     }
 }
 
@@ -240,7 +254,7 @@ static GRACE_CLOCK: Mutex<GraceClock> = Mutex::new(GraceClock::new());
 pub fn events_of(msg: &PhoneMsg) -> Vec<crate::audiolink_logic::Event> {
     use crate::audiolink_logic::Event;
     match msg {
-        PhoneMsg::Heartbeat => Vec::new(),
+        PhoneMsg::Heartbeat | PhoneMsg::Now { .. } | PhoneMsg::Art { .. } => Vec::new(),
         PhoneMsg::State { headphones, call, phone_playing } => {
             vec![Event::Call(*call), Event::Headphones(*headphones), Event::PhoneMedia(*phone_playing)]
         }
@@ -697,6 +711,10 @@ async fn client(_app: AppHandle, stream: tokio::net::UnixStream) {
 
     send_event(Event::Link(true));
     let end = pump(&mut rd, SILENCE, |msg| {
+        // What the phone plays, for the island and the wallpaper. Only the current connection speaks for the phone.
+        if matches!(msg, PhoneMsg::Now { .. } | PhoneMsg::Art { .. }) && CURRENT.lock().unwrap().is_current(id) {
+            crate::phonenow::apply(&msg);
+        }
         for ev in events_of(&msg) {
             send_event(ev);
         }
@@ -705,6 +723,7 @@ async fn client(_app: AppHandle, stream: tokio::net::UnixStream) {
     writer.abort();
     // A replaced connection ending is not the phone leaving: only the current one speaks for the link.
     if CURRENT.lock().unwrap().release(id) {
+        crate::phonenow::clear();
         send_event(Event::Link(false));
     }
     log::line(format!("audiolink: the phone's connection ended ({end:?})"));

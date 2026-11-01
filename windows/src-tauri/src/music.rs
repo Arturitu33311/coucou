@@ -498,7 +498,7 @@ pub fn music_state() -> Option<Track> {
 // ── Linux: MPRIS ──────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-mod mpris {
+pub mod mpris {
     use super::*;
     use std::sync::mpsc::{self, RecvTimeoutError, Sender};
     use std::sync::OnceLock;
@@ -649,17 +649,22 @@ mod mpris {
     }
 
     fn players(conn: &Connection) -> Vec<String> {
-        DBusProxy::new(conn)
+        let all: Vec<String> = DBusProxy::new(conn)
             .ok()
             .and_then(|p| p.list_names().ok())
-            .map(|names| {
-                names
-                    .into_iter()
-                    .map(|n| n.to_string())
-                    .filter(|n| n.starts_with(PREFIX))
-                    .collect()
-            })
-            .unwrap_or_default()
+            .map(|names| names.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX)).collect())
+            .unwrap_or_default();
+        without_duplicate_mirror(all)
+    }
+
+    /// Coucou's own player for the phone's music (with its cover) replaces KDE Connect's mirror of the same music,
+    /// which has none: with both present the phone's track would be on the list twice.
+    pub fn without_duplicate_mirror(names: Vec<String>) -> Vec<String> {
+        if names.iter().any(|n| crate::audiolink_players::is_phone_player(n)) {
+            names.into_iter().filter(|n| !crate::audiolink_players::is_kdeconnect(n)).collect()
+        } else {
+            names
+        }
     }
 
     fn proxy<'a>(conn: &'a Connection, name: &'a str, interface: &'a str) -> Option<Proxy<'a>> {
