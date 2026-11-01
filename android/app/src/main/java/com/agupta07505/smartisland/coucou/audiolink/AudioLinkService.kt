@@ -19,6 +19,7 @@ import android.media.AudioTrack
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.agupta07505.smartisland.R
@@ -291,30 +292,65 @@ class AudioLinkService : Service(), PhoneSignals {
             baseHead = head()
         }
 
+        // What happened to the chunks since the last log line, so a silent relay can be told from a starved one.
+        private var nFed = 0
+        private var nDrop = 0
+        private var nWait = 0
+        private var nPlay = 0
+        private var nNoFocus = 0
+        private var nWriteErr = 0
+        private var lastWrite = 0
+        private var lastLogAt = 0L
+
+        private fun logStats(now: Long) {
+            if (now - lastLogAt < 1000) return
+            lastLogAt = now
+            Log.d(
+                TAG,
+                "fed=$nFed play=$nPlay wait=$nWait drop=$nDrop noFocus=$nNoFocus writeErr=$nWriteErr lastWrite=$lastWrite " +
+                    "queuedMs=${queuedMs()} head=${head()} base=$baseHead written=$written started=$started focus=$holdsFocus " +
+                    "trackState=${track.playState}",
+            )
+            nFed = 0; nDrop = 0; nWait = 0; nPlay = 0; nNoFocus = 0; nWriteErr = 0
+        }
+
         @Synchronized
         fun feed(pcm: ByteArray) {
             val now = SystemClock.elapsedRealtime()
             lastFeedAt = now
+            nFed++
+            try {
+                feedInner(pcm, now)
+            } finally {
+                logStats(now)
+            }
+        }
+
+        private fun feedInner(pcm: ByteArray, now: Long) {
             when (gate.next(now)) {
                 GateStep.Reset -> {
                     // The sound stopped for a while and is back: start the speaker over and ask again.
                     restart()
                     giveFocusBack()
-                    if (!takeFocus()) return
+                    if (!takeFocus()) { nNoFocus++; return }
                 }
-                GateStep.AskFocus -> if (!takeFocus()) return // refused (a call, say): the chunk is dropped
+                GateStep.AskFocus -> if (!takeFocus()) { nNoFocus++; return } // refused (a call, say): the chunk is dropped
                 GateStep.Play -> {}
             }
             when (playbackPlan(queuedMs(), started)) {
-                PlaybackAction.Drop -> return
-                PlaybackAction.Wait -> {}
-                PlaybackAction.Play -> if (!started) {
-                    track.play()
-                    started = true
+                PlaybackAction.Drop -> { nDrop++; return }
+                PlaybackAction.Wait -> nWait++
+                PlaybackAction.Play -> {
+                    nPlay++
+                    if (!started) {
+                        track.play()
+                        started = true
+                    }
                 }
             }
             val n = track.write(pcm, 0, pcm.size)
-            if (n > 0) written += n / BYTES_PER_FRAME
+            lastWrite = n
+            if (n > 0) written += n / BYTES_PER_FRAME else nWriteErr++
         }
 
         @Synchronized
@@ -386,6 +422,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private const val RATE = 48_000
         private const val BYTES_PER_FRAME = 4
         private const val SILENCE_MS = 3_000L
+        private const val TAG = "AudioLink"
         private const val IDLE_MS = 2_000L
 
         private val _status = MutableStateFlow(Status.Off)
