@@ -66,6 +66,10 @@ class HaError(Exception):
     pass
 
 
+class HaTimeout(HaError):
+    """Home Assistant no contestó a tiempo: la orden pudo salir igualmente (una tele tarda en responder al encendido)."""
+
+
 # ---------- política: lo único que se puede pedir a la casa ----------
 
 def check_call(domain, service, entity_id, data):
@@ -127,7 +131,7 @@ class HomeAssistant:
         self.now = now
         self._cache = (0.0, [])
 
-    def _req(self, method, path, body=None):
+    def _req(self, method, path, body=None, timeout=8):
         token = self.token_fn()
         if not token:
             raise HaError("no hay llave de Home Assistant en el servidor")
@@ -135,11 +139,13 @@ class HomeAssistant:
                                      data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
         try:
-            with self.opener(req, timeout=8) as r:
+            with self.opener(req, timeout=timeout) as r:
                 return json.loads(r.read() or b"null")
         except urllib.error.HTTPError as e:
             raise HaError("Home Assistant contestó %d" % e.code)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, TimeoutError) or "timed out" in str(e).lower():
+                raise HaTimeout("Home Assistant tardó en contestar")
             raise HaError("no llego a Home Assistant (%s)" % type(e).__name__)
 
     def states(self):
@@ -188,7 +194,7 @@ class HomeAssistant:
         payload = dict(clean, entity_id=entity_id)
         if "volume_mute" in payload:
             payload["is_volume_muted"] = payload.pop("volume_mute")
-        self._req("POST", "/api/services/%s/%s" % (domain, service), payload)
+        self._req("POST", "/api/services/%s/%s" % (domain, service), payload, timeout=SERVICE_TIMEOUT)
         self._cache = (0.0, [])
         return "hecho"
 
@@ -244,6 +250,7 @@ class OpenAICompatLLM:
             raise LiteError("el modelo rápido falló (%s)" % type(e).__name__) from None
 
 
+SERVICE_TIMEOUT = 20      # segundos que se espera a que Home Assistant dé por hecha una orden
 VERIFY_TRIES = 4        # veces que se mira si la orden hizo efecto
 VERIFY_EVERY = 1.5      # segundos entre miradas (una tele tarda un par en contestar)
 
@@ -282,7 +289,13 @@ class Lite:
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":
-                result = self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                try:
+                    result = self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                except HaTimeout:
+                    # La orden pudo salir: se mira el estado antes de decir nada (encender una tele tarda en confirmarse).
+                    result = "orden enviada (Home Assistant tardó en confirmarla)"
+                    if args.get("servicio") not in ("turn_on", "turn_off"):
+                        return result + "; no sé si hizo efecto"
                 return self._verified(result, args.get("servicio"), args.get("entity_id"))
             if name == "pasar_a_jinx":
                 return self.handoff(str(args.get("peticion", ""))[:1000])

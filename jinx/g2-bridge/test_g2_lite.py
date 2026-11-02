@@ -175,6 +175,39 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(out, "hecho")
 
 
+class SlowCallHA(SeqHA):
+    """Un Home Assistant que tarda más de la cuenta en confirmar la orden, aunque el aparato sí la cumpla."""
+    def call(self, d, s, e, data=None):
+        raise L.HaTimeout("Home Assistant tardó en contestar")
+
+
+class TimeoutTest(unittest.TestCase):
+    def action(self, states, service):
+        lite = L.Lite(None, SlowCallHA(states), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": "media_player", "servicio": service, "entity_id": "media_player.tele"})
+
+    def test_a_slow_confirmation_is_checked_against_the_real_state(self):
+        # The TV did turn on, only Home Assistant answered late: that is a success, not "no llego a Home Assistant".
+        self.assertIn("ahora está «paused»", self.action(["off", "paused"], "turn_on"))
+        self.assertIn("sigue «off»", self.action(["off"], "turn_on"))
+
+    def test_a_slow_answer_to_anything_else_is_not_claimed_as_done(self):
+        self.assertIn("no sé si hizo efecto", self.action(["on"], "volume_set"))
+
+    def test_the_request_waits_longer_for_orders_than_for_reads(self):
+        seen = []
+
+        def opener(req, timeout=0):
+            seen.append((req.get_method(), timeout))
+            raise TimeoutError("timed out")
+        ha = L.HomeAssistant("http://ha", lambda: "T", opener)
+        with self.assertRaises(L.HaTimeout):
+            ha.call("media_player", "turn_on", "media_player.tele")
+        with self.assertRaises(L.HaTimeout):
+            ha.states()
+        self.assertEqual(seen, [("POST", L.SERVICE_TIMEOUT), ("GET", 8)])
+
+
 class LiteTest(unittest.TestCase):
     def make(self, script, now=None):
         self.llm = FakeLLM(script)
