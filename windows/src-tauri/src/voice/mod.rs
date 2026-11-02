@@ -287,35 +287,32 @@ pub async fn voice_play_mp3_native(id: u64) -> bool {
         };
         #[cfg(target_os = "linux")]
         {
-            let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-            let path = dir.join(format!("coucou-voice-{id}.mp3"));
-            if std::fs::write(&path, &bytes).is_err() {
-                return false;
-            }
-            let players: [(&str, &[&str]); 3] = [
-                ("mpv", &["--no-video", "--really-quiet"]),
-                ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-                ("gst-play-1.0", &["--quiet"]),
+            use std::io::Write;
+            // The MP3 goes to the player's standard input: no file, so nothing in a shared directory to swap or read.
+            let players: [(&str, &[&str]); 2] = [
+                ("mpv", &["--no-video", "--really-quiet", "-"]),
+                ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "pipe:0"]),
             ];
-            let mut said = false;
             for (name, args) in players {
                 let Some(bin) = crate::platform::find_on_path(name) else { continue };
-                let ok = std::process::Command::new(bin)
+                let Ok(mut child) = std::process::Command::new(bin)
                     .args(args)
-                    .arg(&path)
-                    .stdin(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
-                    .status()
-                    .is_ok_and(|s| s.success());
-                if ok {
+                    .spawn()
+                else {
+                    continue;
+                };
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(&bytes);
+                }
+                if child.wait().is_ok_and(|s| s.success()) {
                     crate::log::line(format!("voice: the webview would not play the MP3, {name} did"));
-                    said = true;
-                    break;
+                    return true;
                 }
             }
-            let _ = std::fs::remove_file(&path);
-            said
+            false
         }
         #[cfg(not(target_os = "linux"))]
         {
