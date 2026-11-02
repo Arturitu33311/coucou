@@ -96,9 +96,10 @@ object PhoneSettings {
         prefs(c).edit().putString("presenceUrl", v.trim().trimEnd('/')).apply()
     }
 
-    /** Where the quick Jinx's bridge lives (Tailscale address of the server, port 8898; no trailing slash). */
-    fun g2Url(c: Context): String =
-        prefs(c).getString("g2Url", "http://100.92.254.125:8898") ?: "http://100.92.254.125:8898"
+    /** Where the quick Jinx's bridge lives (https through Tailscale Serve, port 8898; no trailing slash). */
+    const val G2_URL_DEFAULT = "https://server.tail3dac6b.ts.net:8898"
+
+    fun g2Url(c: Context): String = prefs(c).getString("g2Url", G2_URL_DEFAULT) ?: G2_URL_DEFAULT
 
     fun saveG2Url(c: Context, v: String) {
         prefs(c).edit().putString("g2Url", v.trim().trimEnd('/')).apply()

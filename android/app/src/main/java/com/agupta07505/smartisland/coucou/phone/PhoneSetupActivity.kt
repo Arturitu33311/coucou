@@ -365,7 +365,7 @@ private fun QuickJinxCard() {
             "(tele, volumen…). Lo que necesita su memoria lo pasa a la Jinx completa. Va delante de las demás vías.",
     ) {
         OutlinedTextField(url, { url = it; PhoneSettings.saveG2Url(context, it) },
-            label = { Text("Dirección del puente") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
+            label = { Text("Dirección del puente (https)") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
             shape = RoundedCornerShape(14.dp))
         OutlinedTextField(key, { key = it },
             label = { Text(if (saved) "Llave del puente (guardada; escribe otra para cambiarla)" else "Llave del puente") },

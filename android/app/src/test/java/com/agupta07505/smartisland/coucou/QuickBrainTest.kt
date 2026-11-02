@@ -27,7 +27,7 @@ class QuickBrainTest {
 
     private fun brain(
         secrets: Secrets = QuickSecrets(key to "K"),
-        url: String = "http://100.1.1.1:8898/",
+        url: String = "https://server.example.ts.net:8898/",
         post: (String, String, String) -> String = { _, _, _ -> """{"status":"done","text":" Tele apagada. "}""" },
         get: (String, String) -> String = { _, _ -> error("no se esperaba un GET") },
     ) = QuickBrain(secrets, { url }, post, get)
@@ -39,7 +39,7 @@ class QuickBrainTest {
         var seen = Triple("", "", "")
         val text = brain(post = { u, k, b -> seen = Triple(u, k, b); """{"status":"done","text":"Listo."}""" }).reply(ctx)
         assertEquals("Listo.", text)
-        assertEquals("http://100.1.1.1:8898/api/g2/ask", seen.first)
+        assertEquals("https://server.example.ts.net:8898/api/g2/ask", seen.first)
         assertEquals("K", seen.second)
         val body = JSONObject(seen.third)
         assertEquals("apaga la tele", body.getString("text"))
@@ -59,7 +59,7 @@ class QuickBrainTest {
             get = { u, _ -> gets += u; """{"status":"done","text":"Ya está."}""" },
         ).reply(ctx)
         assertEquals("Ya está.", text)
-        assertEquals(listOf("http://100.1.1.1:8898/api/g2/answer?id=c1&wait=20"), gets)
+        assertEquals(listOf("https://server.example.ts.net:8898/api/g2/answer?id=c1&wait=20"), gets)
     }
 
     @Test fun `it gives up when she keeps thinking, so the next way answers`() {
@@ -76,7 +76,14 @@ class QuickBrainTest {
         assertEquals("sin red", failsWith(brain(post = { _, _, _ -> throw java.io.IOException("sin red") })))
         assertTrue(failsWith(brain(secrets = QuickSecrets())).contains("sin llave"))
         assertTrue(failsWith(brain(url = "")).contains("sin dirección"))
-        assertTrue(failsWith(brain(url = "ftp://x")).contains("sin dirección"))
+        assertTrue(failsWith(brain(url = "ftp://x")).contains("https"))
+    }
+
+    @Test fun `the key is never sent in the clear`() {
+        var called = false
+        val msg = failsWith(brain(url = "http://100.1.1.1:8898", post = { _, _, _ -> called = true; "{}" }))
+        assertTrue(msg, msg.contains("https"))
+        assertTrue("nothing may be sent over http", !called)
     }
 
     @Test fun `with no line from the user there is nothing to answer`() {

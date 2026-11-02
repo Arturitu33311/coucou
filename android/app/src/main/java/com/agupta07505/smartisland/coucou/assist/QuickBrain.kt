@@ -26,7 +26,8 @@ fun httpGet(url: String, key: String): String {
 /**
  * The same quick Jinx the laptop's « OK Coucou » and the glasses talk to: the bridge on the server (`/api/g2/ask`,
  * mode `lite`). She keeps her persona, runs the house (TV, volume… with the result checked there) and hands to the full
- * Jinx what needs her memory. Nothing of it lives on this phone but the bridge's key, Keystore-wrapped.
+ * Jinx what needs her memory. Nothing of it lives on this phone but the bridge's key, Keystore-wrapped, which only
+ * ever travels over https.
  * It goes first; if it cannot answer, the repository falls back to the laptop's gateway and the phone's own brains.
  */
 class QuickBrain(
@@ -40,8 +41,11 @@ class QuickBrain(
     override fun reply(context: List<ChatLine>): String {
         val key = secrets.get(SecretNames.G2_KEY)?.takeIf { it.isNotBlank() }
             ?: throw ChatException("sin llave de la Jinx rápida en este teléfono")
-        val base = baseUrl().trim().trimEnd('/').takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?: throw ChatException("sin dirección de la Jinx rápida")
+        val address = baseUrl().trim().trimEnd('/')
+        if (address.isEmpty()) throw ChatException("sin dirección de la Jinx rápida")
+        // The key goes in a header: only over TLS (Tailscale Serve gives the bridge an https name), never in the clear.
+        val base = address.takeIf { it.startsWith("https://") }
+            ?: throw ChatException("la dirección de la Jinx rápida debe ser https")
         val last = context.lastOrNull { !it.fromJinx } ?: throw ChatException("sin mensaje que contestar")
         val body = JSONObject().put("text", last.text.take(MAX_TEXT)).put("mode", "lite")
             .apply { last.cid?.let { put("cid", it) } }.toString()
