@@ -164,7 +164,9 @@ class HomeAssistant:
                 continue
             name = (s.get("attributes") or {}).get("friendly_name") or eid
             hay = _fold(name + " " + eid)
-            if all(any(a in hay for a in options) for options in alts):
+            tokens = set(hay.replace("_", " ").replace(".", " ").split())
+            # Una palabra corta ("tv") solo cuenta entera: "INTV 1000" es una caja, no una tele.
+            if all(any((a in tokens) if len(a) <= 3 else (a in hay) for a in options) for options in alts):
                 out.append({"entity_id": eid, "name": name, "state": s.get("state")})
             if len(out) >= FIND_MAX:
                 break

@@ -107,6 +107,11 @@ class HaTest(unittest.TestCase):
             self.assertEqual([e["entity_id"] for e in ha.find(q)], ["media_player.55_oled_qn55s90fafxzx"], q)
         self.assertEqual([e["entity_id"] for e in ha.find("lampara salon")], ["light.salon"])
         self.assertEqual(ha.find("tele cocina"), [])  # a synonym does not make unrelated words match
+        # A box whose name merely contains "tv" ("INTV 1000") is not a TV: short words count only as whole words.
+        box = {"entity_id": "media_player.intv_1000", "state": "paused", "attributes": {"friendly_name": "INTV 1000"}}
+        ha2 = self.make(self.STATES + [tv, box])
+        self.assertEqual([e["entity_id"] for e in ha2.find("tele")], ["media_player.55_oled_qn55s90fafxzx"])
+        self.assertEqual([e["entity_id"] for e in ha2.find("intv")], ["media_player.intv_1000"])
 
     def test_states_are_cached_for_30_s(self):
         ha = self.make(self.STATES)
