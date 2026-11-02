@@ -281,7 +281,7 @@ class Lite:
             now = self._level(entity_id)
             if now is None:
                 return result
-            if service == "volume_set" and target is not None and abs(now - float(target)) <= 0.02:
+            if service == "volume_set" and target is not None and abs(now - float(target)) <= 0.006:  # una tele sube de 1 en 1: dos puntos de diferencia ya es otro volumen
                 break
             if service == "volume_up" and now > before + 0.001:
                 break

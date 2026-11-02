@@ -208,6 +208,9 @@ class VolumeTest(unittest.TestCase):
         self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_down"))
         self.assertIn("ahora es 30%", self.run_vol([0.11, 0.30], "volume_set", {"volume_level": 0.3}))
         self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_set", {"volume_level": 0.3}))
+        # Two points away is not "done" on a TV that moves one point at a time.
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_set", {"volume_level": 0.09}))
+        self.assertIn("ahora es 9%", self.run_vol([0.11, 0.09], "volume_set", {"volume_level": 0.09}))
 
     def test_a_device_without_volume_is_not_checked(self):
         lite = L.Lite(None, SeqHA(["on"]), lambda t: "x", sleep=lambda s: None)  # state() has no volume_level
