@@ -12,7 +12,7 @@ Endpoints (127.0.0.1:8897 + IP tailnet, clave X-Mochi-Key salvo localhost):
   POST /api/presence/heartbeat {"device":"pc|s21|s22","idle_seconds":N,"screen_on":bool}
        -> {ok, active_device, jinx_mood}   ("laptop" se acepta como alias de "pc")
   GET  /api/presence/state
-  POST /api/mochi/message {"text","mood"|null,"kind","source"}  (texto <=500)
+  POST /api/mochi/message {"text","mood"|null,"kind","source"["speech"]}  (texto <=500; speech = lo mismo con tags v4, <=700)
        -> {ok, id, active_device, watched}   watched=false: nadie mirando, avisar también por Telegram
   GET  /api/mochi/inbox?since_id=N[&all=1]  -> {messages, active_device}  (all=1 incluye las ya aceptadas)
   POST /api/mochi/ack {"id","by"}
@@ -69,6 +69,7 @@ JINX_MOOD_TTL = 60
 PANEL_ORIGINS = ("http://127.0.0.1:8896", "http://localhost:8896")
 INBOX_CAP = 50
 TEXT_CAP = 500
+SPEECH_CAP = 700   # the tagged copy is a little longer than the written one
 MOODS = {"Idle", "Happy", "Sleepy", "Alert", "Listening", "Celebrating",
          "Dancing", "Tired",
          # Las caras de Jinx (los emotes de Mochi en PC y teléfono: MochiMood.kt con `emote`).
@@ -417,6 +418,11 @@ class Handler(BaseHTTPRequestHandler):
                 "source": str(b.get("source", ""))[:60],
                 "ts": int(now),
             }
+            # `speech`: the same notice with ElevenLabs v4 audio tags, for the devices that say it aloud. `text` is
+            # the written copy (tags removed); only present when the notice really carried tags.
+            speech = b.get("speech")
+            if isinstance(speech, str) and speech.strip():
+                msg["speech"] = speech.strip()[:SPEECH_CAP]
             state["next_id"] += 1
             state["inbox"].append(msg)
             state["inbox"] = state["inbox"][-INBOX_CAP:]

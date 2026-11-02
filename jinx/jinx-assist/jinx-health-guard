@@ -23,6 +23,7 @@ WATCH = [  # (unit, (host, port) or None)
     ("jinx-presence-agent.service", None),
     ("jinx-telegram.service", None),
     ("mochi-pc-agent.service", None),
+    ("jinx-voice-alert.service", None),
     ("ollama-user.service", None),
 ]
 SERVER = "server"

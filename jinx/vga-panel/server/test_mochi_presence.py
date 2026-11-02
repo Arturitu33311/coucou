@@ -129,6 +129,25 @@ class HttpTest(unittest.TestCase):
         self.assertEqual(self.get("/api/mochi/inbox?since_id=0")["messages"], [])  # reading with all=1 changed nothing
 
 
+    def test_speech_is_kept_apart_from_the_written_text(self):
+        self.post("/api/mochi/message", {"text": "Tienes lab en 15 minutos", "kind": "warn", "source": "clases",
+                                         "speech": "[concerned] Tienes lab en 15 minutos"})
+        self.post("/api/mochi/message", {"text": "sin tags", "kind": "info", "source": "x"})
+        got = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"]
+        self.assertEqual(got[0]["text"], "Tienes lab en 15 minutos")
+        self.assertEqual(got[0]["speech"], "[concerned] Tienes lab en 15 minutos")
+        self.assertNotIn("speech", got[1])
+
+    def test_speech_is_bounded_and_must_be_text(self):
+        self.post("/api/mochi/message", {"text": "a", "speech": "[warmly] " + "x" * 2000})
+        self.post("/api/mochi/message", {"text": "b", "speech": {"no": "texto"}})
+        self.post("/api/mochi/message", {"text": "c", "speech": "   "})
+        got = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"]
+        self.assertEqual(len(got[0]["speech"]), self.m.SPEECH_CAP)
+        self.assertNotIn("speech", got[1])
+        self.assertNotIn("speech", got[2])
+
+
 class IslandTest(unittest.TestCase):
     """Las órdenes de Jinx para la isla del PC: se encolan, el PC las recoge y contesta, quien las pidió ve el resultado."""
 

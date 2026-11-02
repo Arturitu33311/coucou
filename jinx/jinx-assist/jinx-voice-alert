@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""jinx-voice-alert — says Jinx's notices out loud, in her ElevenLabs v4 voice, when the headphones are on the relay.
+
+A user service on the laptop. Every few seconds it READS the presence inbox (GET ...&all=1: never acks, so it does
+not compete with the Coucou app or mochi-pc-agent), and for each new notice decides whether to speak it:
+
+  * this laptop is the device in use (presence says "pc"), and
+  * the audio relay is carrying sound to the headphones (default sink coucou_audiolink with its capture running), and
+  * the notice is warn/alert, or a reminder (class, lab, task, due date), and
+  * not between 23:00 and 07:00, not past the daily maximum (8), not a repeat, not stale (> 10 min old).
+
+The notice arrives with its tagged copy (`speech`, ElevenLabs v4 audio tags); the server synthesizes it
+(jinx_speak.py: the key stays in the server's vault) and this script plays the MP3 into the relay sink.
+Nothing is spoken on the first run for notices that already existed. Config (all optional):
+~/.config/jinx/voice-alerts.json  {"enabled": true, "quiet_from": 23, "quiet_to": 7, "daily_max": 8}.
+`touch ~/.config/jinx/voice-alerts.off` silences it at once.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+HOME = Path.home()
+PRESENCE = os.environ.get("JINX_PRESENCE_URL", "http://100.92.254.125:8897")
+KEY_FILE = HOME / ".config/mochi-presence/key"
+CONF = HOME / ".config/jinx/voice-alerts.json"
+OFF_FILE = HOME / ".config/jinx/voice-alerts.off"
+STATE = Path(os.environ.get("JINX_VOICE_STATE", HOME / ".local/state/jinx-voice-alert.json"))
+LOG = Path(os.environ.get("JINX_VOICE_LOG", HOME / "jinx-emergencia/logs/voice-alert.log"))
+SERVER_CMD = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "server",
+              "/home/alan/.hermes/hermes-agent/venv/bin/python /home/alan/.hermes/scripts/jinx_speak.py"]
+SINK = "coucou_audiolink"
+POLL_S = 4
+MAX_AGE_S = 600
+DEDUPE_S = 600
+DEFAULTS = {"enabled": True, "quiet_from": 23, "quiet_to": 7, "daily_max": 8}
+COOLDOWN_S = 20 * 60      # between two spoken notices (kind "alert" skips it): variants of one alert would nag
+REMINDER_WORDS = re.compile(r"clase|laboratorio|\blab\b|tarea|vence|vencimiento|recordatorio|pendiente|examen|"
+                            r"cierra|se pas[oó]|entrega|pr[aá]ctica|es mañana|mañana a las|hoy tienes", re.I)
+REMINDER_SOURCES = ("clase", "recordatorio", "tarea", "pendiente", "vencimiento", "teams", "escuela")
+
+
+# ---------- policy (pure, unit-tested) ----------
+
+def in_quiet_hours(hour: int, start: int, end: int) -> bool:
+    """True when `hour` falls in [start, end) wrapping midnight (23→7)."""
+    return start <= hour < end if start < end else (hour >= start or hour < end)
+
+
+def eligible_kind(msg: dict) -> bool:
+    if msg.get("kind") in ("warn", "alert"):
+        return True
+    src = str(msg.get("source", "")).lower()
+    return any(s in src for s in REMINDER_SOURCES) or bool(REMINDER_WORDS.search(str(msg.get("text", ""))))
+
+
+def decide(msg: dict, ctx: dict) -> tuple[bool, str]:
+    """(speak?, reason). ctx: conf, now, hour, active_device, relay, spoken_today, recent {text: ts}."""
+    conf = ctx["conf"]
+    if not conf["enabled"]:
+        return False, "off"
+    if ctx["active_device"] != "pc":
+        return False, f"device in use is {ctx['active_device']}"
+    if not ctx["relay"]:
+        return False, "headphones not on the relay"
+    if not eligible_kind(msg):
+        return False, "not warn/alert/reminder"
+    if ctx["now"] - float(msg.get("ts", ctx["now"])) > MAX_AGE_S:
+        return False, "stale"
+    if in_quiet_hours(ctx["hour"], conf["quiet_from"], conf["quiet_to"]):
+        return False, "quiet hours"
+    if ctx["spoken_today"] >= conf["daily_max"]:
+        return False, "daily maximum reached"
+    text = str(msg.get("text", "")).strip()
+    if ctx["now"] - ctx["recent"].get(text, 0) < DEDUPE_S:
+        return False, "repeat"
+    if msg.get("kind") != "alert" and ctx["now"] - ctx.get("last_spoken", 0) < COOLDOWN_S:
+        return False, "cooldown after the last spoken notice"
+    return True, "ok"
+
+
+# ---------- effects ----------
+
+def log(msg: str) -> None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}\n")
+
+
+def load_conf() -> dict:
+    conf = dict(DEFAULTS)
+    try:
+        conf.update({k: v for k, v in json.loads(CONF.read_text()).items() if k in DEFAULTS})
+    except (OSError, ValueError):
+        pass
+    if OFF_FILE.exists():
+        conf["enabled"] = False
+    return conf
+
+
+def run(*cmd: str) -> tuple[int, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+        return p.returncode, p.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return 124, ""
+
+
+def relay_active() -> bool:
+    """Same rule as `coucou-setup doctor`: the PC's output is the relay sink and its capture is running."""
+    return run("pactl", "get-default-sink")[1] == SINK and run("pgrep", "-f", f"parec --device={SINK}")[0] == 0
+
+
+def inbox(since: int, key: str) -> dict:
+    req = urllib.request.Request(f"{PRESENCE}/api/mochi/inbox?since_id={since}&all=1", headers={"X-Mochi-Key": key})
+    with urllib.request.urlopen(req, timeout=6) as r:
+        return json.loads(r.read())
+
+
+def synthesize(text: str, kind: str) -> dict:
+    p = subprocess.run(SERVER_CMD, input=json.dumps({"text": text, "kind": kind}) + "\n", capture_output=True,
+                       text=True, timeout=75)
+    return json.loads(p.stdout.strip().splitlines()[-1])
+
+
+def play(mp3: bytes) -> bool:
+    """mpv aimed at the relay sink BY NAME: EasyEffects reroutes plain streams, and the voice must reach the
+    headphones. -6 dB of headroom: ElevenLabs masters near full scale."""
+    cmd = ["mpv", "--no-video", "--really-quiet", "--ao=pipewire", f"--audio-device=pipewire/{SINK}",
+           "--af=lavfi=[volume=-6dB]", "-"]
+    try:
+        return subprocess.run(cmd, input=mp3, timeout=60).returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(st: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(st))
+
+
+def handle(msg: dict, st: dict, active: str, conf: dict) -> None:
+    now = time.time()
+    today = time.strftime("%Y-%m-%d")
+    if st.get("day") != today:
+        st["day"], st["spoken"] = today, 0
+    ctx = {"conf": conf, "now": now, "hour": time.localtime().tm_hour, "active_device": active,
+           "relay": relay_active(), "spoken_today": st["spoken"], "recent": st.setdefault("recent", {}),
+           "last_spoken": st.get("last_spoken", 0)}
+    ok, why = decide(msg, ctx)
+    if not ok:
+        log(f"#{msg.get('id')} skipped: {why}")
+        return
+    text = msg.get("speech") or msg["text"]
+    try:
+        res = synthesize(text, msg.get("kind", "info"))
+    except Exception as e:  # noqa: BLE001
+        log(f"#{msg.get('id')} server synthesis failed: {e}")
+        return
+    if not res.get("ok"):
+        log(f"#{msg.get('id')} synthesis refused: {res.get('error')}")
+        return
+    played = play(base64.b64decode(res["audio_b64"]))
+    st["spoken"] += 1
+    st["last_spoken"] = now
+    st["recent"][str(msg["text"]).strip()] = now
+    st["recent"] = {k: v for k, v in st["recent"].items() if now - v < DEDUPE_S}
+    log(f"#{msg.get('id')} spoken={played} model={res.get('model')} settings={res.get('voice_settings')} "
+        f"line={res.get('line')!r}")
+
+
+def check() -> int:
+    """Dry run for the human: what would be said right now? Reads the inbox; speaks nothing, saves nothing."""
+    key = KEY_FILE.read_text().strip()
+    data = inbox(0, key)
+    conf, relay = load_conf(), relay_active()
+    print(f"device in use: {data.get('active_device')}   relay: {'ON' if relay else 'off'}   config: {conf}")
+    for m in sorted(data.get("messages", []), key=lambda x: x["id"])[-8:]:
+        ctx = {"conf": conf, "now": time.time(), "hour": time.localtime().tm_hour,
+               "active_device": data.get("active_device"), "relay": relay, "spoken_today": 0, "recent": {}}
+        ok, why = decide(m, ctx)
+        print(f"  #{m['id']} [{m.get('kind')}] {'WOULD SPEAK' if ok else 'silent: ' + why:<34} "
+              f"{(m.get('speech') or m['text'])[:70]!r}")
+    return 0
+
+
+def main() -> int:
+    if "--check" in sys.argv:
+        return check()
+    key = KEY_FILE.read_text().strip()
+    st = load_state()
+    while True:
+        try:
+            data = inbox(st.get("last_id", 0), key)
+            msgs = sorted(data.get("messages", []), key=lambda m: m["id"])
+            if "last_id" not in st:                       # first run: never read out the backlog
+                st["last_id"] = max((m["id"] for m in msgs), default=0)
+                log(f"first run: starting after #{st['last_id']}")
+            else:
+                conf = load_conf()
+                for m in msgs:
+                    handle(m, st, data.get("active_device", "?"), conf)
+                    st["last_id"] = m["id"]
+            save_state(st)
+        except Exception as e:  # noqa: BLE001  (server unreachable, etc.: keep trying)
+            log(f"poll error: {e}")
+        time.sleep(POLL_S)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
