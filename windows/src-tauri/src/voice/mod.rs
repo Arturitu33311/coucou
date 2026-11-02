@@ -289,19 +289,19 @@ pub async fn voice_play_mp3_native(id: u64) -> bool {
         {
             use std::io::Write;
             // The MP3 goes to the player's standard input: no file, so nothing in a shared directory to swap or read.
-            // Aimed at the current default sink by name: a sound-server filter (EasyEffects) moves any stream that just
-            // follows the default, and the answer then went somewhere else than the music does (the audio relay).
+            // mpv's own PipeWire output is silent on this kind of setup (the stream plays, nothing comes out), so the
+            // PulseAudio output is asked for by name. It is aimed at the current default sink by name as well: a
+            // sound-server filter (EasyEffects) moves any stream that just follows the default.
+            let pulse = |a: &[&str]| -> Vec<String> { a.iter().map(|s| s.to_string()).collect() };
             let mut players: Vec<(&str, Vec<String>)> = Vec::new();
             if let Some(sink) = default_sink() {
-                players.push((
-                    "mpv",
-                    ["--no-video", "--really-quiet", "--ao=pipewire"].iter().map(|a| a.to_string())
-                        .chain([format!("--audio-device=pipewire/{sink}"), "-".to_string()])
-                        .collect(),
-                ));
+                let mut args = pulse(&["--no-video", "--really-quiet", "--ao=pulse"]);
+                args.push(format!("--audio-device=pulse/{sink}"));
+                args.push("-".to_string());
+                players.push(("mpv", args));
             }
-            players.push(("mpv", ["--no-video", "--really-quiet", "-"].iter().map(|a| a.to_string()).collect()));
-            players.push(("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "pipe:0"].iter().map(|a| a.to_string()).collect()));
+            players.push(("mpv", pulse(&["--no-video", "--really-quiet", "--ao=pulse", "-"])));
+            players.push(("ffplay", pulse(&["-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "pipe:0"])));
             for (name, args) in players {
                 let Some(bin) = crate::platform::find_on_path(name) else { continue };
                 let Ok(mut child) = std::process::Command::new(bin)
