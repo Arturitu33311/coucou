@@ -244,11 +244,36 @@ class OpenAICompatLLM:
             raise LiteError("el modelo rápido falló (%s)" % type(e).__name__) from None
 
 
+VERIFY_TRIES = 4        # veces que se mira si la orden hizo efecto
+VERIFY_EVERY = 1.5      # segundos entre miradas (una tele tarda un par en contestar)
+
+
 class Lite:
-    def __init__(self, llm, ha, handoff, persona=PERSONA, now=time.time):
+    def __init__(self, llm, ha, handoff, persona=PERSONA, now=time.time, sleep=time.sleep):
         self.llm, self.ha, self.handoff, self.persona, self.now = llm, ha, handoff, persona, now
+        self.sleep = sleep
         self.history = []
         self.last = 0.0
+
+    def _verified(self, result, service, entity_id):
+        """Encender o apagar solo está hecho cuando el aparato lo dice: Home Assistant contesta "ok" aunque la tele
+        no se entere. Sin esto el modelo anunciaba "ya está encendida" con la tele apagada."""
+        if service not in ("turn_on", "turn_off"):
+            return result
+        state = None
+        for i in range(VERIFY_TRIES):
+            self.sleep(VERIFY_EVERY)
+            try:
+                state = self.ha.state(entity_id).get("state")
+            except Exception:  # noqa: BLE001 - si no se puede mirar, se dice tal cual
+                return result
+            if service == "turn_on" and state not in ("off", "unavailable", "unknown"):
+                return "%s; %s ahora está «%s»" % (result, entity_id, state)
+            if service == "turn_off" and state in ("off", "standby"):
+                return "%s; %s ahora está «%s»" % (result, entity_id, state)
+        return ("la orden se envió pero %s sigue «%s». NO digas que funcionó: si hay otro aparato del mismo tipo "
+                "(busca con otra palabra, p. ej. parte de su entity_id) prueba con ese; si no, di que no respondió."
+                % (entity_id, state))
 
     def _tool(self, name, args):
         try:
@@ -257,7 +282,8 @@ class Lite:
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":
-                return self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                result = self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                return self._verified(result, args.get("servicio"), args.get("entity_id"))
             if name == "pasar_a_jinx":
                 return self.handoff(str(args.get("peticion", ""))[:1000])
             return "herramienta desconocida"

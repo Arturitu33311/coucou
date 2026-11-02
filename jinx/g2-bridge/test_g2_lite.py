@@ -141,12 +141,47 @@ class HaTest(unittest.TestCase):
             ha.states()
 
 
+class SeqHA(FakeHA):
+    """Un Home Assistant cuyo aparato va cambiando de estado cada vez que se mira."""
+    def __init__(self, states):
+        super().__init__()
+        self.seq = list(states)
+
+    def state(self, e):
+        return {"entity_id": e, "state": self.seq.pop(0) if len(self.seq) > 1 else self.seq[0]}
+
+
+class VerifyTest(unittest.TestCase):
+    def run_action(self, states, service="turn_on", domain="media_player", entity="media_player.tele"):
+        lite = L.Lite(None, SeqHA(states), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": domain, "servicio": service, "entity_id": entity})
+
+    def test_turning_on_is_confirmed_when_the_state_changes(self):
+        out = self.run_action(["off", "off", "paused"])
+        self.assertIn("ahora está «paused»", out)
+        self.assertNotIn("NO digas", out)
+
+    def test_turning_on_that_does_nothing_is_not_reported_as_done(self):
+        out = self.run_action(["off"])
+        self.assertIn("sigue «off»", out)
+        self.assertIn("NO digas que funcionó", out)
+
+    def test_turning_off_is_confirmed_and_a_failed_one_is_reported(self):
+        self.assertIn("ahora está «off»", self.run_action(["on", "off"], service="turn_off"))
+        self.assertIn("sigue «on»", self.run_action(["on"], service="turn_off"))
+
+    def test_other_services_are_not_checked(self):
+        out = self.run_action(["off"], service="volume_set")
+        self.assertEqual(out, "hecho")
+
+
 class LiteTest(unittest.TestCase):
     def make(self, script, now=None):
         self.llm = FakeLLM(script)
         self.ha = FakeHA()
         self.handed = []
-        return L.Lite(self.llm, self.ha, lambda t: self.handed.append(t) or "pasado", now=now or (lambda: 100.0))
+        return L.Lite(self.llm, self.ha, lambda t: self.handed.append(t) or "pasado", now=now or (lambda: 100.0),
+                      sleep=lambda s: None)
 
     def test_plain_answer_is_cleaned_and_short(self):
         lite = self.make([{"content": "**Hola** Alan, `listo`."}])
