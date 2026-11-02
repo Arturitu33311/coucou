@@ -1,0 +1,24 @@
+model:
+  provider: openrouter
+  default: deepseek/deepseek-v4-flash
+  max_output_tokens: 12000
+toolsets:
+  - web
+  - file
+  - code_execution
+  - vision
+  - skills
+auxiliary:
+  vision:
+    provider: openrouter
+    model: google/gemini-2.5-flash
+    base_url: ''
+    api_key: ''
+    timeout: 120
+    download_timeout: 30
+agent:
+  max_turns: 40
+  gateway_timeout: 300
+terminal:
+  backend: local
+  timeout: 60
