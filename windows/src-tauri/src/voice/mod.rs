@@ -163,11 +163,12 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             continue;
         }
         let Some(chunk) = chunk else { continue };
-        for segment in vad.feed(&chunk) {
+        for mut segment in vad.feed(&chunk) {
             if segment.len() < speech::SAMPLE_RATE as usize * 35 / 100 {
                 continue;
             }
             let seg_ms = segment.len() as u64 * 1000 / speech::SAMPLE_RATE as u64;
+            wake::level_up(&mut segment); // a quiet microphone must not cost the transcription its accuracy
             let t_stt = Instant::now();
             let Some(heard) = speech::transcribe(&segment).map(|t| t.text.trim().to_string()) else { continue };
             let stt_ms = t_stt.elapsed().as_millis();

@@ -201,6 +201,30 @@ pub struct Vad {
 }
 
 pub const FRAME: usize = 480; // 30 ms at 16 kHz
+/// Quietest frame that can count as speech (RMS, full scale 1.0). The noise floor still raises the bar in a noisy room.
+/// 0.012 (-38 dB) missed a voice that reaches the microphone at -48 dB; this is -50 dB.
+const MIN_SPEECH_RMS: f32 = 0.003;
+/// Level a stretch of speech is brought to before it is transcribed (RMS) and the most it is ever amplified (x31, 30 dB).
+const TARGET_RMS: f32 = 0.08;
+const MAX_GAIN: f32 = 31.6;
+
+/// Brings a quiet stretch of speech up to a normal level, never past clipping. Louder ones are left alone.
+pub fn level_up(seg: &mut [f32]) {
+    if seg.is_empty() {
+        return;
+    }
+    let rms = (seg.iter().map(|x| x * x).sum::<f32>() / seg.len() as f32).sqrt();
+    let peak = seg.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    if rms < 1e-5 || peak <= 0.0 {
+        return;
+    }
+    let gain = (TARGET_RMS / rms).min(MAX_GAIN).min(0.9 / peak);
+    if gain > 1.0 {
+        for x in seg.iter_mut() {
+            *x *= gain;
+        }
+    }
+}
 const PREROLL: usize = 16_000 * 3 / 10;
 const MAX_SEGMENT: usize = 16_000 * 12;
 
@@ -234,7 +258,7 @@ impl Vad {
                 continue;
             }
             let rms = (self.frame.iter().map(|x| x * x).sum::<f32>() / FRAME as f32).sqrt();
-            let speech = rms > (self.floor * 3.0).max(0.012);
+            let speech = rms > (self.floor * 3.0).max(MIN_SPEECH_RMS);
             if !speech && !self.in_speech {
                 self.floor = self.floor * 0.97 + rms * 0.03;
             }
@@ -387,6 +411,31 @@ mod tests {
         assert_eq!(after_wake("hinge es una app"), None);
         assert_eq!(after_wake("ok let's go"), None);
         assert!(is_jinx("Jinx") && is_jinx("jinks") && is_jinx("yinks") && is_jinx("Gins") && !is_jinx("jinete"));
+    }
+
+    #[test]
+    fn a_quiet_voice_is_brought_up_but_never_clipped() {
+        let mut quiet: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.1).sin() * 0.005).collect();
+        level_up(&mut quiet);
+        let rms = (quiet.iter().map(|x| x * x).sum::<f32>() / quiet.len() as f32).sqrt();
+        assert!(rms > 0.05 && quiet.iter().all(|x| x.abs() <= 0.9 + 1e-3));
+        let mut loud: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
+        let before = loud.clone();
+        level_up(&mut loud);
+        assert_eq!(loud, before);
+        let mut silence = vec![0.0f32; 1600];
+        level_up(&mut silence);
+        assert!(silence.iter().all(|x| *x == 0.0));
+    }
+
+    #[test]
+    fn a_voice_at_minus_48_db_counts_as_speech() {
+        let mut vad = Vad::default();
+        let silence = vec![0.0004f32; 32_000];
+        let voice: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.1).sin() * 0.0055).collect(); // RMS ~0.004
+        vad.feed(&silence);
+        vad.feed(&voice);
+        assert!(vad.in_speech());
     }
 
     #[test]
