@@ -54,6 +54,12 @@ fn pending() -> &'static Mutex<HashMap<u64, mpsc::Sender<String>>> {
 }
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Silence that closes a stretch of speech, in 30 ms frames. Everything after it waits for it, so it is the part of the
+/// delay that is pure waiting: short for the wake phrase (two short words, and the order may follow in the same breath
+/// or in the next stretch), a little longer for the order itself (a question may have pauses in it).
+const WAKE_HANGOVER: usize = 16; // about 0.5 s (it was 0.75 s)
+const COMMAND_HANGOVER: usize = 28; // about 0.85 s (it was 1.2 s)
+
 /// Whether « OK Coucou » can run: the voice model and a language-model key (OpenRouter or Claude).
 pub fn requirements_met() -> bool {
     speech::is_ready() && (crate::or_brain::present() || crate::secrets::present(crate::claude::KEY))
@@ -146,7 +152,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
         match &mode {
             Mode::Command { until, .. } | Mode::FollowUp { until } if now > *until => {
                 mode = Mode::Wake;
-                vad.hangover = 25;
+                vad.hangover = WAKE_HANGOVER;
                 show(&app, None);
             }
             _ => {}
@@ -161,7 +167,10 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             if segment.len() < speech::SAMPLE_RATE as usize * 35 / 100 {
                 continue;
             }
+            let seg_ms = segment.len() as u64 * 1000 / speech::SAMPLE_RATE as u64;
+            let t_stt = Instant::now();
             let Some(heard) = speech::transcribe(&segment).map(|t| t.text.trim().to_string()) else { continue };
+            let stt_ms = t_stt.elapsed().as_millis();
             if heard.is_empty() {
                 continue;
             }
@@ -172,7 +181,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             let question = match &mut mode {
                 Mode::Wake => match wake::after_wake(&heard) {
                     Some(rest) => {
-                        crate::log::line("voice: « OK Coucou » heard");
+                        crate::log::line(format!("voice: « OK Coucou » heard (speech to text {stt_ms} ms for {seg_ms} ms of audio)"));
                         hide_at = None;
                         if crate::flow::text::word_count(&rest) >= 2 {
                             Some(rest)
@@ -180,7 +189,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
                             show(&app, Some(VoiceView { phase: "listening".into(), heard: rest.clone(), answer: String::new() }));
                             mode = Mode::Command { text: rest, until: now + Duration::from_secs(7) };
                             // A question may come with pauses in it.
-                            vad.hangover = 40;
+                            vad.hangover = COMMAND_HANGOVER;
                             None
                         }
                     }
@@ -194,9 +203,11 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             };
             let Some(question) = question else { continue };
             mode = Mode::Wake;
-            vad.hangover = 25;
+            vad.hangover = WAKE_HANGOVER;
             show(&app, Some(VoiceView { phase: "thinking".into(), heard: question.clone(), answer: String::new() }));
+            let t_brain = Instant::now();
             let reply = brain.respond(&app, &question);
+            crate::log::line(format!("voice: answered in {} ms", t_brain.elapsed().as_millis()));
             let answer = reply.as_ref().map(|r| r.text.clone()).unwrap_or_default();
             if answer.is_empty() {
                 let done = reply.is_some_and(|r| r.acted);
@@ -215,7 +226,7 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             while rx.try_recv().is_ok() {}
             if answer.trim_end().ends_with('?') {
                 mode = Mode::FollowUp { until: Instant::now() + Duration::from_secs(8) };
-                vad.hangover = 40;
+                vad.hangover = COMMAND_HANGOVER;
                 show(&app, Some(VoiceView { phase: "listening".into(), heard: String::new(), answer }));
             } else {
                 hide_at = Some(Instant::now() + Duration::from_secs(6));
@@ -251,11 +262,13 @@ fn speak(app: &AppHandle, text: &str) {
         std::thread::sleep(Duration::from_millis(1500));
         return;
     }
+    let t_tts = Instant::now();
     let mp3 = if output == "elevenlabs" { elevenlabs(text, &gender, &voice_id, &voice_model) } else { None };
+    let tts_ms = t_tts.elapsed().as_millis();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     if output == "elevenlabs" {
         crate::log::line(match &mp3 {
-            Some(bytes) => format!("voice: ElevenLabs answer, {} bytes", bytes.len()),
+            Some(bytes) => format!("voice: ElevenLabs answer, {} bytes in {tts_ms} ms", bytes.len()),
             None => "voice: ElevenLabs gave no audio, the system voice speaks".to_string(),
         });
     }

@@ -214,7 +214,7 @@ impl Default for Vad {
             frame: Vec::with_capacity(FRAME),
             current: Vec::new(),
             preroll: std::collections::VecDeque::with_capacity(PREROLL),
-            hangover: 25,
+            hangover: 16,
         }
     }
 }

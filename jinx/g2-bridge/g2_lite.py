@@ -251,8 +251,8 @@ class OpenAICompatLLM:
 
 
 SERVICE_TIMEOUT = 20      # segundos que se espera a que Home Assistant dé por hecha una orden
-VERIFY_TRIES = 4        # veces que se mira si la orden hizo efecto
-VERIFY_EVERY = 1.5      # segundos entre miradas (una tele tarda un par en contestar)
+VERIFY_TRIES = 10       # veces que se mira si la orden hizo efecto
+VERIFY_EVERY = 0.6      # segundos entre miradas: se confirma en cuanto cambia, sin esperar de más (seis segundos en total)
 
 
 class Lite:
