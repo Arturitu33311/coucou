@@ -14,6 +14,8 @@ The notice arrives with its tagged copy (`speech`, ElevenLabs v4 audio tags); th
 Nothing is spoken on the first run for notices that already existed. Config (all optional):
 ~/.config/jinx/voice-alerts.json  {"enabled": true, "quiet_from": 23, "quiet_to": 7, "daily_max": 8}.
 `touch ~/.config/jinx/voice-alerts.off` silences it at once.
+  jinx-voice-alert --check          dry run: what would be said right now (reads, speaks nothing)
+  jinx-voice-alert --say "[warmly] hola"   one test phrase through the relay (one ElevenLabs generation)
 """
 from __future__ import annotations
 
@@ -198,9 +200,21 @@ def check() -> int:
     return 0
 
 
+def say(text: str) -> int:
+    """Manual test: synthesize `text` on the server and play it now, ignoring the policy. Costs one generation."""
+    res = synthesize(text, "info")
+    if not res.get("ok"):
+        print("synthesis refused:", res.get("error"))
+        return 1
+    print(f"model={res['model']} voice_settings={res['voice_settings']} line={res['line']!r}")
+    return 0 if play(base64.b64decode(res["audio_b64"])) else 1
+
+
 def main() -> int:
     if "--check" in sys.argv:
         return check()
+    if "--say" in sys.argv:
+        return say(" ".join(sys.argv[sys.argv.index("--say") + 1:]) or "[warmly] Hola Alan, esta es una prueba de voz.")
     key = KEY_FILE.read_text().strip()
     st = load_state()
     while True:
