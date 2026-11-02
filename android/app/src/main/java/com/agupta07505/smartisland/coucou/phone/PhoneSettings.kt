@@ -96,6 +96,14 @@ object PhoneSettings {
         prefs(c).edit().putString("presenceUrl", v.trim().trimEnd('/')).apply()
     }
 
+    /** Where the quick Jinx's bridge lives (Tailscale address of the server, port 8898; no trailing slash). */
+    fun g2Url(c: Context): String =
+        prefs(c).getString("g2Url", "http://100.92.254.125:8898") ?: "http://100.92.254.125:8898"
+
+    fun saveG2Url(c: Context, v: String) {
+        prefs(c).edit().putString("g2Url", v.trim().trimEnd('/')).apply()
+    }
+
     /** Key for the presence inbox (same as ~/.config/mochi-presence/key on the server). */
     fun mochiKey(c: Context): String = prefs(c).getString("mochiKey", "") ?: ""
 

@@ -307,6 +307,7 @@ internal fun Setup(modifier: Modifier = Modifier) {
                 },
             )
             PresenceCard()
+            QuickJinxCard()
             AudioLinkCard()
         }
         error?.let { Text(it, color = CoucouColors.Warning, fontSize = 12.5.sp) }
@@ -342,6 +343,40 @@ private fun PresenceCard() {
             shape = RoundedCornerShape(14.dp), visualTransformation = PasswordVisualTransformation())
         val (text, tone) = presenceLabel(status)
         StatusLine(text, tone)
+    }
+}
+
+/**
+ * The quick Jinx of the server, as the phone's assistant (the panel of the assistant gesture): the same one the laptop's
+ * « OK Coucou » and the glasses use, so the phone also runs the house. Only the bridge's key is needed (the one in
+ * ~/.config/jinx-g2/key on the server); it is stored Keystore-wrapped, never in plain preferences.
+ */
+@Composable
+private fun QuickJinxCard() {
+    val context = LocalContext.current
+    val secrets = remember { com.agupta07505.smartisland.coucou.assist.KeystoreSecrets(context) }
+    var url by remember { mutableStateOf(PhoneSettings.g2Url(context)) }
+    var key by remember { mutableStateOf("") }
+    var saved by remember { mutableStateOf(!secrets.get(com.agupta07505.smartisland.coucou.assist.SecretNames.G2_KEY).isNullOrBlank()) }
+
+    SectionCard(
+        title = "5 · Jinx rápida (el asistente y la casa)",
+        subtitle = "Es la misma Jinx que contesta en la laptop y en las gafas: rápida, con su personalidad, y maneja la casa " +
+            "(tele, volumen…). Lo que necesita su memoria lo pasa a la Jinx completa. Va delante de las demás vías.",
+    ) {
+        OutlinedTextField(url, { url = it; PhoneSettings.saveG2Url(context, it) },
+            label = { Text("Dirección del puente") }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
+            shape = RoundedCornerShape(14.dp))
+        OutlinedTextField(key, { key = it },
+            label = { Text(if (saved) "Llave del puente (guardada; escribe otra para cambiarla)" else "Llave del puente") },
+            singleLine = true, modifier = Modifier.fillMaxWidth(), colors = fieldColors,
+            shape = RoundedCornerShape(14.dp), visualTransformation = PasswordVisualTransformation())
+        Button(colors = primaryButton, enabled = key.isNotBlank(), onClick = {
+            secrets.put(com.agupta07505.smartisland.coucou.assist.SecretNames.G2_KEY, key.trim())
+            key = ""
+            saved = true
+        }) { Text("Guardar la llave") }
+        StatusLine(if (saved) "llave guardada" else "falta la llave", if (saved) Tone.Good else Tone.Warn)
     }
 }
 

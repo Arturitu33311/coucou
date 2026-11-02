@@ -6,7 +6,8 @@ package com.agupta07505.smartisland.coucou.assist
 
 import java.util.UUID
 
-enum class Via { Laptop, Cloud, Local }
+/** Quick: the quick Jinx on the server (also reached by the laptop's « OK Coucou » and the glasses). */
+enum class Via { Laptop, Cloud, Local, Quick }
 
 /** A brain that lives on this phone (cloud through OpenRouter, or the on-device model). */
 interface LocalBrain {
@@ -38,6 +39,8 @@ class ChatRepository(
     private val mirror: Mirror?,
     private val clock: () -> Double = { System.currentTimeMillis() / 1000.0 },
     private val newCid: () -> String = { UUID.randomUUID().toString() },
+    /** Tried before the laptop: fast, runs the house, hands what needs her memory to the full Jinx. */
+    private val quick: LocalBrain? = null,
 ) {
     /** Stores what the user typed at once (so the screen can show it) without asking anyone yet. */
     fun enqueue(text: String): ChatLine {
@@ -54,6 +57,17 @@ class ChatRepository(
     fun answer(user: ChatLine): SendResult {
         val cid = user.cid ?: return SendResult.Pending("sin cid")
         store.answerFor(cid)?.let { return SendResult.Answered(it, Via.Laptop) }
+        quick?.let { b ->
+            try {
+                val text = b.reply(store.tail(CONTEXT))
+                // Alan is on this phone: he reads it here (as with the phone's own brains), it does not go to Telegram.
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true))
+                store.markMirrored(setOf(user.id, line.id))
+                return SendResult.Answered(line, Via.Quick)
+            } catch (_: ChatException) {
+                // falls through to the laptop's gateway and the phone's own brains
+            }
+        }
         laptop?.let { api ->
             try {
                 val done = api.send(user.text, cid, deviceId)

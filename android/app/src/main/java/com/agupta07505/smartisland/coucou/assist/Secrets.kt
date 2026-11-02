@@ -19,6 +19,8 @@ object SecretNames {
     const val OPENROUTER = "openrouter_key"
     const val TG_TOKEN = "telegram_token"
     const val TG_CHAT = "telegram_chat"
+    /** The key of the quick Jinx's bridge on the server (the same one the glasses and the laptop use). */
+    const val G2_KEY = "g2_key"
 }
 
 interface Secrets {
