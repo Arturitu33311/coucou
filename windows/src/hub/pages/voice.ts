@@ -78,7 +78,7 @@ export async function voicePage(page: HTMLElement, ctx: HubContext) {
       divider(),
       row(t("Gender (when no voice id)"), null, segmented([["female", t("Female")], ["male", t("Male")]], prefs.voiceGender, (g) => void ctx.setPrefs((p) => (p.voiceGender = g)))),
       divider(),
-      row(t("Model"), t("Fast answers by default; Eleven v4 sounds richer but takes longer to start."), segmented([["eleven_flash_v2_5", t("Fast")], ["eleven_v4", "Eleven v4"]], prefs.voiceModel === "eleven_v4" ? "eleven_v4" : "eleven_flash_v2_5", (m) => void ctx.setPrefs((p) => (p.voiceModel = m)))),
+      row(t("Model"), t("Eleven v4 turbo streams: it starts speaking after the first fragment. Flash is the quickest to generate."), segmented([["eleven_v4_turbo", "v4 turbo"], ["eleven_v4", "Eleven v4"], ["eleven_flash_v2_5", t("Flash")]], ["eleven_v4_turbo", "eleven_v4", "eleven_flash_v2_5"].includes(prefs.voiceModel) ? prefs.voiceModel : "eleven_v4_turbo", (m) => void ctx.setPrefs((p) => (p.voiceModel = m)))),
       divider(),
       row(t("ElevenLabs key"), null, elevenKey()),
     );

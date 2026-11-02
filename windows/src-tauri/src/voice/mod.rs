@@ -262,6 +262,18 @@ fn speak(app: &AppHandle, text: &str) {
         std::thread::sleep(Duration::from_millis(1500));
         return;
     }
+    // ElevenLabs on Linux: the audio goes to the player as it is generated, so the voice starts after the first
+    // fragment instead of after the whole answer. Any failure before it starts falls through to the buffered path.
+    #[cfg(target_os = "linux")]
+    if output == "elevenlabs" && std::env::var_os("COUCOU_VOICE_NO_STREAM").is_none() {
+        crate::audiolink::own_sound(1_000 + crate::flow::text::word_count(text) as u64 * 450);
+        let t = Instant::now();
+        if speak_streaming(text, &voice_id, &voice_model) {
+            crate::audiolink::own_sound(600); // the relay delays the tail a little
+            crate::log::line(format!("voice: streamed answer said in {} ms", t.elapsed().as_millis()));
+            return;
+        }
+    }
     let t_tts = Instant::now();
     let mp3 = if output == "elevenlabs" { elevenlabs(text, &gender, &voice_id, &voice_model) } else { None };
     let tts_ms = t_tts.elapsed().as_millis();
@@ -311,14 +323,19 @@ pub async fn voice_play_mp3_native(id: u64) -> bool {
             // PulseAudio output is asked for by name. It is aimed at the current default sink by name as well: a
             // sound-server filter (EasyEffects) moves any stream that just follows the default.
             let pulse = |a: &[&str]| -> Vec<String> { a.iter().map(|s| s.to_string()).collect() };
+            let headroom = format!("--af={MPV_HEADROOM}");
             let mut players: Vec<(&str, Vec<String>)> = Vec::new();
             if let Some(sink) = default_sink() {
                 let mut args = pulse(&["--no-video", "--really-quiet", "--ao=pulse"]);
+                args.push(headroom.clone());
                 args.push(format!("--audio-device=pulse/{sink}"));
                 args.push("-".to_string());
                 players.push(("mpv", args));
             }
-            players.push(("mpv", pulse(&["--no-video", "--really-quiet", "--ao=pulse", "-"])));
+            let mut plain = pulse(&["--no-video", "--really-quiet", "--ao=pulse"]);
+            plain.push(headroom);
+            plain.push("-".to_string());
+            players.push(("mpv", plain));
             players.push(("ffplay", pulse(&["-nodisp", "-autoexit", "-loglevel", "quiet", "-i", "pipe:0"])));
             for (name, args) in players {
                 let Some(bin) = crate::platform::find_on_path(name) else { continue };
@@ -402,6 +419,102 @@ pub async fn voice_say_native(text: String, lang: Option<String>) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// ElevenLabs' voice is generated at about -0.4 to -1.5 dBFS peak: any gain after it (sound-server effects, the audio
+/// relay, the phone) clips. 6 dB of headroom before it leaves the player.
+#[cfg(target_os = "linux")]
+const MPV_HEADROOM: &str = "lavfi=[volume=-6dB]";
+
+/// Says `text` through ElevenLabs' streaming endpoint, piping the MP3 into mpv as it arrives.
+/// False when nothing was said (no key, no voice id, no mpv, request refused): the caller then uses the buffered path.
+/// True once audio started, even if the stream broke later, so the answer is never said twice.
+#[cfg(target_os = "linux")]
+fn speak_streaming(text: &str, voice_id: &str, model: &str) -> bool {
+    use std::io::Write;
+    let Some(voice) = valid_voice_id(voice_id) else { return false };
+    let Some(key) = crate::secrets::get("elevenlabs-api-key") else { return false };
+    let Some(mpv) = crate::platform::find_on_path("mpv") else { return false };
+    let model = if model.trim().is_empty() { crate::flow::store::DEFAULT_VOICE_MODEL } else { model.trim() }.to_string();
+    let t0 = Instant::now();
+    // The player starts while the request is on its way: its start-up hides behind the first fragment.
+    let mut args: Vec<String> = ["--no-video", "--really-quiet", "--ao=pulse", "--cache=no", "--demuxer-readahead-secs=0"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    args.push(format!("--af={MPV_HEADROOM}"));
+    args.push("--audio-buffer=0.15".into());
+    args.push("--demuxer-lavf-probesize=8192".into());
+    args.push("--demuxer-lavf-analyzeduration=0.05".into());
+    if let Some(sink) = default_sink() {
+        args.push(format!("--audio-device=pulse/{sink}"));
+    }
+    args.push("-".into());
+    let Ok(mut child) = std::process::Command::new(mpv)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        return false;
+    };
+    let started = tauri::async_runtime::block_on(async {
+        let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().ok()?;
+        let mut response = match client
+            .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream?output_format=mp3_44100_128"))
+            .header("xi-api-key", &key)
+            .header("accept", "audio/mpeg")
+            .json(&json!({ "text": text, "model_id": model }))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                crate::log::line(format!("voice: ElevenLabs stream request failed: {e}"));
+                return None;
+            }
+        };
+        if !response.status().is_success() {
+            crate::log::line(format!("voice: ElevenLabs stream {} (model {model})", response.status()));
+            return None;
+        }
+        let first = response.chunk().await.ok().flatten()?;
+        crate::log::line(format!("voice: ElevenLabs first fragment, {} bytes in {} ms (model {model})", first.len(), t0.elapsed().as_millis()));
+        let mut total = first.len();
+        if stdin.write_all(&first).is_err() {
+            return None;
+        }
+        loop {
+            match response.chunk().await {
+                Ok(Some(c)) => {
+                    total += c.len();
+                    if stdin.write_all(&c).is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    crate::log::line(format!("voice: ElevenLabs stream broke: {e}"));
+                    break;
+                }
+            }
+        }
+        crate::log::line(format!("voice: ElevenLabs stream complete, {total} bytes in {} ms", t0.elapsed().as_millis()));
+        Some(())
+    });
+    drop(stdin);
+    if started.is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    }
+    let _ = child.wait();
+    true
 }
 
 /// ElevenLabs' MP3 for `text`, with the user's key; None and the system voice speaks.
