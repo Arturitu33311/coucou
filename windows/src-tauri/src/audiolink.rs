@@ -303,10 +303,10 @@ impl SilenceGate {
     }
 }
 
-/// Make-up gain for what goes to the phone. A desktop plays quietly into its own speakers (its amplifier and the volume
-/// keys make up for it); music on the phone is mastered close to full scale, so the same source arrives about 20 dB
-/// lower. A little gain, softly limited, closes most of that gap without distorting loud passages.
-pub const GAIN_DB: f32 = 6.0;
+/// Make-up gain for what goes to the phone, in dB. None (0 dB): the sound goes as it is. It was +6 dB, for a desktop that
+/// plays quietly into its own speakers, but sources that are already mastered loud (a voice from ElevenLabs peaks near
+/// full scale) came out saturated through the soft limiter. The machinery stays: raise this to boost a quiet source.
+pub const GAIN_DB: f32 = 0.0;
 
 /// The multiplier for a gain in decibels.
 pub fn gain_for_db(db: f32) -> f32 {
@@ -831,6 +831,16 @@ mod tests {
         let mut c = bytes(&[0, 1000, -1000, 5000, -5000, 10000]);
         apply_gain(&mut c, 2.0);
         assert_eq!(samples(&c), vec![0, 2000, -2000, 10000, -10000, 20000]);
+    }
+
+    #[test]
+    fn the_relay_does_not_change_the_level_by_default() {
+        // A loud chunk (peak near full scale, like a voice from ElevenLabs) must reach the phone exactly as it was.
+        assert_eq!(gain_for_db(GAIN_DB), 1.0);
+        let mut chunk: Vec<u8> = [31000i16, -31500, 32000, -32700, 12000].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let before = chunk.clone();
+        apply_gain(&mut chunk, gain_for_db(GAIN_DB));
+        assert_eq!(chunk, before);
     }
 
     #[test]

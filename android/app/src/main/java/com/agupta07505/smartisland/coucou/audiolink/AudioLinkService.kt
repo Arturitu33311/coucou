@@ -368,6 +368,8 @@ class AudioLinkService : Service(), PhoneSignals {
         private val gate = PlayerGate()
         private var holdsFocus = false
         private var lastFeedAt = 0L
+        /** Sound the speaker had no room for yet (see PendingPcm): kept, not dropped. */
+        private val pending = PendingPcm(RATE * BYTES_PER_FRAME / 1000)
 
         init {
             val minBytes = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT)
@@ -443,6 +445,29 @@ class AudioLinkService : Service(), PhoneSignals {
             started = false
             written = 0
             baseHead = head()
+            pending.clear()
+        }
+
+        private fun writeToTrack(chunk: ByteArray): Int {
+            val n = track.write(chunk, 0, chunk.size, AudioTrack.WRITE_NON_BLOCKING)
+            lastWrite = n
+            if (n > 0) written += n / BYTES_PER_FRAME
+            return n
+        }
+
+        /** In order: what waited goes first, then this chunk; whatever does not fit waits instead of being dropped. */
+        private fun writeOrQueue(pcm: ByteArray) {
+            nWriteErr += pending.drain(::writeToTrack)
+            if (!pending.isEmpty) {
+                pending.add(pcm)
+                return
+            }
+            val n = writeToTrack(pcm)
+            if (n < 0) {
+                nWriteErr++
+                return
+            }
+            if (n < pcm.size) pending.add(pcm.copyOfRange(n, pcm.size))
         }
 
         // What happened to the chunks since the last log line, so a silent relay can be told from a starved one.
@@ -452,6 +477,7 @@ class AudioLinkService : Service(), PhoneSignals {
         private var nPlay = 0
         private var nNoFocus = 0
         private var nWriteErr = 0
+        private var nTrim = 0
         private var lastWrite = 0
         private var lastLogAt = 0L
 
@@ -460,11 +486,11 @@ class AudioLinkService : Service(), PhoneSignals {
             lastLogAt = now
             Log.d(
                 TAG,
-                "fed=$nFed play=$nPlay wait=$nWait drop=$nDrop noFocus=$nNoFocus writeErr=$nWriteErr lastWrite=$lastWrite " +
+                "fed=$nFed play=$nPlay wait=$nWait drop=${nDrop + pending.dropped} trim=$nTrim pendingMs=${pending.ms} noFocus=$nNoFocus writeErr=$nWriteErr lastWrite=$lastWrite " +
                     "queuedMs=${queuedMs()} head=${head()} base=$baseHead written=$written started=$started focus=$holdsFocus " +
                     "trackState=${track.playState}",
             )
-            nFed = 0; nDrop = 0; nWait = 0; nPlay = 0; nNoFocus = 0; nWriteErr = 0
+            nFed = 0; nDrop = 0; nWait = 0; nPlay = 0; nNoFocus = 0; nWriteErr = 0; nTrim = 0
         }
 
         @Synchronized
@@ -502,13 +528,13 @@ class AudioLinkService : Service(), PhoneSignals {
                     }
                 }
             }
-            // Never block the reader thread: what does not fit in the buffer is dropped, which also keeps the delay bounded.
-            val n = track.write(pcm, 0, pcm.size, AudioTrack.WRITE_NON_BLOCKING)
-            lastWrite = n
-            if (n > 0) written += n / BYTES_PER_FRAME
-            if (n < pcm.size) {
-                if (n < 0) nWriteErr++ else nDrop++
+            // Backlog from a slow start: silence is skipped to catch up (no click in the speech); sound is never dropped.
+            if (!pending.isEmpty && pending.ms > CATCH_UP_MS && isSilentPcm(pcm)) {
+                nTrim++
+                return
             }
+            // Never block the reader thread: what does not fit in the buffer waits in order (see PendingPcm).
+            writeOrQueue(pcm)
         }
 
         @Synchronized
