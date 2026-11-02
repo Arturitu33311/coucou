@@ -240,7 +240,7 @@ class OpenAICompatLLM:
         key = self.key_fn()
         if not key:
             raise LiteError("sin llave del modelo rápido")
-        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.7, "max_tokens": 300}
+        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.4, "max_tokens": 300}
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers={
             "Content-Type": "application/json", "Authorization": "Bearer " + key})
         try:
