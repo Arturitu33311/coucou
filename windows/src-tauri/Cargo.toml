@@ -97,6 +97,8 @@ zbus = "5"
 # The GTK that Tauri already runs on, to reach its window for layer-shell and
 # the input region. libgtk-layer-shell itself is called directly (platform/linux.rs).
 gtk = "0.18"
+# WebKitGTK refuses to play sound nobody clicked for: the answers of « OK Coucou » need that setting off (flow/pill.rs).
+webkit2gtk = "2"
 # libdbus, which keyring's Secret Service already links, so nothing new is
 # downloaded: Wayland global shortcuts through the XDG GlobalShortcuts portal
 # (portal.rs), the Spotify pill over MPRIS (spotify.rs) and "Open terminal"

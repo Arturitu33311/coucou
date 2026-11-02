@@ -165,6 +165,10 @@ fn run(app: AppHandle, stop: Arc<AtomicBool>) {
             if heard.is_empty() {
                 continue;
             }
+            // Off unless asked for (COUCOU_VOICE_DEBUG=1): what was said near the microphone is never written down otherwise.
+            if std::env::var_os("COUCOU_VOICE_DEBUG").is_some() {
+                crate::log::line(format!("voice debug: heard {heard:?}"));
+            }
             let question = match &mut mode {
                 Mode::Wake => match wake::after_wake(&heard) {
                     Some(rest) => {
@@ -247,14 +251,80 @@ fn speak(app: &AppHandle, text: &str) {
         std::thread::sleep(Duration::from_millis(1500));
         return;
     }
-    let audio = if output == "elevenlabs" { elevenlabs(text, &gender, &voice_id, &voice_model).map(|mp3| base64(&mp3)) } else { None };
+    let mp3 = if output == "elevenlabs" { elevenlabs(text, &gender, &voice_id, &voice_model) } else { None };
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    if output == "elevenlabs" {
+        crate::log::line(match &mp3 {
+            Some(bytes) => format!("voice: ElevenLabs answer, {} bytes", bytes.len()),
+            None => "voice: ElevenLabs gave no audio, the system voice speaks".to_string(),
+        });
+    }
+    if let Some(bytes) = &mp3 {
+        *last_audio().lock().unwrap() = Some((id, bytes.clone()));
+    }
+    let audio = mp3.map(|bytes| base64(&bytes));
     let (tx, rx) = mpsc::channel();
     pending().lock().unwrap().insert(id, tx);
     let _ = app.emit_to(pill::LABEL, "voice-say", Say { id, text: text.into(), lang: wake::speech_lang(text), audio, gender });
     let words = crate::flow::text::word_count(text) as u64;
     let _ = rx.recv_timeout(Duration::from_millis(4000 + words * 600));
     pending().lock().unwrap().remove(&id);
+}
+
+/// The last ElevenLabs answer, kept so a native player can say it if the webview will not.
+fn last_audio() -> &'static Mutex<Option<(u64, Vec<u8>)>> {
+    static A: OnceLock<Mutex<Option<(u64, Vec<u8>)>>> = OnceLock::new();
+    A.get_or_init(|| Mutex::new(None))
+}
+
+/// Says answer `id` (its ElevenLabs MP3) with a player of this system, when the webview could not play it.
+/// False when there is none or it failed, and the system voice then takes over.
+#[tauri::command]
+pub async fn voice_play_mp3_native(id: u64) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(bytes) = last_audio().lock().unwrap().as_ref().filter(|(i, _)| *i == id).map(|(_, b)| b.clone()) else {
+            return false;
+        };
+        #[cfg(target_os = "linux")]
+        {
+            let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+            let path = dir.join(format!("coucou-voice-{id}.mp3"));
+            if std::fs::write(&path, &bytes).is_err() {
+                return false;
+            }
+            let players: [(&str, &[&str]); 3] = [
+                ("mpv", &["--no-video", "--really-quiet"]),
+                ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
+                ("gst-play-1.0", &["--quiet"]),
+            ];
+            let mut said = false;
+            for (name, args) in players {
+                let Some(bin) = crate::platform::find_on_path(name) else { continue };
+                let ok = std::process::Command::new(bin)
+                    .args(args)
+                    .arg(&path)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if ok {
+                    crate::log::line(format!("voice: the webview would not play the MP3, {name} did"));
+                    said = true;
+                    break;
+                }
+            }
+            let _ = std::fs::remove_file(&path);
+            said
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = bytes;
+            false
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// The pill says it has finished speaking (`id`), or the island answers a question.
@@ -315,14 +385,20 @@ fn elevenlabs(text: &str, gender: &str, voice_id: &str, model: &str) -> Option<V
             }
         };
         let model = if model.trim().is_empty() { crate::flow::store::DEFAULT_VOICE_MODEL } else { model.trim() };
-        let response = client
+        let response = match client
             .post(format!("https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"))
             .header("xi-api-key", &key)
             .header("accept", "audio/mpeg")
             .json(&json!({ "text": text, "model_id": model }))
             .send()
             .await
-            .ok()?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                crate::log::line(format!("voice: ElevenLabs request failed: {e}"));
+                return None;
+            }
+        };
         if !response.status().is_success() {
             crate::log::line(format!("voice: ElevenLabs {} (model {model})", response.status()));
             return None;

@@ -22,22 +22,55 @@ pub fn normalize(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// How Parakeet may write "OK".
+/// How Parakeet may write "OK" (and the "oye" / "hey" a person may say instead).
 fn is_ok(word: &str) -> bool {
-    matches!(word, "ok" | "okay" | "oke" | "okey" | "hey")
+    matches!(word, "ok" | "okay" | "oke" | "okey" | "okei" | "oquei" | "okai" | "okeh" | "oky" | "hey" | "ey" | "oye")
 }
 
-/// How Parakeet may write "coucou", in one word.
+/// What a word sounds like once the spellings that sound the same are one: "coucou", "cuckoo", "kuku", "cucú" and
+/// "cocou" all become "cucu"/"cocu". Parakeet writes what it hears, in whichever language it guesses.
+fn phon(word: &str) -> String {
+    let s = word.replace("ou", "u").replace("oo", "u").replace("qu", "c").replace('k', "c");
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if out.chars().last() != Some(ch) {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Edit distance, for short words.
+fn distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            cur.push((prev[j] + usize::from(ca != cb)).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// How Parakeet may write "coucou", in one word: the usual spellings, or anything that sounds like "cucu" give or take
+/// a letter. Only ever asked right after an "OK", so a loose match here costs little.
 fn is_coucou(word: &str) -> bool {
-    matches!(
-        word,
-        "coucou" | "coucous" | "cuckoo" | "cucu" | "kuku" | "koukou" | "cookoo" | "coocoo" | "cocou" | "kukuu" | "couscous"
-    )
+    if matches!(word, "coucou" | "coucous" | "cuckoo" | "cucu" | "kuku" | "koukou" | "cookoo" | "coocoo" | "cocou" | "kukuu" | "couscous") {
+        return true;
+    }
+    let p = phon(word);
+    (3..=5).contains(&p.chars().count()) && ["cucu", "cocu", "cuco", "coco"].iter().any(|t| distance(&p, t) <= 1)
 }
 
 /// …or in two.
 fn is_coucou_pair(a: &str, b: &str) -> bool {
-    matches!((a, b), ("cou", "cou") | ("coo", "coo") | ("ku", "ku") | ("cu", "cu") | ("koo", "koo") | ("cuck", "oo"))
+    if matches!((a, b), ("cuck", "oo")) {
+        return true;
+    }
+    let (pa, pb) = (phon(a), phon(b));
+    pa == pb && matches!(pa.as_str(), "cu" | "co" | "c")
 }
 
 /// When `text` holds the wake phrase, what was said after it (maybe nothing).
@@ -204,6 +237,26 @@ mod tests {
         assert_eq!(after_wake("on a dit coucou à Paul"), None);
         assert_eq!(after_wake("ok let's go"), None);
         assert_eq!(normalize("Ça VA, Élodie ?"), "ca va elodie");
+    }
+
+    #[test]
+    fn spanish_speakers_and_loose_spellings_are_heard() {
+        assert_eq!(after_wake("OK, cucú, enciende la luz").as_deref(), Some("enciende la luz"));
+        assert_eq!(after_wake("Okey cuco ¿qué hora es?").as_deref(), Some("¿qué hora es?"));
+        assert_eq!(after_wake("Oye cucu apaga la tele").as_deref(), Some("apaga la tele"));
+        assert_eq!(after_wake("ok cú cú sube el volumen").as_deref(), Some("sube el volumen"));
+        assert_eq!(after_wake("Okei coco").as_deref(), Some(""));
+        assert_eq!(after_wake("ok kou kou pon música").as_deref(), Some("pon música"));
+        assert_eq!(after_wake("okcucu").as_deref(), Some(""));
+        // Not the wake phrase: an "OK" followed by something that does not sound like it.
+        assert_eq!(after_wake("ok cuando llegamos"), None);
+        assert_eq!(after_wake("ok cucumber salad"), None);
+        assert_eq!(after_wake("ok cuña de madera"), None);
+        assert_eq!(after_wake("ok coche rojo"), None);
+        assert_eq!(after_wake("oye mira eso"), None);
+        assert_eq!(phon("coucou"), "cucu");
+        assert_eq!(phon("cuckoo"), "cucu");
+        assert_eq!(distance("cucu", "cuco"), 1);
     }
 
     #[test]

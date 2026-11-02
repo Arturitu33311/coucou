@@ -1606,6 +1606,7 @@ pub fn run() {
             notes::notes_export,
             voice::voice_done,
             voice::voice_say_native,
+            voice::voice_play_mp3_native,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

@@ -224,6 +224,8 @@ export const FlowBridge = {
   voiceDone: (id: number) => call<void>("voice_done", { id, text: null }),
   /** speech-dispatcher or espeak-ng, where the webview has no voice. */
   sayNative: (text: string, lang: string | null) => call<boolean>("voice_say_native", { text, lang }),
+  /** The answer's ElevenLabs MP3 through a player of the system, when the webview would not play it. */
+  playMp3Native: (id: number) => call<boolean>("voice_play_mp3_native", { id }),
 };
 
 /** One colour per person in a call: you first, then the others. */
