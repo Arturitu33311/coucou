@@ -24,7 +24,11 @@ pub fn normalize(text: &str) -> String {
 
 /// How Parakeet may write "OK" (and the "oye" / "hey" a person may say instead).
 fn is_ok(word: &str) -> bool {
-    matches!(word, "ok" | "okay" | "oke" | "okey" | "okei" | "oquei" | "okai" | "okeh" | "oky" | "hey" | "ey" | "oye")
+    matches!(
+        word,
+        "ok" | "okay" | "oke" | "okey" | "okei" | "oquei" | "okai" | "okeh" | "oky" | "okk" | "okok" | "hey" | "hei" | "ey" | "ei" | "eh"
+            | "oye" | "oie" | "hola" | "ola" | "hi" | "hello" | "hallo" | "yo"
+    )
 }
 
 /// What a word sounds like once the spellings that sound the same are one: "coucou", "cuckoo", "kuku", "cucú" and
@@ -74,7 +78,7 @@ fn is_jinx(word: &str) -> bool {
     }
     let mut p = String::from("j");
     p.push_str(&w[first.len_utf8()..]);
-    let p = p.replace('x', "ks").replace("cs", "ks").replace("ck", "k").replace('y', "i");
+    let p = p.replace('x', "ks").replace("cs", "ks").replace("ck", "k").replace('c', "k").replace('z', "s").replace('y', "i");
     let mut dedup = String::with_capacity(p.len());
     for ch in p.chars() {
         if dedup.chars().last() != Some(ch) {
@@ -86,7 +90,26 @@ fn is_jinx(word: &str) -> bool {
 
 /// After an "OK" the name may also come as the English word it sounds like: "ok jeans" is « OK Jinx ».
 fn is_jinx_after_ok(word: &str) -> bool {
-    is_jinx(word) || matches!(word, "jeans" | "yins" | "gins" | "jins" | "yines")
+    is_jinx(word)
+        || matches!(
+            word,
+            "jeans" | "jean" | "jeanx" | "jeanks" | "yins" | "yines" | "gins" | "gin" | "jins" | "jin" | "yin" | "jinn" | "jinns"
+                | "ginz" | "jinz" | "jenx" | "jenks" | "jincs" | "chinx" | "hinx" | "jhinx" | "jyinx" | "jinnx" | "yinx"
+        )
+}
+
+/// How many words, from `at`, make her name (0 when they do not): usually one, sometimes the name comes split in two
+/// ("jin x", "gin ks"). `after_ok` allows the looser spellings that are safe once an "OK" came first.
+fn jinx_at(norm: &[String], at: usize, after_ok: bool) -> usize {
+    let one = |w: &str| if after_ok { is_jinx_after_ok(w) } else { is_jinx(w) };
+    let Some(w) = norm.get(at) else { return 0 };
+    // The two words together first: "jin" + "x" is « Jinx », and taking "jin" alone would leave the "x" in the order.
+    if let Some(next) = norm.get(at + 1) {
+        if w.chars().count() <= 4 && next.chars().count() <= 3 && one(&format!("{w}{next}")) {
+            return 2;
+        }
+    }
+    usize::from(one(w))
 }
 
 /// The text after what was said, with the punctuation of the call removed.
@@ -119,8 +142,9 @@ pub fn after_wake(text: &str) -> Option<String> {
         }
         if let Some(j) = ok_end {
             // « OK Jinx », « Hey Jinx », « Oye Jinx ».
-            if norm.get(j).is_some_and(|w| is_jinx_after_ok(w)) {
-                return Some(rest_of(&words, j + 1));
+            let n = jinx_at(&norm, j, true);
+            if n > 0 {
+                return Some(rest_of(&words, j + n));
             }
             // A word made of two ("ok coucou" written as one token is rare but happens).
             if let Some(w) = norm.get(j) {
@@ -137,8 +161,11 @@ pub fn after_wake(text: &str) -> Option<String> {
         }
         // « Jinx, ... » on its own, only as the first word of what was said (so that her name in the middle of a
         // sentence does not wake her).
-        if i == 0 && is_jinx(&norm[0]) {
-            return Some(rest_of(&words, 1));
+        if i == 0 {
+            let n = jinx_at(&norm, 0, false);
+            if n > 0 {
+                return Some(rest_of(&words, n));
+            }
         }
         // "okjinx" in one piece.
         if let Some(rest) = norm[i].strip_prefix("okay").or_else(|| norm[i].strip_prefix("ok")) {
@@ -322,10 +349,40 @@ mod tests {
     }
 
     #[test]
+    fn many_ways_of_writing_her_name_and_calling_her_are_heard() {
+        // Every spelling after an "OK" / "Hey" / a greeting.
+        for name in ["Jinx", "Jinks", "Jink", "Jinc", "Jincs", "Jings", "Jynx", "Ginx", "Ginks", "Yinx", "Yinks", "Hinks", "Hinx",
+                     "Jenks", "Jenx", "Jeans", "Jean", "Gins", "Gin", "Jins", "Yins", "Jinz", "Jinx's"] {
+            for call in ["OK", "Okay", "Okey", "Okei", "Hey", "Oye", "Ey", "Hola", "Hi", "Hello"] {
+                let said = format!("{call} {name}, apaga la tele");
+                assert_eq!(after_wake(&said).as_deref(), Some("apaga la tele"), "{said}");
+            }
+        }
+        // On its own, as the first word (no "jeans" or "gin" here: they are words people say).
+        for name in ["Jinx", "Jinks", "Jink", "Jings", "Jynx", "Ginx", "Yinks", "Hinks", "Jenks"] {
+            let said = format!("{name}, enciende la luz");
+            assert_eq!(after_wake(&said).as_deref(), Some("enciende la luz"), "{said}");
+        }
+        // The name split in two words.
+        assert_eq!(after_wake("ok jin x apaga la tele").as_deref(), Some("apaga la tele"));
+        assert_eq!(after_wake("hey gin ks sube el volumen").as_deref(), Some("sube el volumen"));
+        assert_eq!(after_wake("Jin x, dime la hora").as_deref(), Some("dime la hora"));
+        // With the punctuation and case a recognizer adds.
+        assert_eq!(after_wake("Ok, Jinx! ¿Qué tal?").as_deref(), Some("¿Qué tal?"));
+        assert_eq!(after_wake("HEY JINX").as_deref(), Some(""));
+    }
+
+    #[test]
     fn her_name_in_the_middle_of_a_sentence_or_similar_words_do_not_wake_her() {
         assert_eq!(after_wake("ayer le dije a Jinx que lo hiciera"), None);
         assert_eq!(after_wake("me gustan los jeans azules"), None); // "jeans" counts only after an OK
         assert_eq!(after_wake("ok jinete de la noche"), None);
+        assert_eq!(after_wake("hola buenos días a todos"), None);
+        assert_eq!(after_wake("hi everyone, ginger is here"), None);
+        assert_eq!(after_wake("hello hinge"), None);
+        assert_eq!(after_wake("oye gimnasio abierto"), None);
+        assert_eq!(after_wake("gin tonic por favor"), None); // "gin" alone is a drink; it counts only after an OK
+        assert_eq!(after_wake("jeans y camisa"), None);
         assert_eq!(after_wake("ok gente vamos"), None);
         assert_eq!(after_wake("hinge es una app"), None);
         assert_eq!(after_wake("ok let's go"), None);
