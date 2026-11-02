@@ -1446,6 +1446,7 @@ pub fn run() {
             music::music_state,
             music::music_control,
             audiolink::audiolink_swap,
+            audiolink::audiolink_own_sound,
             music::music_art,
             music::music_lyrics,
             bars::music_bars,

@@ -331,6 +331,42 @@ pub fn apply_gain(chunk: &mut [u8], gain: f32) {
     }
 }
 
+// ── Coucou's own sounds do not count as "this computer is playing" ───────────────────────────────────
+//
+// The relay tells "the computer is playing" from the sound itself and then asks the phone to pause its music. It cannot
+// tell whose sound it is, so Coucou's own (an agent that finished, a notification, « OK Coucou »'s spoken answer) paused
+// the phone's music. Coucou says when it makes a sound and for how long; that stretch does not count for this decision
+// (the sound still goes to the phone like any other).
+
+/// Longest own sound that is believed, and the tail left after it (room for the output's own delay).
+const OWN_SOUND_MAX_MS: u64 = 20_000;
+const OWN_SOUND_TAIL_MS: u64 = 400;
+
+static OWN_SOUND_UNTIL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// When the current own-sound stretch ends if one of `ms` starts at `now`: never earlier than what was already declared.
+fn own_sound_end(current: Option<std::time::Instant>, now: std::time::Instant, ms: u64) -> std::time::Instant {
+    let until = now + std::time::Duration::from_millis(ms.min(OWN_SOUND_MAX_MS) + OWN_SOUND_TAIL_MS);
+    current.map_or(until, |c| c.max(until))
+}
+
+/// Coucou is about to make a sound of `ms` milliseconds.
+pub fn own_sound(ms: u64) {
+    let mut g = OWN_SOUND_UNTIL.lock().unwrap();
+    *g = Some(own_sound_end(*g, std::time::Instant::now(), ms));
+}
+
+/// Whether the sound heard now is Coucou's own.
+fn own_sound_now() -> bool {
+    OWN_SOUND_UNTIL.lock().unwrap().is_some_and(|t| std::time::Instant::now() < t)
+}
+
+/// The island's sounds (an agent finished, a notification…) say here how long they last.
+#[tauri::command]
+pub fn audiolink_own_sound(ms: u64) {
+    own_sound(ms);
+}
+
 /// Sound that goes on this long counts as "this computer is playing" (a ping or a click is shorter).
 pub const PLAYING_AFTER_MS: u64 = 3_000;
 /// With a media player reporting "playing" as well, a sound counts as playing after only this long.
@@ -593,7 +629,8 @@ fn start_capture() {
         // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
         while let Ok(true) = capture.read_chunk(&mut chunk) {
             // Whether this computer is playing is told by the sound itself, not by a player's status (see SoundWatch).
-            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk), crate::audiolink_players::non_mirror_playing) {
+            // Coucou's own sounds are not "the computer playing": they must not pause the phone's music.
+            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk) && !own_sound_now(), crate::audiolink_players::non_mirror_playing) {
                 send_event(Event::PcMedia(playing));
             }
             if gate.pass(&chunk) {
@@ -841,6 +878,18 @@ mod tests {
         let before = chunk.clone();
         apply_gain(&mut chunk, gain_for_db(GAIN_DB));
         assert_eq!(chunk, before);
+    }
+
+    #[test]
+    fn an_own_sound_masks_its_length_plus_a_tail_and_never_shortens_a_longer_one() {
+        let t0 = std::time::Instant::now();
+        let a = own_sound_end(None, t0, 1_000);
+        assert_eq!(a, t0 + std::time::Duration::from_millis(1_000 + OWN_SOUND_TAIL_MS));
+        // A shorter one declared meanwhile does not cut the stretch short; a longer one extends it.
+        assert_eq!(own_sound_end(Some(a), t0, 200), a);
+        assert!(own_sound_end(Some(a), t0, 5_000) > a);
+        // An absurd length is not believed past the maximum.
+        assert_eq!(own_sound_end(None, t0, u64::MAX / 2), t0 + std::time::Duration::from_millis(OWN_SOUND_MAX_MS + OWN_SOUND_TAIL_MS));
     }
 
     #[test]

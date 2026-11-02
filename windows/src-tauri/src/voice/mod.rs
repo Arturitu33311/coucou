@@ -262,6 +262,11 @@ fn speak(app: &AppHandle, text: &str) {
     if let Some(bytes) = &mp3 {
         *last_audio().lock().unwrap() = Some((id, bytes.clone()));
     }
+    // The answer is Coucou's own sound: the audio relay must not take it for the computer's music (and pause the phone's).
+    crate::audiolink::own_sound(match &mp3 {
+        Some(bytes) => bytes.len() as u64 / 16, // 128 kbps: 16 bytes per millisecond
+        None => 1_000 + crate::flow::text::word_count(text) as u64 * 450,
+    });
     let audio = mp3.map(|bytes| base64(&bytes));
     let (tx, rx) = mpsc::channel();
     pending().lock().unwrap().insert(id, tx);

@@ -64,6 +64,36 @@ fn is_coucou(word: &str) -> bool {
     (3..=5).contains(&p.chars().count()) && ["cucu", "cocu", "cuco", "coco"].iter().any(|t| distance(&p, t) <= 1)
 }
 
+/// How the name "Jinx" comes out of a speech recognizer, for an English or a Spanish speaker: Jinx, Jinks, Yinks, Jings,
+/// Gins, Hinks, Jenks… The first letter may be j, g, y or h; "x", "cs" and "ck" are all "ks"; one letter of slack.
+fn is_jinx(word: &str) -> bool {
+    let w: String = word.chars().filter(|c| c.is_alphabetic()).flat_map(char::to_lowercase).collect();
+    let Some(first) = w.chars().next() else { return false };
+    if !"jgyh".contains(first) {
+        return false;
+    }
+    let mut p = String::from("j");
+    p.push_str(&w[first.len_utf8()..]);
+    let p = p.replace('x', "ks").replace("cs", "ks").replace("ck", "k").replace('y', "i");
+    let mut dedup = String::with_capacity(p.len());
+    for ch in p.chars() {
+        if dedup.chars().last() != Some(ch) {
+            dedup.push(ch);
+        }
+    }
+    (3..=6).contains(&dedup.chars().count()) && distance(&dedup, "jinks") <= 1
+}
+
+/// After an "OK" the name may also come as the English word it sounds like: "ok jeans" is « OK Jinx ».
+fn is_jinx_after_ok(word: &str) -> bool {
+    is_jinx(word) || matches!(word, "jeans" | "yins" | "gins" | "jins" | "yines")
+}
+
+/// The text after what was said, with the punctuation of the call removed.
+fn rest_of(words: &[&str], from: usize) -> String {
+    words.get(from..).unwrap_or(&[]).join(" ").trim_start_matches([',', '.', '!', ':', ' ']).trim().to_string()
+}
+
 /// …or in two.
 fn is_coucou_pair(a: &str, b: &str) -> bool {
     if matches!((a, b), ("cuck", "oo")) {
@@ -88,6 +118,10 @@ pub fn after_wake(text: &str) -> Option<String> {
             ok_end = Some(if norm[i] == "o" { i + 2 } else { i + 1 });
         }
         if let Some(j) = ok_end {
+            // « OK Jinx », « Hey Jinx », « Oye Jinx ».
+            if norm.get(j).is_some_and(|w| is_jinx_after_ok(w)) {
+                return Some(rest_of(&words, j + 1));
+            }
             // A word made of two ("ok coucou" written as one token is rare but happens).
             if let Some(w) = norm.get(j) {
                 let parts: Vec<&str> = w.split(' ').collect();
@@ -99,6 +133,17 @@ pub fn after_wake(text: &str) -> Option<String> {
                         return Some(words[j + 2..].join(" ").trim_start_matches([',', '.', '!', ' ']).trim().to_string());
                     }
                 }
+            }
+        }
+        // « Jinx, ... » on its own, only as the first word of what was said (so that her name in the middle of a
+        // sentence does not wake her).
+        if i == 0 && is_jinx(&norm[0]) {
+            return Some(rest_of(&words, 1));
+        }
+        // "okjinx" in one piece.
+        if let Some(rest) = norm[i].strip_prefix("okay").or_else(|| norm[i].strip_prefix("ok")) {
+            if is_jinx_after_ok(rest.trim()) {
+                return Some(rest_of(&words, i + 1));
             }
         }
         // "okcoucou" in one piece.
@@ -257,6 +302,34 @@ mod tests {
         assert_eq!(phon("coucou"), "cucu");
         assert_eq!(phon("cuckoo"), "cucu");
         assert_eq!(distance("cucu", "cuco"), 1);
+    }
+
+    #[test]
+    fn her_name_wakes_her_in_the_ways_a_recognizer_writes_it() {
+        assert_eq!(after_wake("OK Jinx, apaga la tele").as_deref(), Some("apaga la tele"));
+        assert_eq!(after_wake("Hey Jinx.").as_deref(), Some(""));
+        assert_eq!(after_wake("Oye Jinx, ¿qué hora es?").as_deref(), Some("¿qué hora es?"));
+        assert_eq!(after_wake("Okay Jinks sube el volumen").as_deref(), Some("sube el volumen"));
+        assert_eq!(after_wake("ok yinks pon música").as_deref(), Some("pon música"));
+        assert_eq!(after_wake("Okey Jeans apaga la luz").as_deref(), Some("apaga la luz"));
+        assert_eq!(after_wake("okjinx").as_deref(), Some(""));
+        // On its own, as the first word.
+        assert_eq!(after_wake("Jinx, apaga la tele").as_deref(), Some("apaga la tele"));
+        assert_eq!(after_wake("Jinx.").as_deref(), Some(""));
+        assert_eq!(after_wake("Jings enciende la tele").as_deref(), Some("enciende la tele"));
+        // OK Coucou still works.
+        assert_eq!(after_wake("OK Coucou, play some music.").as_deref(), Some("play some music."));
+    }
+
+    #[test]
+    fn her_name_in_the_middle_of_a_sentence_or_similar_words_do_not_wake_her() {
+        assert_eq!(after_wake("ayer le dije a Jinx que lo hiciera"), None);
+        assert_eq!(after_wake("me gustan los jeans azules"), None); // "jeans" counts only after an OK
+        assert_eq!(after_wake("ok jinete de la noche"), None);
+        assert_eq!(after_wake("ok gente vamos"), None);
+        assert_eq!(after_wake("hinge es una app"), None);
+        assert_eq!(after_wake("ok let's go"), None);
+        assert!(is_jinx("Jinx") && is_jinx("jinks") && is_jinx("yinks") && is_jinx("Gins") && !is_jinx("jinete"));
     }
 
     #[test]

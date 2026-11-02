@@ -179,6 +179,7 @@ class SoundEngine {
       voices.delete(voice);
       gain.disconnect();
     };
+    Bridge.audiolinkOwnSound(Math.round(buf.duration * 1000));
     src.start();
   }
 
