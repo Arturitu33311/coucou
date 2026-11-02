@@ -202,6 +202,27 @@ class AudioLinkService : Service(), PhoneSignals {
 
     // ── The link ───────────────────────────────────────────────────────────────
 
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    /**
+     * Keeps the phone's Wi-Fi awake while the link is up. Left to itself the radio dozes between sounds and then hands
+     * the packets over in bursts, which the speaker's small queue answers by dropping sound (cuts, speech that skips ahead).
+     */
+    private fun holdWifi() {
+        releaseWifi()
+        runCatching {
+            val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else @Suppress("DEPRECATION") android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            wifiLock = wifi.createWifiLock(mode, "coucou:audiolink").apply { setReferenceCounted(false); acquire() }
+        }.onFailure { Log.d(TAG, "could not hold the Wi-Fi awake: $it") }
+    }
+
+    private fun releaseWifi() {
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wifiLock = null
+    }
+
     /** The link is worth holding while the headphones are on this phone or an app has media (the laptop shows it). */
     private fun wanted() = headphones.value == Where.Phone || mediaSession.value
 
@@ -225,7 +246,12 @@ class AudioLinkService : Service(), PhoneSignals {
                 Ssh.open(this, profile, keyName = AudioLinkSetup.KEY).use { conn ->
                     conn.stream("coucou-audio").use { stream ->
                         wait = 2_000L
-                        session(stream)
+                        holdWifi()
+                        try {
+                            session(stream)
+                        } finally {
+                            releaseWifi()
+                        }
                     }
                 }
             } catch (_: Exception) {

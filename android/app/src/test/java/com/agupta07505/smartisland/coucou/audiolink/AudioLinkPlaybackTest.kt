@@ -10,12 +10,19 @@ import org.junit.Test
 class AudioLinkPlaybackTest {
     @Test
     fun playback_plan_thresholds() {
-        assertEquals(PlaybackAction.Wait, playbackPlan(59, started = false))
-        assertEquals(PlaybackAction.Play, playbackPlan(60, started = false))
+        assertEquals(PlaybackAction.Wait, playbackPlan(PREBUFFER_MS - 1, started = false))
+        assertEquals(PlaybackAction.Play, playbackPlan(PREBUFFER_MS, started = false))
         assertEquals(PlaybackAction.Play, playbackPlan(5, started = true))
-        assertEquals(PlaybackAction.Play, playbackPlan(200, started = true))
-        assertEquals(PlaybackAction.Drop, playbackPlan(201, started = true))
-        assertEquals(PlaybackAction.Drop, playbackPlan(201, started = false))
+        assertEquals(PlaybackAction.Play, playbackPlan(MAX_QUEUE_MS, started = true))
+        assertEquals(PlaybackAction.Drop, playbackPlan(MAX_QUEUE_MS + 1, started = true))
+        assertEquals(PlaybackAction.Drop, playbackPlan(MAX_QUEUE_MS + 1, started = false))
+    }
+
+    @Test
+    fun a_burst_of_a_few_hundred_ms_is_played_not_dropped() {
+        // A dozing Wi-Fi hands over 300 ms at once: with the old 200 ms limit that was dropped (cuts and skips).
+        assertEquals(PlaybackAction.Play, playbackPlan(300, started = true))
+        assertEquals(PlaybackAction.Play, playbackPlan(trackBufferMs(5), started = true))
     }
 
     /**
@@ -38,7 +45,7 @@ class AudioLinkPlaybackTest {
     @Test
     fun the_track_buffer_is_short_unless_the_system_needs_more() {
         assertEquals(BUFFER_MS, trackBufferMs(20))
-        assertEquals(180, trackBufferMs(180))
+        assertEquals(240, trackBufferMs(240))
     }
 
     @Test
