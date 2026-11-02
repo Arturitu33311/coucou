@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""coucou-setup — one command to see and set up the whole Coucou/Jinx network from the laptop.
+
+  coucou-setup doctor [--json] [--no-server]   read-only health report, per device, with what each one
+                                               can still do ON ITS OWN if the others are gone
+  coucou-setup install [--apply] [--server]    dry run by default: shows which deployed files differ from this
+                                               repo and what would be installed; --apply does it (backups kept)
+  coucou-setup phone --serial ip:port [--build] [--fix-a11y]
+                                               installs the phone app marking the store as installer (bank apps
+                                               such as Nu refuse to run beside the island otherwise) and verifies it
+
+Design rule: every device must work with the network but never need it. The report therefore marks, for each
+device, whether its stand-alone path is healthy (local brain, own relay, own keys), separately from the links.
+Secrets are never read or listed by this tool.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+ASSIST = REPO / "jinx" / "jinx-assist"
+HOME = Path.home()
+BIN = HOME / "bin"
+PHONES_CONF = Path(os.environ.get("JINX_PHONES_CONF", HOME / ".config/jinx/phones.conf"))
+USER_UNITS = ["jinx-desktop", "jinx-presence-agent", "jinx-telegram", "mochi-pc-agent", "ollama-user"]
+TIMERS = ["jinx-health-guard.timer", "jinx-chat-sync.timer", "jinx-sync-celular.timer", "jinx-emergencia-watch.timer"]
+OK, WARN, BAD, INFO = "ok", "warn", "bad", "info"
+
+
+def run(*cmd: str, timeout: int = 10) -> tuple[int, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout or "").strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return 124, ""
+
+
+def tcp(host: str, port: int, timeout: float = 3) -> bool:
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+class Report:
+    def __init__(self) -> None:
+        self.sections: list[dict] = []
+
+    def section(self, title: str) -> dict:
+        s = {"title": title, "items": []}
+        self.sections.append(s)
+        return s
+
+    @staticmethod
+    def add(sec: dict, status: str, what: str, hint: str = "", alone: bool | None = None) -> None:
+        sec["items"].append({"status": status, "what": what, "hint": hint, "standalone": alone})
+
+    def worst(self) -> str:
+        order = {OK: 0, INFO: 0, WARN: 1, BAD: 2}
+        return max((i["status"] for s in self.sections for i in s["items"]), key=lambda x: order[x], default=OK)
+
+
+# ---------- pure helpers (unit-tested) ----------
+
+def parse_phones(text: str) -> list[dict]:
+    """phones.conf rows: name JINX_DEVICE ip sshd-port user (# comments)."""
+    out = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        parts = line.split()
+        if len(parts) >= 5 and parts[3].isdigit():
+            out.append({"name": parts[0], "device": parts[1], "ip": parts[2], "port": int(parts[3]), "user": parts[4]})
+    return out
+
+
+def stale_phone_suggestions(phones: list[dict], peers: list[dict]) -> list[str]:
+    """For every configured phone whose IP is offline in Tailscale, name an ONLINE Android peer that is not
+    configured under any phone — the usual cause is a re-registered device with a new tailnet IP."""
+    configured = {p["ip"] for p in phones}
+    online_free = [q for q in peers if q.get("os") == "android" and q.get("online") and q["ip"] not in configured]
+    by_ip = {q["ip"]: q for q in peers}
+    msgs = []
+    for p in phones:
+        peer = by_ip.get(p["ip"])
+        if peer is not None and peer.get("online"):
+            continue
+        named = [q for q in online_free if p["name"].lower() in q["name"].lower()]
+        if named:
+            names = ", ".join(f'{q["name"]} ({q["ip"]})' for q in named)
+            msgs.append(f'{p["name"]}: {p["ip"]} offline; probable reemplazo (mismo nombre, conectado): {names}')
+        else:
+            msgs.append(f'{p["name"]}: {p["ip"]} offline y sin reemplazo evidente en la red')
+    return msgs
+
+
+def drift(files: list[str], repo_dir: Path, bin_dir: Path) -> list[tuple[str, str]]:
+    """(file, 'missing'|'differs') for deployed copies that do not match the repo."""
+    out = []
+    for f in files:
+        dep, src = bin_dir / f, repo_dir / f
+        if not dep.exists():
+            out.append((f, "missing"))
+        elif dep.read_bytes() != src.read_bytes():
+            out.append((f, "differs"))
+    return out
+
+
+def store_installed(pm_output: str) -> bool:
+    """`pm list packages -i` line: the phone app counts as store-installed only with the Play Store as installer."""
+    return "installer=com.android.vending" in pm_output
+
+
+def relay_active(default_sink: str, capture_running: bool) -> bool:
+    """Headphones are being fed through the audio relay when the PC's output is the relay's virtual sink and
+    its capture is running (relay mode). A virtual sink without capture is 'hold': headphones gone or a call."""
+    return default_sink == "coucou_audiolink" and capture_running
+
+
+# ---------- checks ----------
+
+def tailscale_peers() -> list[dict]:
+    rc, out = run("tailscale", "status", "--json", timeout=8)
+    if rc != 0 or not out:
+        return []
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return []
+    peers = []
+    for p in (data.get("Peer") or {}).values():
+        ips = p.get("TailscaleIPs") or []
+        peers.append({"name": p.get("HostName", "?"), "ip": ips[0] if ips else "", "os": (p.get("OS") or "").lower(),
+                      "online": bool(p.get("Online"))})
+    return peers
+
+
+def check_laptop(rep: Report) -> None:
+    s = rep.section("Laptop")
+    for u in USER_UNITS:
+        _, st = run("systemctl", "--user", "is-active", u)
+        _, nr = run("systemctl", "--user", "show", u, "-p", "NRestarts", "--value")
+        loop = nr.isdigit() and int(nr) >= 5
+        status = OK if st == "active" and not loop else (WARN if st == "active" else BAD)
+        Report.add(s, status, f"{u}: {st}" + (f" ({nr} reinicios)" if loop else ""),
+                   "reinicios altos: revisa journalctl --user -u " + u if loop else ("systemctl --user restart " + u if st != "active" else ""))
+    for t in TIMERS:
+        _, st = run("systemctl", "--user", "is-active", t)
+        Report.add(s, OK if st == "active" else WARN, f"{t}: {st}", "" if st == "active" else "instala con: coucou-setup install --apply")
+    rc, out = run("curl", "-s", "-m", "3", "http://127.0.0.1:11435/api/tags")
+    brain = rc == 0 and "gemma4" in out
+    Report.add(s, OK if brain else WARN, "cerebro local (gemma4:e2b en :11435): " + ("listo" if brain else "no responde"),
+               "" if brain else "systemctl --user start ollama-user", alone=brain)
+    rc, sink = run("pactl", "get-default-sink")
+    cap = run("pgrep", "-f", "parec --device=coucou_audiolink")[0] == 0
+    on = relay_active(sink, cap)
+    Report.add(s, INFO, "audífonos por el relay de audio: " + ("SÍ (los avisos con voz sonarían ahí)" if on else "no"))
+    files = run(str(ASSIST / "manifest.sh"))[1].split()
+    d = drift(files, ASSIST, BIN)
+    if d:
+        Report.add(s, WARN, "desplegado en ~/bin ≠ repo: " + ", ".join(f"{f} ({w})" for f, w in d),
+                   "revisa y aplica: coucou-setup install --apply")
+    else:
+        Report.add(s, OK, "~/bin coincide con el repo")
+
+
+def check_server(rep: Report) -> None:
+    s = rep.section("Servidor (Hermes)")
+    rc, out = run("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "server",
+                  "echo OK; systemctl is-active hermes-gateway; systemctl --failed --no-legend --plain | awk '{print $1}'; "
+                  "cd ~/.hermes && git status --short scripts | wc -l", timeout=20)
+    lines = out.splitlines()
+    if not lines or lines[0] != "OK":
+        Report.add(s, BAD, "no se llega al servidor por ssh", "tailscale status; ¿está encendido?")
+        return
+    gw = lines[1] if len(lines) > 1 else "?"
+    dirty = lines[-1] if lines[-1].isdigit() else "?"
+    failed = [l for l in lines[2:-1] if l]
+    Report.add(s, OK if gw == "active" else BAD, f"hermes-gateway: {gw}")
+    Report.add(s, OK if not failed else WARN, "unidades caídas: " + (", ".join(failed) or "ninguna"),
+               "requieren sudo en el servidor" if failed else "")
+    Report.add(s, OK if dirty == "0" else WARN, f"scripts sin commitear en ~/.hermes: {dirty}",
+               "" if dirty == "0" else "git -C ~/.hermes add -u scripts && git commit")
+
+
+def check_network(rep: Report) -> None:
+    s = rep.section("Red y teléfonos")
+    peers = tailscale_peers()
+    if not peers:
+        Report.add(s, BAD, "tailscale no responde", "tailscale up")
+        return
+    phones = parse_phones(PHONES_CONF.read_text()) if PHONES_CONF.exists() else []
+    by_ip = {p["ip"]: p for p in peers}
+    for ph in phones:
+        peer = by_ip.get(ph["ip"])
+        up = bool(peer and peer["online"])
+        ssh_ok = up and tcp(ph["ip"], ph["port"])
+        Report.add(s, OK if ssh_ok else (WARN if up else BAD),
+                   f'{ph["name"]} ({ph["ip"]}): tailscale {"online" if up else "offline"}, sshd {"sí" if ssh_ok else "no"}',
+                   "Termux: sshd (puerto %d)" % ph["port"] if up and not ssh_ok else "")
+    for msg in stale_phone_suggestions(phones, peers):
+        Report.add(s, WARN, "phones.conf desactualizado — " + msg, "actualiza ~/.config/jinx/phones.conf con la IP vigente")
+    rc, out = run("adb", "devices")
+    adb = [l.split()[0] for l in out.splitlines()[1:] if "\tdevice" in l]
+    Report.add(s, INFO, "adb: " + (", ".join(adb) if adb else "ningún teléfono conectado (para instalar APK pide ip:puerto)"))
+    for serial in adb:
+        _, inst = run("adb", "-s", serial, "shell", "pm", "list", "packages", "--user", "0", "-i", "com.agupta07505.smartisland")
+        if not inst:
+            Report.add(s, WARN, f"{serial}: Coucou no está instalado", "coucou-setup phone --serial " + serial)
+        elif not store_installed(inst):
+            Report.add(s, BAD, f"{serial}: instalado SIN tienda (las apps de banco se negarán)",
+                       "reinstala con: coucou-setup phone --serial " + serial)
+        else:
+            Report.add(s, OK, f"{serial}: instalado con tienda (apps de banco OK)")
+
+
+def doctor(args: list[str]) -> int:
+    rep = Report()
+    check_laptop(rep)
+    if "--no-server" not in args:
+        check_server(rep)
+    check_network(rep)
+    if "--json" in args:
+        print(json.dumps(rep.sections, ensure_ascii=False, indent=1))
+    else:
+        icon = {OK: "✔", WARN: "▲", BAD: "✘", INFO: "·"}
+        for sec in rep.sections:
+            print(f"\n== {sec['title']}")
+            for i in sec["items"]:
+                alone = {True: "  [funciona solo]", False: "", None: ""}[i["standalone"]]
+                print(f" {icon[i['status']]} {i['what']}{alone}")
+                if i["hint"]:
+                    print(f"     → {i['hint']}")
+        print()
+    return {OK: 0, INFO: 0, WARN: 1, BAD: 2}[rep.worst()]
+
+
+def install(args: list[str]) -> int:
+    apply = "--apply" in args
+    files = run(str(ASSIST / "manifest.sh"))[1].split()
+    d = drift(files, ASSIST, BIN)
+    print("Archivos de ~/bin que cambiarían:" if d else "~/bin ya coincide con el repo.")
+    for f, why in d:
+        print(f"  {f}: {why}")
+        if why == "differs":
+            rc, diff = run("diff", "-u", str(BIN / f), str(ASSIST / f), timeout=10)
+            added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
+            removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
+            print(f"      +{added} −{removed} líneas (el repo es la fuente de verdad; se guarda copia .bak-<fecha>)")
+    print("También: unidades y timer del guardián de salud" + (" y puente del servidor (--server)" if "--server" in args else ""))
+    if not apply:
+        print("\nSimulación. Para aplicar: coucou-setup install --apply [--server]")
+        return 0
+    rc = subprocess.call([str(ASSIST / "install.sh")])
+    if rc == 0 and "--server" in args:
+        rc = subprocess.call([str(ASSIST / "deploy-server.sh")])
+    print()
+    doctor(["--no-server"] if "--server" not in args else [])
+    return rc
+
+
+def phone(args: list[str]) -> int:
+    """Install the phone app the one correct way (store marked as installer, verified)."""
+    script = REPO / "android" / "scripts" / "install-phone.sh"
+    cmd = [str(script)]
+    if "--serial" in args:
+        i = args.index("--serial")
+        if i + 1 >= len(args):
+            print("--serial needs ip:port (Wireless debugging)")
+            return 1
+        cmd.append(args[i + 1])
+    cmd += [a for a in args if a in ("--build", "--fix-a11y")]
+    return subprocess.call(cmd)
+
+
+def main(argv: list[str]) -> int:
+    cmd = argv[1] if len(argv) > 1 else "doctor"
+    if cmd == "doctor":
+        return doctor(argv[2:])
+    if cmd == "install":
+        return install(argv[2:])
+    if cmd == "phone":
+        return phone(argv[2:])
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
