@@ -1,0 +1,6 @@
+[Unit]
+Description=Jinx health guard (restarts failed Jinx services, alerts on crash loops and server unit failures)
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/jinx-health-guard

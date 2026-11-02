@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""jinx-health-guard — watches Jinx/Coucou's laptop services and the server's system units.
+
+Runs from a systemd user timer (every 2 min). Policy:
+  * Unit in `failed` state (or active but its port is dead twice in a row) -> reset-failed + restart, at most
+    MAX_RESTARTS per hour. Only units that are enabled; a unit you stopped by hand is never touched.
+  * Crash loop (NRestarts grew by >= LOOP_DELTA since the last run) -> do NOT touch, alert.
+  * Server system units in `failed` (read-only: needs sudo to fix) -> alert.
+Alerts: notify-send, once per problem per COOLDOWN, plus a line in the log. Nothing else is changed.
+"""
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+WATCH = [  # (unit, (host, port) or None)
+    ("jinx-desktop.service", ("100.102.136.23", 8000)),
+    ("jinx-presence-agent.service", None),
+    ("jinx-telegram.service", None),
+    ("mochi-pc-agent.service", None),
+    ("ollama-user.service", None),
+]
+SERVER = "server"
+MAX_RESTARTS = 3          # per hour per unit
+LOOP_DELTA = 5            # NRestarts growth between runs that counts as a crash loop
+COOLDOWN = 6 * 3600       # seconds between repeated alerts for the same problem
+STATE = Path(os.environ.get("JINX_GUARD_STATE", Path.home() / ".local/state/jinx-health-guard.json"))
+LOG = Path(os.environ.get("JINX_GUARD_LOG", Path.home() / "jinx-emergencia/logs/health-guard.log"))
+
+
+def decide(unit: dict, prev: dict, now: float) -> tuple[str, str]:
+    """Pure policy. unit: active, enabled, nrestarts, port_ok (None if no port). prev: last-run memory.
+    Returns (action, reason) with action in ok|restart|alert-loop|alert-limit|skip."""
+    if unit["enabled"] != "enabled":
+        return "skip", "not enabled"
+    grew = unit["nrestarts"] - prev.get("nrestarts", unit["nrestarts"])
+    if grew >= LOOP_DELTA:
+        return "alert-loop", f"{grew} automatic restarts since the last check"
+    dead_port = unit["port_ok"] is False
+    if unit["active"] == "failed" or (unit["active"] == "active" and dead_port and prev.get("dead_port")):
+        recent = [t for t in prev.get("restarts", []) if now - t < 3600]
+        if len(recent) >= MAX_RESTARTS:
+            return "alert-limit", f"still down after {MAX_RESTARTS} restarts this hour"
+        return "restart", "failed" if unit["active"] == "failed" else "port not answering twice in a row"
+    return "ok", ""
+
+
+def sh(*cmd: str, timeout: int = 10) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
+def probe(unit: str, addr) -> dict:
+    show = sh("systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "NRestarts", "-p", "UnitFileState")
+    kv = dict(l.split("=", 1) for l in show.splitlines() if "=" in l)
+    port_ok = None
+    if addr:
+        try:
+            socket.create_connection(addr, timeout=3).close()
+            port_ok = True
+        except OSError:
+            port_ok = False
+    return {"active": kv.get("ActiveState", "unknown"), "enabled": kv.get("UnitFileState", ""),
+            "nrestarts": int(kv.get("NRestarts", "0") or 0), "port_ok": port_ok}
+
+
+def log(msg: str) -> None:
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {msg}\n")
+
+
+def alert(state: dict, key: str, text: str, now: float) -> None:
+    last = state.setdefault("alerted", {}).get(key, 0)
+    if now - last < COOLDOWN:
+        return
+    state["alerted"][key] = now
+    log(f"ALERT {key}: {text}")
+    sh("notify-send", "-u", "critical", "-a", "Jinx", "Jinx — servicio con problemas", text)
+
+
+def main() -> int:
+    now = time.time()
+    try:
+        state = json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        state = {}
+    units = state.setdefault("units", {})
+    for name, addr in WATCH:
+        cur = probe(name, addr)
+        prev = units.get(name, {})
+        action, why = decide(cur, prev, now)
+        mem = {"nrestarts": cur["nrestarts"], "dead_port": cur["port_ok"] is False,
+               "restarts": [t for t in prev.get("restarts", []) if now - t < 3600]}
+        if action == "restart":
+            sh("systemctl", "--user", "reset-failed", name)
+            sh("systemctl", "--user", "restart", name, timeout=60)
+            mem["restarts"].append(now)
+            mem["dead_port"] = False
+            log(f"restart {name}: {why}")
+        elif action.startswith("alert"):
+            alert(state, f"{name}:{action}", f"{name}: {why}", now)
+        units[name] = mem
+    # Server system units: read-only (fixing them needs sudo).
+    lines = sh("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", SERVER,
+               "echo OK; systemctl --failed --no-legend --plain | awk '{print $1}'", timeout=15).splitlines()
+    if lines and lines[0] == "OK":  # unreachable server (e.g. Tailscale down) is not a unit failure
+        failed = sorted(u for u in lines[1:] if u)
+        if failed:
+            alert(state, "server:failed:" + ",".join(failed), "Servidor, unidades caídas: " + ", ".join(failed), now)
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(state))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
