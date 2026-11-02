@@ -169,10 +169,20 @@ fn store_art(hash: &str, image: &[u8]) -> String {
     format!("file://{}", path.display())
 }
 
+/// How long the previous cover stays on disk after a new one arrives: a client (the island) may still be reading it.
+const OLD_ART_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Removes the covers other than `keep` (all of them when `keep` is None). With a `keep`, a cover written in the last
+/// `OLD_ART_GRACE` stays: deleting it at once made a read in progress fail and blanked the island's cover.
 fn clear_art_files(dir: &std::path::Path, keep: Option<&str>) {
     if let Ok(rd) = std::fs::read_dir(dir) {
         for e in rd.flatten() {
-            if keep.map_or(true, |k| e.file_name() != k) {
+            if keep.is_some_and(|k| e.file_name() == k) {
+                continue;
+            }
+            let fresh = keep.is_some()
+                && e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < OLD_ART_GRACE);
+            if !fresh {
                 let _ = std::fs::remove_file(e.path());
             }
         }
@@ -410,6 +420,21 @@ mod tests {
         let j = track_json(&nasty, &nasty, &nasty, "Playing", 5, 9);
         assert!(j.len() <= crate::audiolink_wire::MAX_NOW_LINE, "{}", j.len());
         assert!(serde_json::from_str::<serde_json::Value>(&j).is_ok());
+    }
+
+    #[test]
+    fn a_new_cover_leaves_the_one_just_replaced_for_a_while() {
+        let dir = std::env::temp_dir().join(format!("coucou-art-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("old.jpg"), b"x").unwrap();
+        std::fs::write(dir.join("new.jpg"), b"y").unwrap();
+        clear_art_files(&dir, Some("new.jpg"));
+        assert!(dir.join("old.jpg").exists(), "a cover written seconds ago may still be being read");
+        assert!(dir.join("new.jpg").exists());
+        clear_art_files(&dir, None);
+        assert!(!dir.join("old.jpg").exists() && !dir.join("new.jpg").exists(), "no cover: everything goes");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

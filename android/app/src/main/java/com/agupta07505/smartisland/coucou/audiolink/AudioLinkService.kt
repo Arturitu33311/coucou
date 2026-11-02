@@ -185,7 +185,7 @@ class AudioLinkService : Service(), PhoneSignals {
         val art = lastArt
         nowWorker.execute {
             try {
-                val key = "${now.title}|${now.artist}|${now.album}|${art != null}"
+                val key = nowKey(now, art?.generationId)
                 if (key != sentArtKey) {
                     val jpeg = if (now.title.isEmpty() || art == null) null else NowArt.encode(art)
                     val hash = if (jpeg == null) "none" else NowArt.hash(jpeg)
