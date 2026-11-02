@@ -262,6 +262,36 @@ class Lite:
         self.history = []
         self.last = 0.0
 
+    def _level(self, entity_id):
+        """El volumen que dice el aparato (0..1), o None si no lo dice."""
+        try:
+            v = self.ha.state(entity_id).get("volume_level")
+            return float(v) if v is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _verified_volume(self, result, service, entity_id, before, data):
+        """Subir, bajar o fijar el volumen solo está hecho cuando el aparato muestra otro volumen."""
+        if before is None:
+            return result
+        target = (data or {}).get("volume_level")
+        now = before
+        for _ in range(VERIFY_TRIES):
+            self.sleep(VERIFY_EVERY)
+            now = self._level(entity_id)
+            if now is None:
+                return result
+            if service == "volume_set" and target is not None and abs(now - float(target)) <= 0.02:
+                break
+            if service == "volume_up" and now > before + 0.001:
+                break
+            if service == "volume_down" and now < before - 0.001:
+                break
+        else:
+            return ("la orden se envió pero el volumen de %s sigue en %d%%. NO digas que cambió: dile que no ha respondido "
+                    "o inténtalo de nuevo." % (entity_id, round(now * 100)))
+        return "%s; el volumen de %s ahora es %d%%" % (result, entity_id, round(now * 100))
+
     def _verified(self, result, service, entity_id):
         """Encender o apagar solo está hecho cuando el aparato lo dice: Home Assistant contesta "ok" aunque la tele
         no se entere. Sin esto el modelo anunciaba "ya está encendida" con la tele apagada."""
@@ -289,14 +319,19 @@ class Lite:
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":
+                service, eid, data = args.get("servicio"), args.get("entity_id"), args.get("datos")
+                volume = service in ("volume_up", "volume_down", "volume_set")
+                before = self._level(eid) if volume else None
                 try:
-                    result = self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                    result = self.ha.call(args.get("dominio"), service, eid, data)
                 except HaTimeout:
                     # La orden pudo salir: se mira el estado antes de decir nada (encender una tele tarda en confirmarse).
                     result = "orden enviada (Home Assistant tardó en confirmarla)"
                     if args.get("servicio") not in ("turn_on", "turn_off"):
                         return result + "; no sé si hizo efecto"
-                return self._verified(result, args.get("servicio"), args.get("entity_id"))
+                if volume:
+                    return self._verified_volume(result, service, eid, before, data)
+                return self._verified(result, service, eid)
             if name == "pasar_a_jinx":
                 return self.handoff(str(args.get("peticion", ""))[:1000])
             return "herramienta desconocida"

@@ -181,6 +181,40 @@ class SlowCallHA(SeqHA):
         raise L.HaTimeout("Home Assistant tardó en contestar")
 
 
+class LevelHA(FakeHA):
+    """Un aparato con volumen: cada vez que se mira, el siguiente valor de la lista."""
+    def __init__(self, levels):
+        super().__init__()
+        self.levels = list(levels)
+
+    def state(self, e):
+        return {"entity_id": e, "state": "on", "volume_level": self.levels.pop(0) if len(self.levels) > 1 else self.levels[0]}
+
+
+class VolumeTest(unittest.TestCase):
+    def run_vol(self, levels, service, data=None):
+        lite = L.Lite(None, LevelHA(levels), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": "media_player", "servicio": service, "entity_id": "media_player.tele",
+                                        "datos": data or {}})
+
+    def test_volume_up_is_confirmed_only_when_the_level_rises(self):
+        self.assertIn("ahora es 12%", self.run_vol([0.11, 0.11, 0.12], "volume_up"))
+        out = self.run_vol([0.11], "volume_up")
+        self.assertIn("sigue en 11%", out)
+        self.assertIn("NO digas que cambió", out)
+
+    def test_volume_down_and_set(self):
+        self.assertIn("ahora es 10%", self.run_vol([0.11, 0.10], "volume_down"))
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_down"))
+        self.assertIn("ahora es 30%", self.run_vol([0.11, 0.30], "volume_set", {"volume_level": 0.3}))
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_set", {"volume_level": 0.3}))
+
+    def test_a_device_without_volume_is_not_checked(self):
+        lite = L.Lite(None, SeqHA(["on"]), lambda t: "x", sleep=lambda s: None)  # state() has no volume_level
+        out = lite._tool("ha_accion", {"dominio": "media_player", "servicio": "volume_up", "entity_id": "media_player.x"})
+        self.assertEqual(out, "hecho")
+
+
 class TimeoutTest(unittest.TestCase):
     def action(self, states, service):
         lite = L.Lite(None, SlowCallHA(states), lambda t: "x", sleep=lambda s: None)
