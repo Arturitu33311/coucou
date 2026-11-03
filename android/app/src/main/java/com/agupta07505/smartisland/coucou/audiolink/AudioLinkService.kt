@@ -338,7 +338,13 @@ class AudioLinkService : Service(), PhoneSignals {
         private var baseHead = 0L
         private val focus: AudioFocusRequest
         private val bufferMs: Int
-        private val maxQueueMs: Int
+        private var maxQueueMs: Int
+        /** Grows the speaker buffer after real cuts and shrinks it on a good network (see JitterTuner). */
+        private val tuner: JitterTuner
+        /** Whether the previous chunk carried sound: a cut after it is the network's, not a silence the laptop skipped. */
+        private var lastLoud = false
+        /** Chunks the buffer refused (a burst that did not fit), running total: the tuner's second sign of a too-small buffer. */
+        private var overflowTotal = 0
         private val gate = PlayerGate()
         private var holdsFocus = false
         private var lastFeedAt = 0L
@@ -350,16 +356,20 @@ class AudioLinkService : Service(), PhoneSignals {
             val minMs = (minBytes.toLong() * 1000 / (RATE * BYTES_PER_FRAME)).toInt()
             bufferMs = trackBufferMs(minMs)
             maxQueueMs = queueLimitMs(bufferMs)
-            val bufferBytes = max(minBytes, RATE * bufferMs / 1000 * BYTES_PER_FRAME)
+            tuner = JitterTuner(baseMs = bufferMs)
+            // The track is created with room to grow (BUFFER_CAPACITY_MS) but starts at the small buffer: the tuner
+            // enlarges it with setBufferSizeInFrames after real cuts, so a good network keeps the low delay.
+            val capacityBytes = max(minBytes, RATE * BUFFER_CAPACITY_MS / 1000 * BYTES_PER_FRAME)
             track = AudioTrack.Builder()
                 .setAudioAttributes(attrs)
                 .setAudioFormat(format)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 // The default path, not the low-latency one: that one skips the mixer's effects and uses a simpler resampler,
                 // and over Bluetooth the delay is dominated by the codec anyway.
-                .setBufferSizeInBytes(bufferBytes)
+                .setBufferSizeInBytes(capacityBytes)
                 .build()
-            Log.d(TAG, "track buffer ${bufferBytes / BYTES_PER_FRAME * 1000 / RATE} ms (system minimum $minMs ms), queue limit $maxQueueMs ms")
+            track.setBufferSizeInFrames(max(minBytes / BYTES_PER_FRAME, RATE * bufferMs / 1000))
+            Log.d(TAG, "track buffer ${track.bufferSizeInFrames * 1000 / RATE} ms of ${track.bufferCapacityInFrames * 1000 / RATE} ms capacity (system minimum $minMs ms), queue limit $maxQueueMs ms")
             focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
                 .setOnAudioFocusChangeListener { change ->
@@ -436,7 +446,7 @@ class AudioLinkService : Service(), PhoneSignals {
                 TAG,
                 "fed=$nFed play=$nPlay wait=$nWait drop=$nDrop noFocus=$nNoFocus writeErr=$nWriteErr lastWrite=$lastWrite " +
                     "queuedMs=${queuedMs()} head=${head()} base=$baseHead written=$written started=$started focus=$holdsFocus " +
-                    "trackState=${track.playState}",
+                    "trackState=${track.playState} underruns=${track.underrunCount} bufMs=${tuner.bufferMs}",
             )
             nFed = 0; nDrop = 0; nWait = 0; nPlay = 0; nNoFocus = 0; nWriteErr = 0
         }
@@ -454,7 +464,15 @@ class AudioLinkService : Service(), PhoneSignals {
         }
 
         private fun feedInner(pcm: ByteArray, now: Long) {
-            when (gate.next(now, loud = !isSilentPcm(pcm))) {
+            val loud = !isSilentPcm(pcm)
+            // A cut the system counted while sound was arriving means the network is delivering in bursts: widen the buffer.
+            tuner.update(track.underrunCount, overflowTotal, now, lastLoud)?.let { ms ->
+                track.setBufferSizeInFrames(RATE * ms / 1000)
+                maxQueueMs = queueLimitMs(ms)
+                Log.d(TAG, "buffer ${if (ms > bufferMs) "grown" else "back"} to $ms ms (underruns=${track.underrunCount}), queue limit $maxQueueMs ms")
+            }
+            lastLoud = loud
+            when (gate.next(now, loud = loud)) {
                 GateStep.Reset -> {
                     // The sound stopped for a while and is back: start the speaker over. No focus yet: a short sound
                     // (a ping) must not pause the phone's music; it is asked for only once the sound goes on.
@@ -466,7 +484,7 @@ class AudioLinkService : Service(), PhoneSignals {
                 GateStep.Silent -> { nNoFocus++; return } // someone else holds the focus: dropped, not fought over
             }
             when (playbackPlan(queuedMs(), started, maxQueueMs)) {
-                PlaybackAction.Drop -> { nDrop++; return }
+                PlaybackAction.Drop -> { nDrop++; overflowTotal++; return }
                 PlaybackAction.Wait -> nWait++
                 PlaybackAction.Play -> {
                     nPlay++
@@ -481,7 +499,7 @@ class AudioLinkService : Service(), PhoneSignals {
             lastWrite = n
             if (n > 0) written += n / BYTES_PER_FRAME
             if (n < pcm.size) {
-                if (n < 0) nWriteErr++ else nDrop++
+                if (n < 0) nWriteErr++ else { nDrop++; overflowTotal++ }
             }
         }
 

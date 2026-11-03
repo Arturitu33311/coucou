@@ -6,9 +6,13 @@
 //! A fixed gain cannot be right for both a quiet video call and a loud track.
 //!
 //! What it does now:
-//!  1. Slow automatic gain: it measures the loudness (about 0.4 s of RMS) and slowly lifts what arrives quiet towards
-//!     `TARGET_DB`, never attenuates, never lifts more than `MAX_GAIN_DB`, and holds still on silence (so it never
-//!     boosts noise). It rises at 6 dB/s and falls at 12 dB/s, so it does not pump, and it starts at +6 dB.
+//!  1. Slow automatic gain: it follows the loudness IN dB, at a limited speed (`LEVEL_SLEW_DB_PER_S`), and lifts what
+//!     arrives quiet towards `TARGET_DB`; it never attenuates, never lifts more than `MAX_GAIN_DB`, and holds still on
+//!     silence (so it never boosts noise). It starts at +6 dB. Following dB at a limited speed (a log-domain average)
+//!     makes it robust to short loud events: a slam or an explosion moves the estimate by a dB or two instead of
+//!     dominating it, so the quiet speech after it is NOT ducked (an earlier version measured plain RMS power and
+//!     dropped quiet speech by 8 dB for seconds after any loud sound, which sounded like the audio cutting out).
+//!     The peaks of such events are the limiter's job.
 //!  2. Look-ahead limiter: sees `LOOKAHEAD` frames ahead and lowers the gain *smoothly before* a peak arrives, so
 //!     nothing exceeds `CEILING`. A smoothly varying gain does not add harmonics the way clipping or a waveshaper does.
 //!
@@ -30,17 +34,22 @@ pub const TARGET_DB: f32 = -17.0;
 pub const MAX_GAIN_DB: f32 = 18.0;
 /// Below this RMS (dBFS) the signal counts as silence: the automatic gain holds still.
 const GATE_DB: f32 = -55.0;
-const RISE_DB_PER_S: f32 = 6.0;
+/// How fast the loudness estimate may move, in dB per second, up or down. Slow on purpose (see the module docs).
+const LEVEL_SLEW_DB_PER_S: f32 = 4.0;
+/// How fast the applied gain follows what the estimate asks for, in dB per second.
+const GAIN_SLEW_DB_PER_S: f32 = 6.0;
 /// Where the automatic gain starts: what the relay used to add as a fixed gain, so it never starts worse than before.
 const INITIAL_GAIN_DB: f32 = 6.0;
-const FALL_DB_PER_S: f32 = 12.0;
 /// The automatic gain is updated every this many frames (1.33 ms).
 const BLOCK: usize = 64;
 
 pub struct Leveler {
     // Automatic gain.
+    /// Short-term power (about 60 ms), the raw material of the dB estimate.
     mean_square: f32,
     ms_alpha: f32,
+    /// The loudness estimate in dBFS, moved at a limited speed; None until the first sound above the gate.
+    level_db: Option<f32>,
     gain_db: f32,
     gain_lin: f32,
     block_frames: usize,
@@ -58,7 +67,8 @@ impl Leveler {
     pub fn new() -> Self {
         Leveler {
             mean_square: 0.0,
-            ms_alpha: 1.0 - (-1.0 / (0.4 * RATE)).exp(),
+            ms_alpha: 1.0 - (-1.0 / (0.06 * RATE)).exp(),
+            level_db: None,
             gain_db: INITIAL_GAIN_DB,
             gain_lin: 1.995_262_3, // 10^(6/20)
             block_frames: 0,
@@ -67,7 +77,7 @@ impl Leveler {
             min_ring: VecDeque::new(),
             min_sum: 0.0,
             limit_gain: 1.0,
-            release_coef: 1.0 - (-1.0 / (0.15 * RATE)).exp(),
+            release_coef: 1.0 - (-1.0 / (0.10 * RATE)).exp(),
             frame_no: 0,
         }
     }
@@ -123,7 +133,7 @@ impl Leveler {
             self.min_sum -= self.min_ring.pop_front().unwrap_or(0.0);
         }
         let attack_gain = self.min_sum / self.min_ring.len() as f32;
-        // Release: gain comes back up slowly (150 ms), goes down at once (the average is already smooth).
+        // Release: gain comes back up slowly (100 ms), goes down at once (the average is already smooth).
         self.limit_gain = if attack_gain < self.limit_gain {
             attack_gain
         } else {
@@ -139,17 +149,23 @@ impl Leveler {
     }
 
     fn update_auto_gain(&mut self) {
-        let level_db = 10.0 * self.mean_square.max(1e-12).log10();
-        if level_db < GATE_DB {
-            return; // silence: hold the gain, never raise it on noise
+        let short_db = 10.0 * self.mean_square.max(1e-12).log10();
+        if short_db < GATE_DB {
+            return; // silence: hold everything, never raise the gain on noise
         }
-        let desired = (TARGET_DB - level_db).clamp(0.0, MAX_GAIN_DB);
         let dt = BLOCK as f32 / RATE;
-        self.gain_db = if desired > self.gain_db {
-            (self.gain_db + RISE_DB_PER_S * dt).min(desired)
-        } else {
-            (self.gain_db - FALL_DB_PER_S * dt).max(desired)
+        // The estimate chases the short-term level at a limited speed. The first sound sets it at once.
+        let level = match self.level_db {
+            None => short_db,
+            Some(l) => {
+                let step = LEVEL_SLEW_DB_PER_S * dt;
+                l + (short_db - l).clamp(-step, step)
+            }
         };
+        self.level_db = Some(level);
+        let desired = (TARGET_DB - level).clamp(0.0, MAX_GAIN_DB);
+        let step = GAIN_SLEW_DB_PER_S * dt;
+        self.gain_db += (desired - self.gain_db).clamp(-step, step);
         self.gain_lin = 10f32.powf(self.gain_db / 20.0);
     }
 }
@@ -280,6 +296,35 @@ mod tests {
         let a = run(&mut Leveler::new(), input.clone(), 3840);
         let b = run(&mut Leveler::new(), input, 12); // three frames at a time
         assert_eq!(a, b);
+    }
+
+    /// RMS in dB of `secs` of the left channel starting at `from_s`.
+    fn window_db(out: &[f32], from_s: f32, secs: f32) -> f32 {
+        let a = (from_s * RATE) as usize;
+        rms_db(&out[a..a + (secs * RATE) as usize])
+    }
+
+    #[test]
+    fn quiet_speech_is_not_ducked_after_a_loud_event() {
+        // The symptom reported on the relay: "it cuts a lot". Quiet speech-level sound with a short loud event
+        // (a door slam, an explosion, a notification) every few seconds. Right after each event the speech must
+        // not fall away: that sounds like the sound cutting out.
+        let mut l = Leveler::new();
+        let mut input = Vec::new();
+        let mut t0 = 0usize;
+        let mut push = |amp: f32, secs: f32, input: &mut Vec<u8>| {
+            input.extend(tone(amp, 300.0, secs, t0));
+            t0 += (secs * RATE) as usize;
+        };
+        push(0.03, 8.0, &mut input);          // settle on quiet speech-level sound (8 s)
+        push(0.8, 0.3, &mut input);           // loud event, 8.0 - 8.3 s
+        push(0.03, 6.0, &mut input);          // speech again
+        let out = left(&run(&mut l, input, 3840));
+        let before = window_db(&out, 7.0, 1.0);
+        for (after_s, label) in [(8.5, "0.2 s"), (9.0, "0.7 s"), (10.0, "1.7 s"), (11.0, "2.7 s")] {
+            let now = window_db(&out, after_s, 0.2);
+            assert!(before - now < 3.0, "speech {label} after the event is {:.1} dB below its level before ({before:.1} -> {now:.1})", before - now);
+        }
     }
 
     #[test]
