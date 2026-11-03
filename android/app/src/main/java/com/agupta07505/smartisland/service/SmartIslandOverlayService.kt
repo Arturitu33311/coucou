@@ -370,6 +370,7 @@ class SmartIslandOverlayService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         isSystemConnected = true
+        instance = this
         // Coucou: Jinx's pendientes and Claude Code on the laptop, if they were turned on.
         com.agupta07505.smartisland.coucou.CoucouRuntime.apply(applicationContext)
         if (destroyed || !::viewModel.isInitialized) return
@@ -383,6 +384,63 @@ class SmartIslandOverlayService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /**
+     * Reads the clipboard text by briefly holding the input focus. Android 10+ lets an app read the clipboard only
+     * while one of its windows has the focus, so for a few tens of milliseconds a 1-pixel window of this service takes
+     * it: untouchable, and flagged so it does not interact with the keyboard (the app underneath keeps it). The
+     * result goes to [onResult] on the main thread: the text, or null when it was not readable in time or the clip
+     * is marked sensitive (a password manager's copy is never read out).
+     */
+    fun readClipboardWithFocus(timeoutMs: Long = 700L, onResult: (String?) -> Unit) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            if (destroyed || !::windowManager.isInitialized) {
+                onResult(null)
+                return@post
+            }
+            val view = android.view.View(this).apply {
+                isFocusable = true
+                isFocusableInTouchMode = true
+            }
+            val params = WindowManager.LayoutParams(
+                1, 1,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT,
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                title = "coucou-clip"
+            }
+            var finished = false
+            fun finish(text: String?) {
+                if (finished) return
+                finished = true
+                runCatching { windowManager.removeViewImmediate(view) }
+                onResult(text)
+            }
+            view.viewTreeObserver.addOnWindowFocusChangeListener { hasFocus ->
+                if (hasFocus) finish(readClipboardText())
+            }
+            if (runCatching { windowManager.addView(view, params) }.isFailure) {
+                finish(null)
+                return@post
+            }
+            view.requestFocus()
+            handler.postDelayed({ finish(null) }, timeoutMs)
+        }
+    }
+
+    /** The text on the clipboard, unless the clip says it is sensitive (Android 13+: password managers set it). */
+    private fun readClipboardText(): String? {
+        val cm = getSystemService(android.content.ClipboardManager::class.java) ?: return null
+        val clip = cm.primaryClip ?: return null
+        if (clip.description?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true) return null
+        if (clip.itemCount == 0) return null
+        return clip.getItemAt(0).coerceToText(this)?.toString()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -408,6 +466,7 @@ class SmartIslandOverlayService : AccessibilityService() {
         if (destroyed) return
         destroyed = true
         isSystemConnected = false
+        if (instance === this) instance = null
         serviceScope.cancel()
 
         if (::systemEventReceiver.isInitialized && systemEventReceiverRegistered) {
@@ -1096,6 +1155,11 @@ class SmartIslandOverlayService : AccessibilityService() {
     companion object {
         @Volatile
         var isSystemConnected: Boolean = false
+            private set
+
+        /** The connected accessibility service, for what needs one of its windows (see readClipboardWithFocus). */
+        @Volatile
+        var instance: SmartIslandOverlayService? = null
             private set
 
         private const val TAG = "SmartIslandOverlayService"

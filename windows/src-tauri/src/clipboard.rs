@@ -221,6 +221,14 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
     }
 }
 
+/// Puts text the phone sent (see clip_sync.rs) into the clipboard. Linux only for now.
+pub fn set_text_from_phone(app: &AppHandle, text: String) {
+    #[cfg(target_os = "linux")]
+    linux::set_text(app, text);
+    #[cfg(not(target_os = "linux"))]
+    let _ = (app, text);
+}
+
 /// Copies an item back to the clipboard.
 pub fn copy_back(app: &AppHandle, id: u64) -> Result<(), String> {
     let text = text_of(id).ok_or("That item is gone")?;

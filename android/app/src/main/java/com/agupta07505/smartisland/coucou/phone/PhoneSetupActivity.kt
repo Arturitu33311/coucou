@@ -187,6 +187,34 @@ internal fun Setup(modifier: Modifier = Modifier) {
             )
         }
         SectionCard(
+            title = "Copiar al laptop sin pulsar (experimental)",
+            subtitle = "Lo que copias en el teléfono llega al portapapeles del laptop. Android no deja leer el portapapeles en " +
+                "segundo plano, así que se detecta el aviso que el sistema escribe en su registro y la isla toma el foco un instante " +
+                "para leerlo. Hace falta un permiso, que se concede una sola vez por adb. Solo texto, hasta 4 000 caracteres; " +
+                "lo que un gestor de contraseñas marca como sensible no se lee; el texto nunca se guarda en registros.",
+        ) {
+            var clip by remember { mutableStateOf(with(PhoneSettings) { context.clipToPc }) }
+            val clipStatus by com.agupta07505.smartisland.coucou.clip.ClipWatcher.status.collectAsState()
+            SwitchRow(
+                title = "Enviar lo que copio al laptop",
+                description = "Estado: $clipStatus",
+                checked = clip,
+                onChange = {
+                    clip = it
+                    with(PhoneSettings) { context.clipToPc = it }
+                    CoucouRuntime.apply(context)
+                },
+            )
+            if (!com.agupta07505.smartisland.coucou.clip.ClipWatcher.hasLogPermission(context)) {
+                Text(
+                    "Permiso por conceder (desde el laptop, con el teléfono en depuración inalámbrica):\n" +
+                        "adb shell pm grant ${context.packageName} android.permission.READ_LOGS",
+                    color = CoucouColors.TextTertiary,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        SectionCard(
             title = "Ropa de Mochi",
             subtitle = "Auto sigue las estaciones (gorro de Santa en diciembre, de bruja en octubre, orejas de conejo en Pascua, " +
                 "gafas de sol en verano, gorro de fiesta en Año Nuevo), gorro de dormir cuando duerme y cascos con música.",

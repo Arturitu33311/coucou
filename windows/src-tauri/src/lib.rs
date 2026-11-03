@@ -18,6 +18,7 @@ mod phonenow;
 mod audiolink_sink;
 mod audiolink_wire;
 mod bars;
+mod clip_sync;
 mod calendar;
 mod chat;
 mod claude;

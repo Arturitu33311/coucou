@@ -12,6 +12,7 @@ import com.agupta07505.smartisland.coucou.phone.JinxSync
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
 import com.agupta07505.smartisland.coucou.audiolink.AudioLinkService
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.audioLink
+import com.agupta07505.smartisland.coucou.phone.PhoneSettings.clipToPc
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followClaude
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.followJinx
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings.jinxSync
@@ -117,6 +118,10 @@ object CoucouRuntime {
 
         // The laptop's sound through the headphones kept on this phone
         if (app.audioLink) AudioLinkService.start(app) else AudioLinkService.stop(app)
+
+        // What is copied on this phone, sent to the laptop without pressing anything (experimental, off by default)
+        if (app.clipToPc) com.agupta07505.smartisland.coucou.clip.ClipWatcher.start(app)
+        else com.agupta07505.smartisland.coucou.clip.ClipWatcher.stop()
 
         // Jinx's texts on this phone, through presence (no voice: text only)
         if (app.followJinx) {

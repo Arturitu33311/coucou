@@ -62,6 +62,14 @@ object PhoneSettings {
         get() = prefs(this).getBoolean("lyricsOn", false)
         set(v) = prefs(this).edit().putBoolean("lyricsOn", v).apply()
 
+    /**
+     * Send what is copied on this phone to the laptop, without pressing anything (off by default, experimental): it reads
+     * the system log for the clipboard's refusals, which needs READ_LOGS granted once over adb (see ClipWatcher).
+     */
+    var Context.clipToPc: Boolean
+        get() = prefs(this).getBoolean("clipToPc", false)
+        set(v) = prefs(this).edit().putBoolean("clipToPc", v).apply()
+
     /** What Mochi wears here: "auto" (the seasons, then what he is doing), "none" or an outfit id. */
     var Context.mochiOutfit: String
         get() = prefs(this).getString("mochiOutfit", "auto") ?: "auto"

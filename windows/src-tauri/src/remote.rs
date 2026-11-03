@@ -278,8 +278,22 @@ pub enum Action {
     Peer { beat: crate::presence::Beat, music: bool, news: bool },
     /// The phone's whole task list, to be merged with this one (newest change wins, see tasks.rs).
     TasksSync { tasks: Value },
+    /// Text the person copied on the phone, already cleaned and bounded (clip_sync.rs), to put in this clipboard.
+    Clip { text: String },
     Reject(String),
 }
+
+/// A text arriving from the phone must never replace the clipboard unnoticed: a short desktop note says so.
+#[cfg(target_os = "linux")]
+fn note_clip_from_phone(text: &str) {
+    let preview: String = text.chars().take(60).collect();
+    let _ = std::process::Command::new("notify-send")
+        .args(["-a", "Coucou", "-t", "4000", "-i", "edit-paste", "Copiado desde el celular", &preview])
+        .spawn();
+}
+
+#[cfg(not(target_os = "linux"))]
+fn note_clip_from_phone(_text: &str) {}
 
 /// Reads a line from the phone. Only a request that is waiting, of the right kind, can be answered.
 pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action {
@@ -296,6 +310,10 @@ pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action
             // Bounded here; each task is bounded again by tasks::sanitize_remote before it is merged.
             Some(t) if t.as_array().map_or(false, |a| a.len() <= MAX_SYNC_TASKS) => Action::TasksSync { tasks: t.clone() },
             _ => Action::Reject("tasks must be a list".into()),
+        },
+        Some("clip") => match v.get("text").and_then(Value::as_str).and_then(crate::clip_sync::clean) {
+            Some(text) => Action::Clip { text },
+            None => Action::Reject("no usable text".into()),
         },
         Some("answer") => match (kind, v.get("decision").and_then(Value::as_str)) {
             (Some("approval"), Some("allow")) => Action::Answer { id, decision: "allow" },
@@ -457,6 +475,15 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
                 }
                 tasks_line()
             }
+            Action::Clip { text } => {
+                // The same text twice in a row (or its echo, brought back by KDE Connect) is applied once.
+                if crate::clip_sync::should_apply(&text) {
+                    crate::clipboard::set_text_from_phone(&app, text.clone());
+                    log::line(format!("phone link: clipboard text from the phone ({})", crate::clip_sync::describe(&text)));
+                    note_clip_from_phone(&text);
+                }
+                json!({ "t": "ack", "ok": true })
+            }
             Action::Answer { id, decision } => {
                 log::line(format!("phone link: {decision} for id={id}"));
                 pipe::answer(&app, &id, decision);
@@ -603,6 +630,14 @@ mod tests {
         assert!(matches!(go(r#"{"op":"peer"}"#), Action::Reject(_)));
         // Its task list is taken in as a list, and only as a bounded one.
         assert!(matches!(go(r#"{"op":"tasks_sync","tasks":[{"id":"a","title":"x"}]}"#), Action::TasksSync { .. }));
+        // Clipboard text from the phone: cleaned, bounded, and never an empty or hostile one.
+        assert_eq!(go(r#"{"op":"clip","text":"  482913 ","at":1}"#), Action::Clip { text: "482913".into() });
+        assert_eq!(go("{\"op\":\"clip\",\"text\":\"ho\\u0000la\"}"), Action::Clip { text: "hola".into() });
+        assert!(matches!(go(r#"{"op":"clip","text":"   "}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"clip"}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"clip","text":5}"#), Action::Reject(_)));
+        let huge = format!(r#"{{"op":"clip","text":"{}"}}"#, "x".repeat(4001));
+        assert!(matches!(go(&huge), Action::Reject(_)));
         assert!(matches!(go(r#"{"op":"tasks_sync","tasks":"x"}"#), Action::Reject(_)));
         assert!(matches!(go(r#"{"op":"tasks_sync"}"#), Action::Reject(_)));
         let too_many = format!(r#"{{"op":"tasks_sync","tasks":[{}]}}"#, vec!["{}"; MAX_SYNC_TASKS + 1].join(","));

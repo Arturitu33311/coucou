@@ -14,6 +14,10 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- optional: only for the mobile signal dots of the home wallpaper's status gauge (without it they show the Wi-Fi level) -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Only for the experimental "copy to the laptop without pressing" (coucou/clip/ClipWatcher): the system logs a line
+         when it refuses the clipboard to the app, and reading it needs this, which Android grants only over adb
+         (`adb shell pm grant com.agupta07505.smartisland android.permission.READ_LOGS`). Never requested at run time. -->
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
