@@ -573,8 +573,14 @@ fun IslandOverlayView(
                         var isDragging = false
                         var pillGestureTriggered = false
 
+                        // The system's touch slop and hold delay (not fixed numbers): a still finger is a tap, and
+                        // only a move past the slop is a drag. See IslandGestureLogic for why.
+                        val touchSlopPx = viewConfiguration.touchSlop
+                        val holdThresholdMs = IslandGestureLogic.holdThresholdMs(
+                            viewConfiguration.longPressTimeoutMillis, HOLD_GESTURE_THRESHOLD_MS
+                        )
                         val holdJob = scope.launch {
-                            kotlinx.coroutines.delay(HOLD_GESTURE_THRESHOLD_MS)
+                            kotlinx.coroutines.delay(holdThresholdMs)
                             isHoldRegistered = true
                             triggerHapticVibration(context)
                         }
@@ -599,7 +605,7 @@ fun IslandOverlayView(
                                     val swipeUpThreshold = -SWIPE_THRESHOLD_DP * displayMetrics.density
                                     val swipeDownThreshold = SWIPE_THRESHOLD_DP * displayMetrics.density
                                     if (isDragging && currentSettings.enableSwipeActions && dragOffset < swipeUpThreshold) {
-                                        val isHold = isHoldRegistered || totalElapsedMs >= HOLD_GESTURE_THRESHOLD_MS
+                                        val isHold = isHoldRegistered || totalElapsedMs >= holdThresholdMs
                                         val actionStr = if (isHold) currentSettings.swipeHoldUpAction else currentSettings.swipeUpAction
                                         val action = SwipeAction.fromId(actionStr, if (isHold) SwipeAction.DismissAll else SwipeAction.DismissCurrent)
                                         executeSwipeAction(
@@ -633,7 +639,7 @@ fun IslandOverlayView(
                                             currentIndex = currentSelectedIndex
                                         )
                                     } else if (!isDragging || abs(dragOffset) < 10f * displayMetrics.density) {
-                                        if (!isHoldRegistered && !handledInside) {
+                                        if (IslandGestureLogic.releaseIsTap(isHoldRegistered, isDragging, handledInside)) {
                                             if (currentNotification != null) {
                                                 currentOnOpenNotification(currentNotification)
                                             } else {
@@ -721,8 +727,8 @@ fun IslandOverlayView(
                                                 }
                                             }
                                         } else {
-                                            // Tap on collapsed pill: expands or reveals
-                                            if (!isHoldRegistered) {
+                                            // Tap on collapsed pill: expands or reveals (a still hold is a slow tap)
+                                            if (IslandGestureLogic.releaseIsTap(isHoldRegistered, isDragging, false)) {
                                                 if (settings.autoHidePill && isAutoHidden) {
                                                     isAutoHidden = false
                                                     userInteractionTimestamp = System.currentTimeMillis()
@@ -738,9 +744,16 @@ fun IslandOverlayView(
                                 val dragAmountY = change.positionChange().y
                                 val dragAmountX = change.positionChange().x
                                 if (abs(dragAmountY) > 0.5f || abs(dragAmountX) > 0.5f) {
-                                    isDragging = true
                                     dragAccumulatorY += dragAmountY
                                     dragAccumulatorX += dragAmountX
+                                    // A finger always wobbles a little. Until it has really moved (past the system's
+                                    // touch slop) this is still a tap: do NOT consume the move, or the buttons inside
+                                    // the open island (tasks' check, media controls) cancel their click because an
+                                    // ancestor consumed it. That is what made them need a perfectly still touch.
+                                    if (!isDragging && !IslandGestureLogic.crossedSlop(dragAccumulatorX, dragAccumulatorY, touchSlopPx)) {
+                                        continue
+                                    }
+                                    isDragging = true
                                     change.consume()
                                     if (abs(dragAccumulatorY) > 5f * displayMetrics.density || abs(dragAccumulatorX) > 5f * displayMetrics.density) {
                                         holdJob.cancel()

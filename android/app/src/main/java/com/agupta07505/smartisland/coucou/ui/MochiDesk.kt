@@ -317,7 +317,7 @@ fun MochiDesk(onReplyStateChanged: (Boolean) -> Unit, modifier: Modifier = Modif
                                     CoucouTasks.setDone(context, n.id, false)
                                     note = null
                                 }
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                         )
                     }
                 }
@@ -364,7 +364,7 @@ fun MochiDesk(onReplyStateChanged: (Boolean) -> Unit, modifier: Modifier = Modif
                     }
                     Icon(
                         Icons.Rounded.Close, stringResource(R.string.coucou_desk_cancel), tint = Secondary,
-                        modifier = Modifier.size(20.dp).clip(CircleShape).clickable { touchIsland(context); reset() },
+                        modifier = Modifier.size(40.dp).clip(CircleShape).clickable { touchIsland(context); reset() }.padding(10.dp),
                     )
                 }
                 // What the sentence will become, before it is confirmed: the time it was understood as.
@@ -482,21 +482,27 @@ private fun TaskRow(
                     .pointerInput(t.id) {
                         detectTapGestures(onLongPress = { onEdit() })
                     }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                    .padding(start = 0.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // The circle LOOKS 22 dp but the touch target is 40 dp (a fingertip), so the check does not need a
+                // precise tap. The extra 9 dp each side replaces the old row padding / spacer, so nothing moves.
                 Box(
-                    Modifier.size(22.dp).clip(CircleShape).background(fill)
-                        .border(1.6.dp, if (checked) Done else if (late) ReminderAmber else Color.White.copy(alpha = 0.5f), CircleShape)
+                    Modifier.size(40.dp).clip(CircleShape)
                         .clickable(enabled = !checked) {
                             onCheck()
                             checked = true
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (checked) Icon(Icons.Rounded.Check, null, tint = Color(0xFF0B1F12), modifier = Modifier.size(14.dp))
+                    Box(
+                        Modifier.size(22.dp).clip(CircleShape).background(fill)
+                            .border(1.6.dp, if (checked) Done else if (late) ReminderAmber else Color.White.copy(alpha = 0.5f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (checked) Icon(Icons.Rounded.Check, null, tint = Color(0xFF0B1F12), modifier = Modifier.size(14.dp))
+                    }
                 }
-                Spacer(Modifier.width(10.dp))
                 Text(
                     t.title,
                     color = Color.White.copy(alpha = if (checked) 0.55f else 1f), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,

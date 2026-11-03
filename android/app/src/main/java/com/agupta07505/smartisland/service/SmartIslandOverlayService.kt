@@ -585,8 +585,8 @@ class SmartIslandOverlayService : AccessibilityService() {
                         val circleSizePx = settingsVal.height * density
                         val compactGapPx = 8f * density
                         val edgePaddingPx = 8f * density
-                        val touchPaddingXPx = 16f * density
-                        val pillHeightPx = (settingsVal.height + 16f) * density
+                        val touchPaddingXPx = 24f * density
+                        val pillHeightPx = com.agupta07505.smartisland.ui.IslandGestureLogic.collapsedTouchHeightDp(settingsVal.height.toFloat()) * density
                         val groupWidthPx = mainWidthPx + if (isSplitMode) compactGapPx + circleSizePx else 0f
 
                         val desiredMainLeftPx = screenWidth / 2f +
