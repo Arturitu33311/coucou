@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -77,6 +78,29 @@ MOODS = {"Idle", "Happy", "Sleepy", "Alert", "Listening", "Celebrating",
          "Scared", "Grumpy", "Smug", "Laughing", "Crying", "Relieved", "Determined",
          "Flustered"}
 KINDS = {"info", "warn", "alert"}
+# Buttons on a notice (Hecho / Pospón…): up to MAX_ACTIONS, each {"id": snake_case, "label": short text}.
+MAX_ACTIONS = 3
+ACT_QUEUE_CAP = 100
+ACTION_ID = re.compile(r"^[a-z][a-z_]{0,19}$")
+REF_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+
+
+def clean_actions(raw):
+    """The valid buttons of a notice: at most MAX_ACTIONS, unique ids, labels trimmed to 24 characters."""
+    out, seen = [], set()
+    for a in raw if isinstance(raw, list) else []:
+        if not isinstance(a, dict):
+            continue
+        aid, label = a.get("id"), a.get("label")
+        if not (isinstance(aid, str) and ACTION_ID.match(aid) and isinstance(label, str) and label.strip()):
+            continue
+        if aid in seen:
+            continue
+        seen.add(aid)
+        out.append({"id": aid, "label": label.strip()[:24]})
+        if len(out) == MAX_ACTIONS:
+            break
+    return out
 
 # Órdenes de Jinx para la isla del PC. En memoria: si el servidor se reinicia se pierden, y está bien (caducan solas).
 ISLAND_DEVICE = "pc"      # lo único que puede ejecutarlas
@@ -90,8 +114,10 @@ island_cv = threading.Condition()
 
 state = {
     "presence": {},      # device -> {idle_seconds, screen_on, ts}
-    "inbox": [],         # [{id, text, mood, kind, source, ts, acked_by}]
+    "inbox": [],         # [{id, text, mood, kind, source, ts, acked_by, speech?, actions?, ref?, acted?}]
     "next_id": 1,
+    "act_queue": [],     # button presses waiting for the worker: [{id, msg_id, action, by, ts, ref, msg}]
+    "next_act": 1,
 }
 
 
@@ -101,6 +127,8 @@ def load():
         if isinstance(data, dict):
             state["inbox"] = [m for m in data.get("inbox", []) if isinstance(m, dict)][:INBOX_CAP]
             state["next_id"] = int(data.get("next_id", 1) or 1)
+            state["act_queue"] = [a for a in data.get("act_queue", []) if isinstance(a, dict)][-ACT_QUEUE_CAP:]
+            state["next_act"] = int(data.get("next_act", 1) or 1)
     except Exception:
         pass
 
@@ -108,7 +136,8 @@ def load():
 def save():
     try:
         STATE_PATH.write_text(json.dumps(
-            {"inbox": state["inbox"][-INBOX_CAP:], "next_id": state["next_id"]},
+            {"inbox": state["inbox"][-INBOX_CAP:], "next_id": state["next_id"],
+             "act_queue": state["act_queue"][-ACT_QUEUE_CAP:], "next_act": state["next_act"]},
             ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
@@ -326,6 +355,8 @@ class Handler(BaseHTTPRequestHandler):
                 "jinx_mood": jinx_mood(now),
                 "ts": int(now),
             })
+        if self.path == "/api/mochi/acts":
+            return self._send(200, {"acts": list(state["act_queue"])})
         if self.path.startswith("/api/mochi/inbox"):
             since = 0
             if "since_id=" in self.path:
@@ -423,6 +454,12 @@ class Handler(BaseHTTPRequestHandler):
             speech = b.get("speech")
             if isinstance(speech, str) and speech.strip():
                 msg["speech"] = speech.strip()[:SPEECH_CAP]
+            actions = clean_actions(b.get("actions"))
+            if actions:
+                msg["actions"] = actions
+                ref = b.get("ref")
+                if isinstance(ref, str) and REF_RE.match(ref):
+                    msg["ref"] = ref
             state["next_id"] += 1
             state["inbox"].append(msg)
             state["inbox"] = state["inbox"][-INBOX_CAP:]
@@ -446,6 +483,45 @@ class Handler(BaseHTTPRequestHandler):
                     save()
                     return self._send(200, {"ok": True})
             return self._send(404, {"error": "id desconocido"})
+        if self.path == "/api/mochi/act":
+            # A button pressed on a device. The FIRST press wins (a second device finds it already done); it
+            # is queued for the worker, which applies it (resolve a pendiente, snooze, ...). Nothing runs here.
+            b = self._body()
+            if not isinstance(b, dict):
+                return self._send(400, {"error": "json requerido"})
+            try:
+                mid = int(b.get("id", 0))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "id inválido"})
+            aid = b.get("action")
+            for m in state["inbox"]:
+                if m["id"] != mid:
+                    continue
+                if aid not in [a["id"] for a in m.get("actions", [])]:
+                    return self._send(400, {"error": "acción no válida para este aviso"})
+                if m.get("acted"):
+                    return self._send(200, {"ok": True, "already": m["acted"]["action"]})
+                by = str(b.get("by", ""))[:16]
+                m["acted"] = {"action": aid, "by": by, "ts": int(now)}
+                if not m.get("acked_by"):
+                    m["acked_by"] = by
+                snapshot = {k: m[k] for k in ("text", "speech", "kind", "source", "actions", "ref", "mood") if k in m}
+                state["act_queue"].append({"id": state["next_act"], "msg_id": mid, "action": aid, "by": by,
+                                           "ts": int(now), "ref": m.get("ref"), "msg": snapshot})
+                state["next_act"] += 1
+                state["act_queue"] = state["act_queue"][-ACT_QUEUE_CAP:]
+                save()
+                return self._send(200, {"ok": True})
+            return self._send(404, {"error": "id desconocido"})
+        if self.path == "/api/mochi/acts/done":
+            b = self._body()
+            ids = b.get("ids") if isinstance(b, dict) else None
+            if not isinstance(ids, list):
+                return self._send(400, {"error": "ids requerido"})
+            gone = {i for i in ids if isinstance(i, int)}
+            state["act_queue"] = [a for a in state["act_queue"] if a["id"] not in gone]
+            save()
+            return self._send(200, {"ok": True, "left": len(state["act_queue"])})
         if self.path == "/api/island/command":
             b = self._body()
             if not isinstance(b, dict):

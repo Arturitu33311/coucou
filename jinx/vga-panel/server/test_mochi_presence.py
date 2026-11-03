@@ -148,6 +148,66 @@ class HttpTest(unittest.TestCase):
         self.assertNotIn("speech", got[2])
 
 
+    def _notice(self, **extra):
+        body = {"text": "Pendiente: renovar la tarjeta", "kind": "info", "source": "pendientes",
+                "actions": [{"id": "done", "label": "Hecho"}, {"id": "snooze", "label": "Mañana"}],
+                "ref": "pend:abc123"}
+        body.update(extra)
+        _, out = self.post("/api/mochi/message", body)
+        return out["id"]
+
+    def test_actions_are_validated_and_stored_with_the_notice(self):
+        self.post("/api/mochi/message", {"text": "a", "actions": [
+            {"id": "done", "label": "Hecho"}, {"id": "Done", "label": "mal id"}, {"id": "done", "label": "repetido"},
+            {"id": "x" * 40, "label": "largo"}, {"id": "snooze", "label": "  "}, "no es dict",
+            {"id": "later", "label": "L" * 60}, {"id": "a", "label": "uno"}, {"id": "b", "label": "dos"}],
+            "ref": "pend:1"})
+        m = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"][0]
+        self.assertEqual([a["id"] for a in m["actions"]], ["done", "later", "a"])  # valid, unique, at most 3
+        self.assertEqual(len(m["actions"][1]["label"]), 24)
+        self.assertEqual(m["ref"], "pend:1")
+
+    def test_no_valid_actions_means_no_buttons_and_no_ref(self):
+        self.post("/api/mochi/message", {"text": "b", "actions": [{"id": "BAD"}], "ref": "pend:1"})
+        self.post("/api/mochi/message", {"text": "c", "ref": "pend:1"})
+        for m in self.get("/api/mochi/inbox?since_id=0&all=1")["messages"]:
+            self.assertNotIn("actions", m)
+            self.assertNotIn("ref", m)
+
+    def test_a_press_is_queued_once_and_the_first_press_wins(self):
+        mid = self._notice()
+        code, out = self.post("/api/mochi/act", {"id": mid, "action": "done", "by": "s22"})
+        self.assertEqual((code, out), (200, {"ok": True}))
+        code, again = self.post("/api/mochi/act", {"id": mid, "action": "snooze", "by": "pc"})
+        self.assertEqual((code, again.get("already")), (200, "done"))
+        acts = self.get("/api/mochi/acts")["acts"]
+        self.assertEqual(len(acts), 1)
+        self.assertEqual((acts[0]["action"], acts[0]["by"], acts[0]["ref"]), ("done", "s22", "pend:abc123"))
+        self.assertEqual(acts[0]["msg"]["text"], "Pendiente: renovar la tarjeta")
+        m = self.get("/api/mochi/inbox?since_id=0&all=1")["messages"][0]
+        self.assertEqual(m["acted"]["action"], "done")
+        self.assertEqual(m["acked_by"], "s22")   # pressing a button also means "seen"
+
+    def test_only_the_notice_own_actions_are_accepted(self):
+        mid = self._notice()
+        self.assertEqual(self.post("/api/mochi/act", {"id": mid, "action": "delete_everything", "by": "pc"})[0], 400)
+        self.assertEqual(self.post("/api/mochi/act", {"id": 99999, "action": "done", "by": "pc"})[0], 404)
+        plain = self.post("/api/mochi/message", {"text": "sin botones"})[1]["id"]
+        self.assertEqual(self.post("/api/mochi/act", {"id": plain, "action": "done", "by": "pc"})[0], 400)
+        self.assertEqual(self.get("/api/mochi/acts")["acts"], [])
+
+    def test_the_worker_clears_what_it_applied(self):
+        a, b = self._notice(), self._notice(text="otro")
+        self.post("/api/mochi/act", {"id": a, "action": "done", "by": "pc"})
+        self.post("/api/mochi/act", {"id": b, "action": "snooze", "by": "pc"})
+        ids = [x["id"] for x in self.get("/api/mochi/acts")["acts"]]
+        self.assertEqual(len(ids), 2)
+        code, out = self.post("/api/mochi/acts/done", {"ids": [ids[0], "x", None]})
+        self.assertEqual((code, out["left"]), (200, 1))
+        self.assertEqual([x["id"] for x in self.get("/api/mochi/acts")["acts"]], [ids[1]])
+        self.assertEqual(self.post("/api/mochi/acts/done", {"nope": 1})[0], 400)
+
+
 class IslandTest(unittest.TestCase):
     """Las órdenes de Jinx para la isla del PC: se encolan, el PC las recoge y contesta, quien las pidió ve el resultado."""
 
