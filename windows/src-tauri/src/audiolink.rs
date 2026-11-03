@@ -303,33 +303,7 @@ impl SilenceGate {
     }
 }
 
-/// Make-up gain for what goes to the phone. A desktop plays quietly into its own speakers (its amplifier and the volume
-/// keys make up for it); music on the phone is mastered close to full scale, so the same source arrives about 20 dB
-/// lower. A little gain, softly limited, closes most of that gap without distorting loud passages.
-pub const GAIN_DB: f32 = 6.0;
-
-/// The multiplier for a gain in decibels.
-pub fn gain_for_db(db: f32) -> f32 {
-    10f32.powf(db / 20.0)
-}
-
-/// Multiplies every 16-bit little-endian sample of `chunk` by `gain`, in place. Up to 70 % of full scale the result is
-/// exactly `sample * gain`; above that it bends smoothly towards full scale instead of clipping, so it never exceeds it.
-/// A gain of 1.0 leaves the chunk untouched.
-pub fn apply_gain(chunk: &mut [u8], gain: f32) {
-    // Where the soft knee starts, as a fraction of full scale.
-    const KNEE: f32 = 0.7;
-    if gain == 1.0 {
-        return;
-    }
-    for b in chunk.chunks_exact_mut(2) {
-        let x = i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0 * gain;
-        let a = x.abs();
-        let y = if a <= KNEE { x } else { x.signum() * (KNEE + (1.0 - KNEE) * ((a - KNEE) / (1.0 - KNEE)).tanh()) };
-        let out = (y * 32768.0).round().clamp(-32767.0, 32767.0) as i16;
-        b.copy_from_slice(&out.to_le_bytes());
-    }
-}
+// Loudness for what goes to the phone (automatic gain + look-ahead limiter) lives in `audiolink_dsp`.
 
 /// Sound that goes on this long counts as "this computer is playing" (a ping or a click is shorter).
 pub const PLAYING_AFTER_MS: u64 = 3_000;
@@ -587,7 +561,7 @@ fn start_capture() {
         let mut chunk = [0u8; CHUNK];
         let mut gate = SilenceGate::new();
         let mut watch = SoundWatch::new();
-        let gain = gain_for_db(GAIN_DB);
+        let mut leveler = crate::audiolink_dsp::Leveler::new();
         let started = std::time::Instant::now();
         // A blocking read: it sleeps until parec has sound to give, and ends when parec is stopped. Silence
         // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
@@ -598,7 +572,7 @@ fn start_capture() {
             }
             if gate.pass(&chunk) {
                 let mut out = chunk;
-                apply_gain(&mut out, gain);
+                leveler.process(&mut out);
                 send_frame(encode(FrameKind::Audio, &out));
             }
         }
@@ -817,49 +791,6 @@ mod tests {
 
     fn bytes(samples: &[i16]) -> Vec<u8> {
         samples.iter().flat_map(|s| s.to_le_bytes()).collect()
-    }
-
-    #[test]
-    fn six_decibels_is_about_twice_the_amplitude() {
-        assert!((gain_for_db(6.0) - 1.995).abs() < 0.01);
-        assert_eq!(gain_for_db(0.0), 1.0);
-        assert!((gain_for_db(-6.0) - 0.501).abs() < 0.01);
-    }
-
-    #[test]
-    fn quiet_sound_is_multiplied_exactly() {
-        let mut c = bytes(&[0, 1000, -1000, 5000, -5000, 10000]);
-        apply_gain(&mut c, 2.0);
-        assert_eq!(samples(&c), vec![0, 2000, -2000, 10000, -10000, 20000]);
-    }
-
-    #[test]
-    fn unity_gain_leaves_the_chunk_untouched() {
-        let original = bytes(&[0, 1, -1, 12345, -32768, 32767, 30000]);
-        let mut c = original.clone();
-        apply_gain(&mut c, 1.0);
-        assert_eq!(c, original);
-    }
-
-    #[test]
-    fn loud_sound_never_exceeds_full_scale_and_keeps_its_sign() {
-        let mut c = bytes(&[30000, -30000, 32767, -32768, 25000]);
-        apply_gain(&mut c, 4.0);
-        for s in samples(&c) {
-            assert!(s.unsigned_abs() <= 32768, "{s}");
-        }
-        let out = samples(&c);
-        assert!(out[0] > 0 && out[1] < 0 && out[0] == -out[1]);
-        assert!(out[0] > 25000, "a loud passage must stay loud, not collapse: {}", out[0]);
-    }
-
-    #[test]
-    fn the_limiter_never_makes_a_louder_input_quieter() {
-        let input: Vec<i16> = (-32768i32..=32767).step_by(257).map(|v| v as i16).collect();
-        let mut c = bytes(&input);
-        apply_gain(&mut c, 2.0);
-        let out = samples(&c);
-        assert!(out.windows(2).all(|w| w[0] <= w[1]), "output must rise with the input");
     }
 
     /// Feeds `ms` of chunks (20 ms apart) from `from`, `loud` or silent; returns every change reported.

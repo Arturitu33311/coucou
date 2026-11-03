@@ -4,6 +4,7 @@ mod activities;
 mod agent_hooks;
 mod agents;
 mod audiolink;
+mod audiolink_dsp;
 mod audiolink_logic;
 #[cfg(target_os = "linux")]
 mod audiolink_bt;
