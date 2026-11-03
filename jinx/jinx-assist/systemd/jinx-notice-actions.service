@@ -1,0 +1,12 @@
+[Unit]
+Description=Jinx notices with buttons (Hecho / Mañana / Descartar) as desktop notifications
+After=graphical-session.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/bin/jinx-notice-actions
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

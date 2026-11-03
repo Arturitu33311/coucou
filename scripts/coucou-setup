@@ -29,7 +29,7 @@ HOME = Path.home()
 BIN = HOME / "bin"
 PHONES_CONF = Path(os.environ.get("JINX_PHONES_CONF", HOME / ".config/jinx/phones.conf"))
 USER_UNITS = ["jinx-desktop", "jinx-presence-agent", "jinx-telegram", "mochi-pc-agent", "ollama-user",
-              "jinx-voice-alert"]
+              "jinx-voice-alert", "jinx-notice-actions"]
 TIMERS = ["jinx-health-guard.timer", "jinx-chat-sync.timer", "jinx-sync-celular.timer", "jinx-emergencia-watch.timer"]
 OK, WARN, BAD, INFO = "ok", "warn", "bad", "info"
 

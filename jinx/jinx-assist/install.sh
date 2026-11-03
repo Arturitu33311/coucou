@@ -11,11 +11,13 @@ done
 # health guard timer (user units; enabling is idempotent)
 mkdir -p "$HOME/.config/systemd/user"
 install -m 0644 "$here/systemd/jinx-health-guard.service" "$here/systemd/jinx-health-guard.timer" \
-  "$here/systemd/jinx-voice-alert.service" "$HOME/.config/systemd/user/"
+  "$here/systemd/jinx-voice-alert.service" "$here/systemd/jinx-notice-actions.service" "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable --now jinx-health-guard.timer
 # Voice alerts: on by default, but silent unless the headphones are on the audio relay (see jinx-voice-alert).
 # `touch ~/.config/jinx/voice-alerts.off` silences them; `jinx-voice-alert --check` shows what it would say.
 systemctl --user enable --now jinx-voice-alert.service
+# Notices with buttons (Hecho / Mañana / Descartar) as desktop notifications; `touch ~/.config/jinx/notice-actions.off` mutes it.
+systemctl --user enable --now jinx-notice-actions.service
 python3 "$HOME/bin/jinx-chat" </dev/null | head -1
 echo "ok: instalado en ~/bin (backups .bak-$stamp)"

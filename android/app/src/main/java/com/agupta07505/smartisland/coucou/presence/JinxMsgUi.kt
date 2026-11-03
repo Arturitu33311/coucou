@@ -13,13 +13,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -58,7 +63,7 @@ fun JinxMsgCollapsedRight(notification: IslandNotification?) {
     }
 }
 
-/** The open island: what Jinx said, and one button to mark it read. */
+/** The open island: what Jinx said, and her buttons (Hecho / Mañana…) or one to mark it read. */
 @Composable
 fun JinxMsgExpanded(
     notification: IslandNotification?,
@@ -66,6 +71,8 @@ fun JinxMsgExpanded(
     onCollapse: () -> Unit,
 ) {
     val context = LocalContext.current
+    // Buttons Jinx attached to this notice (Hecho / Mañana / Descartar), if any.
+    val buttons by IslandJinx.buttons.collectAsState()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -87,17 +94,41 @@ fun JinxMsgExpanded(
                     notification?.text.orEmpty(),
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 14.sp,
-                    maxLines = 4,
+                    maxLines = if (buttons != null) 3 else 4,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
         Spacer(Modifier.size(10.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Button(onClick = {
-                MochiPresence.ackShown(context)
-                onCollapse()
-            }) { Text("Entendido") }
+        val b = buttons
+        if (b == null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = {
+                    MochiPresence.ackShown(context)
+                    onCollapse()
+                }) { Text("Entendido") }
+            }
+        } else {
+            // Each button is a fingertip tall (44 dp) and shares the width: no precise tap needed.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                b.actions.forEachIndexed { i, a ->
+                    val press = {
+                        MochiPresence.pressAction(context, b.msgId, a.id)
+                        onCollapse()
+                    }
+                    val modifier = Modifier.weight(1f).heightIn(min = 44.dp)
+                    val pad = PaddingValues(horizontal = 6.dp)
+                    if (i == 0) {
+                        Button(onClick = press, modifier = modifier, contentPadding = pad) {
+                            Text(a.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    } else {
+                        OutlinedButton(onClick = press, modifier = modifier, contentPadding = pad) {
+                            Text(a.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
         }
     }
 }

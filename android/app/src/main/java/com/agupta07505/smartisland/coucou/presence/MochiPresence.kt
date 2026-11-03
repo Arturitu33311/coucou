@@ -45,6 +45,12 @@ data class PresenceMsg(
     val kind: String,
     val source: String,
     val ts: Long,
+    /** Buttons Jinx attached (Hecho / Mañana / Descartar); empty = none. */
+    val actions: List<NoticeAction> = emptyList(),
+    /** What the buttons act on, opaque to the phone ("pend:<id>"). */
+    val ref: String? = null,
+    /** The action another device already pressed, if any: the buttons are then not shown. */
+    val acted: String? = null,
 )
 
 /** Moods the server may send. Anything else falls back to Listening. */
@@ -123,13 +129,19 @@ object JinxChatScreen {
 object IslandJinx {
     const val KEY = "coucou_jinx"
 
+    /** The buttons of the notice the card shows now (null: none). The card reads this when it opens. */
+    private val _buttons = MutableStateFlow<NoticeButtons?>(null)
+    val buttons: StateFlow<NoticeButtons?> = _buttons.asStateFlow()
+
     fun publish(context: Context, msgs: List<PresenceMsg>, autoExpandAlert: Boolean): Set<Long> {
         val repo = SmartIslandRepositories.notificationRepository(context)
         if (msgs.isEmpty()) {
+            _buttons.value = null
             repo.removeNotification(KEY)
             return emptySet()
         }
         val last = msgs.last()
+        _buttons.value = NoticeActions.forCard(last)
         // The sender's mood when it gave one, else what her text reads as (the PC's rules, JinxMood).
         val mood = validMood(last.mood) ?: com.agupta07505.smartisland.coucou.assist.JinxMood.moodOfText(last.text)?.name
         repo.postNotification(
@@ -149,6 +161,7 @@ object IslandJinx {
     }
 
     fun clear(context: Context) {
+        _buttons.value = null
         SmartIslandRepositories.notificationRepository(context).removeNotification(KEY)
     }
 }
@@ -241,6 +254,23 @@ object MochiPresence {
         IslandJinx.clear(app)
         ack(app, ids)
         return ids
+    }
+
+    /**
+     * A button on the card was pressed: tell the server (it queues it for the worker that applies it) and take the
+     * card away, marking it seen. Fire-and-forget like [ack]: with no connection the press is lost, and the notice
+     * comes back on the next poll because the server never saw it acted on.
+     */
+    fun pressAction(app: Context, msgId: Long, action: String) {
+        val base = PhoneSettings.presenceUrl(app)
+        val key = PhoneSettings.mochiKey(app)
+        if (key.isEmpty()) return
+        ioScope.launch {
+            PresenceNet.post(base, "/api/mochi/act", key,
+                JSONObject().put("id", msgId).put("action", action).put("by", DeviceActivity.myId).toString())
+        }
+        shownIds = emptySet()
+        IslandJinx.clear(app)
     }
 
     fun ack(app: Context, ids: Set<Long>) {
@@ -361,6 +391,9 @@ object MochiPresence {
                 kind = o.optString("kind", "info").takeIf { it in setOf("info", "warn", "alert") } ?: "info",
                 source = o.optString("source", ""),
                 ts = o.optLong("ts", System.currentTimeMillis() / 1000),
+                actions = NoticeActions.parse(o.optJSONArray("actions")),
+                ref = o.optString("ref", "").takeIf { it.isNotEmpty() },
+                acted = o.optJSONObject("acted")?.optString("action", "")?.takeIf { it.isNotEmpty() },
             )
         }
         return out

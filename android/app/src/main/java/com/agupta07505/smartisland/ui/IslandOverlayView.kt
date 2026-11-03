@@ -1218,7 +1218,7 @@ internal fun defaultEstimatedHeightForMode(mode: IslandMode?): Dp {
         IslandMode.Reminder -> 125.dp
         IslandMode.Desk -> 280.dp
         IslandMode.Agent -> 165.dp
-        IslandMode.JinxMsg -> 140.dp
+        IslandMode.JinxMsg -> 156.dp
         IslandMode.Approval -> 175.dp
         IslandMode.Question -> 210.dp
         IslandMode.Empty, null -> 280.dp
