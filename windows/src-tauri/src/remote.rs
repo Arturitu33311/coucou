@@ -283,13 +283,23 @@ pub enum Action {
     Reject(String),
 }
 
+/// The arguments of the desktop note that says a text came from the phone. The text itself is NOT in it: a
+/// notification is kept in the notification history and shows on a shared or locked screen, so it says only how long
+/// the text was (what replaced the clipboard can be noticed without being shown). The note is marked transient so
+/// the shell does not keep it, and `--` ends the options so nothing after it can be read as one.
+#[cfg(target_os = "linux")]
+fn clip_note_args(text: &str) -> Vec<String> {
+    let body = format!("{} caracteres, ya están en el portapapeles", text.chars().count());
+    ["-a", "Coucou", "-t", "4000", "-i", "edit-paste", "-h", "boolean:transient:true", "--", "Copiado desde el celular", &body]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 /// A text arriving from the phone must never replace the clipboard unnoticed: a short desktop note says so.
 #[cfg(target_os = "linux")]
 fn note_clip_from_phone(text: &str) {
-    let preview: String = text.chars().take(60).collect();
-    let _ = std::process::Command::new("notify-send")
-        .args(["-a", "Coucou", "-t", "4000", "-i", "edit-paste", "Copiado desde el celular", &preview])
-        .spawn();
+    let _ = std::process::Command::new("notify-send").args(clip_note_args(text)).spawn();
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -630,6 +640,17 @@ mod tests {
         assert!(matches!(go(r#"{"op":"peer"}"#), Action::Reject(_)));
         // Its task list is taken in as a list, and only as a bounded one.
         assert!(matches!(go(r#"{"op":"tasks_sync","tasks":[{"id":"a","title":"x"}]}"#), Action::TasksSync { .. }));
+        // The note about a text from the phone never contains the text, and nothing in it can be read as an option.
+        #[cfg(target_os = "linux")]
+        {
+            let hostile = "--hint=string:x:y 482913";
+            let args = clip_note_args(hostile);
+            assert!(args.iter().all(|a| !a.contains("482913") && !a.contains("--hint=string")), "the text must not be in the note");
+            let dashes = args.iter().position(|a| a == "--").expect("options end with --");
+            assert!(args[..dashes].iter().all(|a| a.starts_with('-') || ["Coucou", "4000", "edit-paste", "boolean:transient:true"].contains(&a.as_str())));
+            assert_eq!(args[dashes + 1], "Copiado desde el celular");
+            assert!(args[dashes + 2].starts_with("24 caracteres"), "{}", args[dashes + 2]);
+        }
         // Clipboard text from the phone: cleaned, bounded, and never an empty or hostile one.
         assert_eq!(go(r#"{"op":"clip","text":"  482913 ","at":1}"#), Action::Clip { text: "482913".into() });
         assert_eq!(go("{\"op\":\"clip\",\"text\":\"ho\\u0000la\"}"), Action::Clip { text: "hola".into() });
