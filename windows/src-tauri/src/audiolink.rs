@@ -180,6 +180,7 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
         let _ = EVENTS.set(tx);
         let engine_app = app.clone();
         std::thread::spawn(move || engine(engine_app, rx));
+        std::thread::spawn(autopc_watch);
         let app = app.clone();
         tauri::async_runtime::spawn(async move { serve(app).await });
     }
@@ -399,6 +400,50 @@ impl SwapTo {
     }
 }
 
+/// What the "phone is gone" watcher knows (see `audiolink_autopc`): updated after every step of the state machine.
+#[cfg(target_os = "linux")]
+static AUTOPC: Mutex<crate::audiolink_autopc::Tracker> = Mutex::new(crate::audiolink_autopc::Tracker::new());
+
+/// Milliseconds on a clock that only this module compares with itself.
+#[cfg(target_os = "linux")]
+fn mono_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// The user's switch for bringing the headphones back by themselves: on unless this file exists.
+#[cfg(target_os = "linux")]
+fn autopc_enabled() -> bool {
+    !crate::platform::config_dir().join("audiolink-autopc.off").exists()
+}
+
+/// Every few seconds: if the phone is gone, bring the headphones to this computer (the same thing as the manual
+/// "Headphones to this computer", see `audiolink_autopc` for when).
+#[cfg(target_os = "linux")]
+fn autopc_watch() {
+    loop {
+        std::thread::sleep(Duration::from_secs(5));
+        if !ENABLED.load(Ordering::Relaxed) {
+            continue;
+        }
+        let go = {
+            let mut t = AUTOPC.lock().unwrap();
+            let now = mono_ms();
+            let go = t.should_try(autopc_enabled(), SWAPPING.load(Ordering::Relaxed), now);
+            if go {
+                t.tried(now);
+            }
+            go
+        };
+        if go {
+            crate::log::line("audiolink: the phone is gone, bringing the headphones to this computer");
+            // The phone cannot be asked to let go (it is off), so the answer is always the "could not tell the phone"
+            // note: nothing to show. The connecting itself runs on its own thread.
+            let _ = swap("pc");
+        }
+    }
+}
+
 /// True while a manual swap is in progress: the speakers must not take over in the middle of it.
 #[cfg(target_os = "linux")]
 static SWAPPING: AtomicBool = AtomicBool::new(false);
@@ -496,6 +541,7 @@ fn engine(app: AppHandle, rx: std::sync::mpsc::Receiver<Event>) {
             std::thread::spawn(move || wait_grace(n));
         }
         state = next;
+        AUTOPC.lock().unwrap().observe(&state, mono_ms());
         for a in actions {
             apply(&app, a);
         }

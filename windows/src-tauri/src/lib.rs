@@ -7,6 +7,8 @@ mod audiolink;
 mod audiolink_dsp;
 mod audiolink_logic;
 #[cfg(target_os = "linux")]
+mod audiolink_autopc;
+#[cfg(target_os = "linux")]
 mod audiolink_bt;
 #[cfg(target_os = "linux")]
 mod audiolink_players;
