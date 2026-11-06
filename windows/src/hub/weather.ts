@@ -98,4 +98,4 @@ function build(): HubHost {
   };
 }
 
-export const weatherTool: HubTool = { id: "weather", label: "Weather", build };
+export const weatherTool: HubTool = { id: "weather", group: "today", label: "Weather", build };

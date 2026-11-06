@@ -626,13 +626,23 @@ function hubSection(): HTMLElement {
     h("div", { class: "hint", text:
       "The Hub (the fourth tab of the island) shows this computer's vitals, your server's, a Pomodoro timer, " +
       "notes, your calendar, the weather, a file shelf and quick switches. It reads nothing while it is closed." }),
+    h("h3", { text: "Server & Jinx" }),
     h("div", { class: "row" }, h("label", { text: "Server" }), host,
       h("span", { class: "hint", text: "read over ssh with your key; nothing is installed there" })),
+    h("div", { class: "row" }, h("label", { text: "Services" }), services,
+      h("span", { class: "hint", text: "systemd units shown on the Server tab" })),
+    h("div", { class: "row" }, h("label", { text: "Server activity" }),
+      toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
+      h("span", { class: "hint", text:
+        "Show what the server is busy with (downloads, a backup that is late) in the island's pill and Today. It runs a fixed " +
+        "script over ssh every 30 s while something runs and every 5 min otherwise (never while paused or without a server). " +
+        "What it looks at is listed in ~/.config/coucou/activities.json on the server; see windows/README.md." })),
     h("div", { class: "row" }, h("label", { text: "Share with Jinx" }),
       toggle(settings.jinxShare !== false, (v) => { settings.jinxShare = v; void save(); }),
       h("span", { class: "hint", text:
         "Your notes, calendar and timer are copied to ~/.hermes/state/coucou/ on the server so Jinx can read them. " +
         "Nothing else on the server is touched." })),
+    h("h3", { text: "Privacy & input" }),
     h("div", { class: "row" }, h("label", { text: "Notifications" }),
       toggle(settings.notificationPeek === true, (v) => { settings.notificationPeek = v; void save(); }),
       h("span", { class: "hint", text:
@@ -643,27 +653,21 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Let your phone follow Claude Code and answer its permission requests and questions. It listens to a private " +
         "socket that only an ssh key restricted to `coucou-hook --remote` can reach; nothing is opened on the network." })),
-    h("div", { class: "row" }, h("label", { text: "Server activity" }),
-      toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
-      h("span", { class: "hint", text:
-        "Show what the server is busy with (downloads, a backup that is late) in the island's pill and Today. It runs a fixed " +
-        "script over ssh every 30 s while something runs and every 5 min otherwise (never while paused or without a server). " +
-        "What it looks at is listed in ~/.config/coucou/activities.json on the server; see windows/README.md." })),
     h("div", { class: "row" }, h("label", { text: "Clipboard history" }),
       toggle(settings.clipboardHistory === true, (v) => { settings.clipboardHistory = v; void save(); }),
       h("span", { class: "hint", text:
         "Keep the text you copy, to put back with a click (Hub → Clipboard). Off until you turn it on: passwords pass " +
         "through the clipboard. Kept in memory only (gone when Coucou quits) — pinned items are saved on this computer; " +
         "items marked secret by a password manager are never kept; never shared with Jinx or sent anywhere." })),
+    h("h3", { text: "Weather" }),
     h("div", { class: "row" }, h("label", { text: "Weather" }),
       toggle(settings.weatherOn === true, (v) => { settings.weatherOn = v; void save(); }), weatherCity, weatherCity2,
       h("span", { class: "hint", text: "asks open-meteo.com for these cities, only while the Weather tab is open" })),
+    h("h3", { text: "Uploads" }),
     h("div", { class: "row" }, h("label", { text: "Uploads" }), driveAccount, driveFolder, driveRemote,
       h("span", { class: "hint", text: "Google Drive goes through GNOME Online Accounts (the account above, the folder under My Drive); the rclone remote is the fallback. School OneDrive uses Jinx's sign-in." })),
     h("div", { class: "row" }, h("label", { text: "School folder" }), schoolFolder,
       h("span", { class: "hint", text: "e.g. Por clasificar, or Materias/BIOLOGIA I/Actividades" })),
-    h("div", { class: "row" }, h("label", { text: "Services" }), services,
-      h("span", { class: "hint", text: "systemd units shown on the Server tab" })),
   );
 }
 
@@ -755,6 +759,87 @@ function generalSection(): HTMLElement {
   );
 }
 
+// ── Layout: a sidebar, one category at a time, and a search over all of them ─────────────────
+
+interface Page { id: string; label: string; parts: HTMLElement[] }
+
+function buildShell(pages: Page[]): HTMLElement {
+  let current = pages[0].id;
+  try { current = window.localStorage.getItem("coucou.settingsPage") || current; } catch { /* a convenience */ }
+  const fromHash = window.location.hash.replace("#", "");
+  if (pages.some((p) => p.id === fromHash)) current = fromHash;
+  if (!pages.some((p) => p.id === current)) current = pages[0].id;
+
+  const search = h("input", {
+    type: "search", class: "s-search", placeholder: "Search settings", spellcheck: "false",
+  }) as HTMLInputElement;
+  const nav = h("nav", { class: "s-nav" });
+  const main = h("div", { class: "s-main" });
+  const empty = h("div", { class: "hint s-empty", text: "Nothing matches." });
+  const note = h("div", { class: "hint", text:
+    "No telemetry. Network requests only go to the services you configure yourself." });
+
+  const refresh = () => {
+    const q = search.value.trim().toLowerCase();
+    nav.classList.toggle("searching", q !== "");
+    let hits = 0;
+    for (const page of pages) {
+      let pageHits = 0;
+      for (const sec of page.parts) {
+        const rows = Array.from(sec.querySelectorAll<HTMLElement>(":scope > .row, :scope > .hint, :scope > details"));
+        let secHits = 0;
+        if (!q) {
+          rows.forEach((r) => (r.style.display = ""));
+          secHits = 1;
+        } else {
+          const title = (sec.querySelector("h2")?.textContent ?? "").toLowerCase();
+          const titleHit = title.includes(q);
+          for (const r of rows) {
+            const text = (r.textContent ?? "").toLowerCase();
+            const on = titleHit || text.includes(q);
+            r.style.display = on ? "" : "none";
+            if (on) secHits++;
+          }
+          if (titleHit) secHits = Math.max(secHits, 1);
+        }
+        sec.style.display = secHits ? "" : "none";
+        if (secHits) pageHits++;
+      }
+      const showPage = q ? pageHits > 0 : page.id === current;
+      page.parts.forEach((sec) => { if (!showPage) sec.style.display = "none"; });
+      nav.querySelector(`[data-page="${page.id}"]`)?.classList.toggle("on", !q && page.id === current);
+      nav.querySelector(`[data-page="${page.id}"]`)?.classList.toggle("hit", !!q && pageHits > 0);
+      hits += q ? pageHits : 1;
+    }
+    empty.style.display = hits ? "none" : "";
+  };
+
+  for (const page of pages) {
+    const b = h("button", { "data-page": page.id, text: page.label });
+    b.addEventListener("click", () => {
+      current = page.id;
+      search.value = "";
+      try { window.localStorage.setItem("coucou.settingsPage", current); } catch { /* ok */ }
+      refresh();
+      window.scrollTo({ top: 0 });
+    });
+    nav.append(b);
+    main.append(...page.parts);
+  }
+  main.append(empty, note);
+  search.addEventListener("input", refresh);
+  refresh();
+
+  return h("div", { class: "s-shell" },
+    h("aside", { class: "s-side" },
+      h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
+      search,
+      nav,
+    ),
+    main,
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -777,20 +862,13 @@ async function main() {
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 
   clear(root);
-  root.append(
-    h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
-    apiSection(hasKey),
-    integrationsSection(present),
-    mochiSection(),
-    musicSection(),
-    hubSection(),
-    generalSection(),
-    h("div", {
-      class: "hint",
-      text: "No telemetry. Network requests only go to the services you configure yourself.",
-    }),
-  );
+  root.append(buildShell([
+    { id: "claude", label: "Claude", parts: [claudeSection(status), apiSection(hasKey)] },
+    { id: "integrations", label: "Integrations", parts: [integrationsSection(present)] },
+    { id: "looks", label: "Mochi & music", parts: [mochiSection(), musicSection()] },
+    { id: "hub", label: "Hub", parts: [hubSection()] },
+    { id: "general", label: "General", parts: [generalSection()] },
+  ]));
 
   void onEvent<Settings>("settings-changed", (s) => {
     settings = { ...settings, ...s };

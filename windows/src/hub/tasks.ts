@@ -446,4 +446,4 @@ function build(): HubHost {
   };
 }
 
-export const tasksTool: HubTool = { id: "tasks", label: "Tasks", typing: true, build };
+export const tasksTool: HubTool = { id: "tasks", group: "today", label: "Tasks", typing: true, build };

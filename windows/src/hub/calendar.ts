@@ -140,4 +140,4 @@ function build(): HubHost {
   };
 }
 
-export const calendarTool: HubTool = { id: "calendar", label: "Calendar", build };
+export const calendarTool: HubTool = { id: "calendar", group: "today", label: "Calendar", build };

@@ -1,9 +1,12 @@
 /* The Hub: sub-tabs and the panel of the tool in front. */
 .hub-wrap { height: 100%; box-sizing: border-box; padding: 2px 16px 8px 104px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.hub-tabs { display: flex; gap: 4px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; flex: 0 0 auto; padding-top: 2px; }
-.hub-tabs::-webkit-scrollbar { display: none; }
-.hub-tabs button { font: inherit; font-size: 10.5px; padding: 2px 10px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.14); background: transparent; color: inherit; opacity: 0.6; cursor: pointer; flex: 0 0 auto; }
-.hub-tabs button.on { opacity: 1; background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
+.hub-groups { display: flex; gap: 4px; flex: 0 0 auto; padding-top: 2px; }
+.hub-groups button { font: inherit; font-size: 10.5px; padding: 2px 10px; border-radius: 99px; border: 1px solid rgba(255,255,255,0.14); background: transparent; color: inherit; opacity: 0.6; cursor: pointer; flex: 0 0 auto; }
+.hub-groups button.on { opacity: 1; background: rgba(99,102,241,0.2); border-color: rgba(129,140,248,0.6); }
+/* The open group's own tabs: quieter than the group chips, an underline instead of a pill. */
+.hub-tabs { display: flex; gap: 12px; flex: 0 0 auto; padding: 0 2px; }
+.hub-tabs button { font: inherit; font-size: 10.5px; padding: 1px 0 2px; border: 0; border-bottom: 1.5px solid transparent; background: transparent; color: inherit; opacity: 0.5; cursor: pointer; flex: 0 0 auto; }
+.hub-tabs button.on { opacity: 1; border-bottom-color: rgba(129,140,248,0.85); }
 .hub-body { flex: 1 1 auto; min-height: 0; overflow: hidden; position: relative; }
 .hub-soon { opacity: 0.5; font-size: 12px; padding: 20px 0; }
 .hub-hint { font-size: 11px; opacity: 0.6; line-height: 1.4; }
@@ -185,12 +188,12 @@
 .hub-body > * { transform-origin: 50% 0; }
 @keyframes hub-in { from { opacity: 0; transform: translateX(var(--dx, 12px)); } to { opacity: 1; transform: none; } }
 .hub-enter { animation: hub-in 0.24s cubic-bezier(0.3, 1.1, 0.4, 1) both; }
-.hub-tabs.fade-r { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent); }
-.hub-tabs.fade-l { -webkit-mask-image: linear-gradient(90deg, transparent, #000 22px); mask-image: linear-gradient(90deg, transparent, #000 22px); }
-.hub-tabs.fade-l.fade-r { -webkit-mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
-.hub-tabs button, .hub-btn, .qk-btn, .tk-day, .tk-box { transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease-out; }
-.hub-tabs button:hover { opacity: 0.9; }
-.hub-btn:active, .qk-btn:active, .tk-day:active, .hub-tabs button:active { transform: scale(0.95); }
+
+
+
+.hub-groups button, .hub-tabs button, .hub-btn, .qk-btn, .tk-day, .tk-box { transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease-out; }
+.hub-groups button:hover, .hub-tabs button:hover { opacity: 0.9; }
+.hub-btn:active, .qk-btn:active, .tk-day:active, .hub-groups button:active, .hub-tabs button:active { transform: scale(0.95); }
 .hub-btn:disabled:active, .qk-btn:disabled:active { transform: none; }
 .tk-box:hover { border-color: rgba(255,255,255,0.65); }
 .tk-box:active { transform: scale(0.85); }

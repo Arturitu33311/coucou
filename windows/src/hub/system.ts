@@ -149,5 +149,5 @@ function buildServer(): HubHost {
   };
 }
 
-export const systemTool: HubTool = { id: "system", label: "System", build: buildSystem };
-export const serverTool: HubTool = { id: "server", label: "Server", build: buildServer };
+export const systemTool: HubTool = { id: "system", group: "system", label: "System", build: buildSystem };
+export const serverTool: HubTool = { id: "server", group: "system", label: "Server", build: buildServer };

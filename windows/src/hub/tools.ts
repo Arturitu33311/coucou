@@ -1,6 +1,7 @@
-// The tools the Hub offers, in the order of its sub-tabs.
+// The tools the Hub offers. They come in groups (a row of four chips), each with a few sub-tabs, so
+// the strip never needs to scroll. The order here is the order of ← / → across the whole Hub.
 
-import type { HubTool } from "./types";
+import type { HubGroup, HubTool } from "./types";
 import { serverTool, systemTool } from "./system";
 import { pomodoroTool } from "./pomodoro";
 import { shelfTool } from "./shelf";
@@ -13,7 +14,20 @@ import { weatherTool } from "./weather";
 import { quickTool } from "./quick";
 import { todayTool } from "./today";
 
-export const TOOLS: HubTool[] = [
-  todayTool, systemTool, serverTool, pomodoroTool, tasksTool, workspacesTool, notesTool, clipboardTool,
-  calendarTool, weatherTool, quickTool, shelfTool,
+export const HUB_GROUPS: { id: HubGroup; label: string }[] = [
+  { id: "today", label: "Today" },
+  { id: "focus", label: "Focus" },
+  { id: "system", label: "System" },
+  { id: "files", label: "Files" },
 ];
+
+export const TOOLS: HubTool[] = [
+  todayTool, tasksTool, calendarTool, weatherTool,
+  pomodoroTool, notesTool, workspacesTool,
+  systemTool, serverTool, quickTool,
+  clipboardTool, shelfTool,
+];
+
+export function toolsOf(group: HubGroup): HubTool[] {
+  return TOOLS.filter((t) => t.group === group);
+}

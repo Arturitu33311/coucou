@@ -206,4 +206,4 @@ function build(): HubHost {
   };
 }
 
-export const todayTool: HubTool = { id: "today", label: "Today", build };
+export const todayTool: HubTool = { id: "today", group: "today", label: "Today", build };

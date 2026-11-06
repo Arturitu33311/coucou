@@ -162,4 +162,4 @@ function build(): HubHost {
   };
 }
 
-export const clipboardTool: HubTool = { id: "clipboard", label: "Clipboard", typing: true, build };
+export const clipboardTool: HubTool = { id: "clipboard", group: "files", label: "Clipboard", typing: true, build };
