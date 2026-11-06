@@ -107,6 +107,11 @@ object PhoneSettings {
     /** Where the quick Jinx's bridge lives (https through Tailscale Serve, port 8898; no trailing slash). */
     const val G2_URL_DEFAULT = "https://server.tail3dac6b.ts.net:8898"
 
+    /** Read Jinx's notices aloud, with her voice (off until Alan turns it on). */
+    fun readAloud(c: Context): Boolean = prefs(c).getBoolean("readAloud", false)
+
+    fun setReadAloud(c: Context, on: Boolean) { prefs(c).edit().putBoolean("readAloud", on).apply() }
+
     fun g2Url(c: Context): String = prefs(c).getString("g2Url", G2_URL_DEFAULT) ?: G2_URL_DEFAULT
 
     fun saveG2Url(c: Context, v: String) {

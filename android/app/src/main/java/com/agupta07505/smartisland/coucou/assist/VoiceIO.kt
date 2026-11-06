@@ -12,9 +12,6 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import java.util.Locale
 
 /** The recognizer to use: the system's own (Google's), never Jinx's placeholder, which always fails. */
 internal fun pickRecognizer(context: Context): ComponentName? {
@@ -87,47 +84,5 @@ class VoiceInput(
     companion object {
         /** The recognizer's level (about -2…10 dB) as 0…1 for the orb. */
         fun levelOf(rmsdB: Float): Float = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-    }
-}
-
-/** Jinx's voice on the phone: the system's text-to-speech, in Mexican Spanish when it has it. */
-class Speaker(context: Context, private val onState: (speaking: Boolean) -> Unit) {
-    private var ready = false
-    private var pending: String? = null
-    private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status ->
-        if (status == TextToSpeech.SUCCESS) {
-            val tryLocale = listOf(Locale("es", "MX"), Locale("es", "US"), Locale("es", "ES"))
-                .firstOrNull { tts.isLanguageAvailable(it) >= TextToSpeech.LANG_AVAILABLE }
-            tryLocale?.let { tts.language = it }
-            ready = true
-            pending?.let { say(it) }
-            pending = null
-        }
-    }.also {
-        it.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) = onState(true)
-            override fun onDone(utteranceId: String?) = onState(false)
-            @Deprecated("Deprecated in Java") override fun onError(utteranceId: String?) = onState(false)
-        })
-    }
-
-    fun say(text: String) {
-        val clean = spokenForm(text)
-        if (clean.isEmpty()) return
-        if (!ready) { pending = text; return }
-        tts.speak(clean, TextToSpeech.QUEUE_FLUSH, null, "jinx")
-    }
-
-    fun stop() { tts.stop(); onState(false) }
-    fun shutdown() { tts.stop(); tts.shutdown() }
-
-    companion object {
-        /** A reply as it should be read aloud: no markdown marks, no links, bounded. */
-        fun spokenForm(text: String): String = text
-            .replace(Regex("https?://\\S+"), "")
-            .replace(Regex("[*_`#>~]+"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(600)
     }
 }

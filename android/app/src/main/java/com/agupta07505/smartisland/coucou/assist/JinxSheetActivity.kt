@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -114,7 +115,7 @@ class JinxSheetActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         // The screen it read belongs to this visit.
-        if (!askingPermission && !isChangingConfigurations) ScreenHolder.clear()
+        if (!askingPermission && !isChangingConfigurations) { ScreenHolder.clear(); BackdropHolder.clear() }
     }
 }
 
@@ -127,6 +128,8 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
     val activity = context as? JinxSheetActivity
     val model = viewModel<AssistModel>()
     val ui by model.ui.collectAsState()
+    val backdrop by BackdropHolder.flow.collectAsState()
+    var rootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     LifecycleResumeEffect(model) {
         model.onOpen()
@@ -137,7 +140,7 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
 
     var draft by remember { mutableStateOf("") }
     var listening by remember { mutableStateOf(false) }
-    var speaking by remember { mutableStateOf(false) }
+    val speaking by JinxSpeech.speaking.collectAsState()
     var level by remember { mutableFloatStateOf(0f) }
     var heard by remember { mutableStateOf("") }
     var byVoice by remember { mutableStateOf(false) }
@@ -146,7 +149,6 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     val animate = remember { animationsOn(context) }
 
-    val speaker = remember { Speaker(context) { speaking = it } }
     val voice = remember {
         VoiceInput(
             context,
@@ -169,15 +171,15 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
             },
         )
     }
-    DisposableEffect(Unit) { onDispose { voice.stop(); speaker.shutdown() } }
+    DisposableEffect(Unit) { onDispose { voice.stop(); JinxSpeech.stop() } }
 
     // A new answer: read it aloud if the question was spoken.
     LaunchedEffect(ui.replySeq) {
-        if (ui.replySeq > 0 && byVoice) ui.reply?.let { speaker.say(it) }
+        if (ui.replySeq > 0 && byVoice) ui.reply?.let { JinxSpeech.say(context, it) }
     }
 
     fun startListening() {
-        speaker.stop()
+        JinxSpeech.stop()
         voiceNote = null
         if (!voice.available()) { voiceNote = "Este teléfono no tiene reconocimiento de voz."; return }
         listening = true
@@ -240,7 +242,7 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
 
     // The whole window is transparent: a tap anywhere outside the dock closes Jinx.
     Box(
-        Modifier.fillMaxSize().clickable(
+        Modifier.fillMaxSize().onSizeChanged { rootSize = it }.clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             role = Role.Button,
@@ -248,20 +250,20 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
             onClick = onClose,
         ),
     ) {
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+        // One pane of frosted glass holds the bubble, the chips and the capsule; the app stays visible around it.
+        GlassCard(
+            backdrop = backdrop,
+            rootSize = rootSize,
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .imePadding()
-                // Only so the text reads over any app; the app itself stays visible.
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {})
                 .navigationBarsPadding()
-                .padding(start = 12.dp, end = 12.dp, top = 24.dp, bottom = 10.dp),
+                .padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = {}),
         ) {
             AnimatedVisibility(visible = heardLine != null || answerLine != null) {
                 Column(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(20.dp)).background(CoucouColors.SurfaceHigh.copy(alpha = 0.94f))
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                    Modifier.fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 14.dp)
                         .semantics { liveRegion = LiveRegionMode.Polite },
                 ) {
                     heardLine?.let { Text(it, color = CoucouColors.TextSecondary, fontSize = 15.sp, lineHeight = 21.sp, maxLines = 3, overflow = TextOverflow.Ellipsis) }
@@ -271,7 +273,7 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
 
             ui.screenApp?.let { app ->
                 Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 4.dp),
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -284,8 +286,8 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
 
             // The capsule, as on the laptop: Mochi and the bars of the voice; the keyboard and the microphone at its end.
             Row(
-                Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(28.dp))
-                    .background(CoucouColors.SurfaceHigh.copy(alpha = 0.96f)).padding(start = 12.dp),
+                Modifier.fillMaxWidth().padding(6.dp).heightIn(min = 56.dp).clip(RoundedCornerShape(26.dp))
+                    .background(Color.White.copy(alpha = 0.08f)).padding(start = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 MochiGlyph(size = 32.dp, tint = MochiEmerald, mood = mood, modifier = Modifier.semantics { contentDescription = phaseLabel })
@@ -323,7 +325,7 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
                 } else {
                     Box(
                         Modifier.weight(1f).heightIn(min = 48.dp).clickable(role = Role.Button, onClickLabel = if (speaking) "Callar a Jinx" else "Hablar con Jinx") {
-                            if (speaking) speaker.stop() else onMic()
+                            if (speaking) JinxSpeech.stop() else onMic()
                         },
                         contentAlignment = Alignment.CenterStart,
                     ) {
@@ -333,7 +335,7 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
                             VoiceBars(phase, level, color = if (listening) CoucouColors.Accent else CoucouColors.TextSecondary, animate = animate)
                         }
                     }
-                    IconButton(onClick = { speaker.stop(); typing = true }, enabled = !listening && !ui.busy) {
+                    IconButton(onClick = { JinxSpeech.stop(); typing = true }, enabled = !listening && !ui.busy) {
                         Icon(Icons.Rounded.Keyboard, "Escribir", tint = CoucouColors.TextSecondary)
                     }
                     Box(

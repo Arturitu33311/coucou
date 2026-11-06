@@ -18,7 +18,7 @@ python3 -m unittest discover -s "$here/../jinx-assist" -p 'test_g2*.py' >/dev/nu
 bash "$here/../vga-panel/deploy.sh"
 
 ssh -o BatchMode=yes "$host" "mkdir -p $dest ~/.config/systemd/user"
-for f in g2_bridge.py g2_stt.py g2_lite.py; do
+for f in g2_bridge.py g2_stt.py g2_lite.py g2_speak.py; do
   ssh -o BatchMode=yes "$host" "[ -e $dest/$f ] && cp -p $dest/$f $dest/$f.bak-$stamp || true"
   scp -q "$here/$f" "$host:g2-bridge/$f"
 done

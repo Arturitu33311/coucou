@@ -35,7 +35,17 @@ class JinxSession(private val service: JinxSessionService) : VoiceInteractionSes
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
         super.onHandleAssist(data, structure, content)
+        // A sensitive app (bank, wallet, passwords) leaves no screen and no picture behind the glass.
+        val pkg = structure?.activityComponent?.packageName
+        BackdropHolder.sensitive = pkg != null && SensitiveApps.isSensitive(pkg)
+        if (BackdropHolder.sensitive) BackdropHolder.put(null)
         ScreenHolder.put(runCatching { ScreenReader.read(service, structure) }.getOrNull())
+    }
+
+    /** The system's picture of the app under Jinx: only to frost the glass behind the panel (see [BackdropHolder]). */
+    override fun onHandleScreenshot(screenshot: android.graphics.Bitmap?) {
+        super.onHandleScreenshot(screenshot)
+        BackdropHolder.put(screenshot)
     }
 }
 

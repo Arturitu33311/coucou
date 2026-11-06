@@ -121,6 +121,15 @@ internal fun AssistContent(
                         Icon(Icons.Rounded.MoreVert, "Más", tint = CoucouColors.TextSecondary)
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        var readAloud by remember { mutableStateOf(com.agupta07505.smartisland.coucou.phone.PhoneSettings.readAloud(ctx)) }
+                        DropdownMenuItem(
+                            text = { Text(if (readAloud) "Leer los avisos de Jinx en voz alta: sí" else "Leer los avisos de Jinx en voz alta: no") },
+                            onClick = {
+                                readAloud = !readAloud
+                                com.agupta07505.smartisland.coucou.phone.PhoneSettings.setReadAloud(ctx, readAloud)
+                            },
+                        )
                         DropdownMenuItem(text = { Text("Sincronizar con la laptop") }, onClick = { menu = false; onSync() })
                         DropdownMenuItem(text = { Text("Provisionar (1.ª vez)") }, onClick = { menu = false; onProvision() })
                         DropdownMenuItem(
@@ -280,6 +289,7 @@ private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 @Composable
 private fun Bubble(l: ChatLine, announce: Boolean = false) {
     val mine = !l.fromJinx
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val shape = if (mine) RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
     val meta = listOfNotNull(
         l.sourceLabel,
@@ -287,7 +297,10 @@ private fun Bubble(l: ChatLine, announce: Boolean = false) {
     ).joinToString(" · ")
     Column(
         // One thing for TalkBack: who said it, what, and when; the newest of Jinx's is read out when it arrives.
-        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
+        Modifier.fillMaxWidth().then(
+            // A tap on one of Jinx's lines reads it aloud, with her voice.
+            if (mine) Modifier else Modifier.clickable(onClickLabel = "Escucharlo") { JinxSpeech.say(ctx, l.text) },
+        ).semantics(mergeDescendants = true) {
             contentDescription = (if (mine) "Tú" else "Jinx") + (if (meta.isNotEmpty()) ", $meta" else "") + ": " + l.text
             if (announce) liveRegion = LiveRegionMode.Polite
         },
