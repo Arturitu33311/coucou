@@ -1427,6 +1427,13 @@ function generalSection(): HTMLElement {
         "(and goes back after). Resting on the island itself keeps it where it is." }),
     ),
     h("div", { class: "row" },
+      h("label", { text: "Stay awake" }),
+      toggle(settings.keepAwake === true, (v) => { settings.keepAwake = v; void save(); }),
+      h("span", { class: "hint", text:
+        "While an agent is working, ask the system not to suspend (the screen may still lock). It lets go two minutes " +
+        "after the agents stop, and always within three if Coucou quits. Off until you turn it on." }),
+    ),
+    h("div", { class: "row" },
       h("label", { text: "Island position" }),
       offset,
       offsetValue,

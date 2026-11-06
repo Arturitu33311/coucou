@@ -223,6 +223,9 @@ async function main() {
   registerDictation(island);
   // Long hours with the agents and no break: Mochi yawns now and then (Mac 0.6, #970).
   const tired = new TiredClock();
+  let tick = 0;
+  let holding = false;
+  let idleTicks = 0;
   window.setInterval(() => {
     if (State.paused) return;
     const working = State.tasks.some(
@@ -231,6 +234,20 @@ async function main() {
         (t.state === "working" || t.state === "thinking" || t.state === "searching"),
     );
     if (tired.update(Date.now(), working)) island.emote("sleepy", 4);
+    // Keep the computer from suspending while an agent works (opt-in). The lock lasts three minutes
+    // and is renewed every minute, so a crash cannot leave the laptop awake for good.
+    tick++;
+    if (State.settings.keepAwake && working) {
+      idleTicks = 0;
+      if (!holding || tick % 2 === 0) {
+        holding = true;
+        void Bridge.keepAwake(true);
+      }
+    } else if (holding && ++idleTicks >= 4) {
+      // Two quiet minutes (or the setting turned off): let go.
+      holding = false;
+      void Bridge.keepAwake(false);
+    }
   }, 30_000);
   registerSysState(island);
   registerMic(island);

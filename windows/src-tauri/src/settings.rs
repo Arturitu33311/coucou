@@ -58,6 +58,9 @@ pub struct Settings {
     /// The island steps aside when the pointer goes for the buttons of a window behind it.
     #[serde(default = "default_true")]
     pub dodge_windows: bool,
+    /// While an agent works, ask the system not to suspend (awake.rs). Off until turned on.
+    #[serde(default)]
+    pub keep_awake: bool,
     /// Jinx may control the island from the server (music, pills, Mochi, the Hub, apps): island_cmd.rs.
     #[serde(default = "default_true")]
     pub jinx_island: bool,
@@ -312,6 +315,7 @@ impl Default for Settings {
             hover_open_delay: default_hover_delay(),
             island_offset_x: 0,
             dodge_windows: true,
+            keep_awake: false,
             jinx_island: true,
             jinx_close_apps: default_jinx_close_apps(),
             finish_sound: default_finish_sound(),
@@ -630,6 +634,7 @@ mod tests {
   "hoverOpenDelay": 1.5,
   "islandOffsetX": -120,
   "dodgeWindows": false,
+  "keepAwake": false,
   "jinxIsland": false,
   "jinxCloseApps": "Spotify, Notes",
   "finishSound": "file",
@@ -648,6 +653,8 @@ mod tests {
   "notificationPeek": true,
   "remoteEnabled": true,
   "audiolinkEnabled": true,
+  "musicHandoff": "off",
+  "handoffDwellS": 90,
   "micIndicator": false,
   "clipboardHistory": true,
   "activitiesOn": true,
@@ -1166,6 +1173,7 @@ mod tests {
                 "hoverOpenDelay",
                 "islandOffsetX",
                 "dodgeWindows",
+                "keepAwake",
                 "jinxIsland",
                 "jinxCloseApps",
                 "finishSound",
@@ -1184,6 +1192,8 @@ mod tests {
                 "notificationPeek",
                 "remoteEnabled",
                 "audiolinkEnabled",
+                "musicHandoff",
+                "handoffDwellS",
                 "micIndicator",
                 "clipboardHistory",
                 "activitiesOn",

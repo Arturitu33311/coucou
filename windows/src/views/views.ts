@@ -30,6 +30,7 @@ import { SPOTIFY_ID } from "../core/spotify";
 import type { WornOutfit as Outfit, OutfitSelection } from "../mochi/outfits";
 import { language, t, tl, type Msg } from "../i18n/i18n";
 import type { ViewCommand } from "../island/shortcuts";
+import { riskTags } from "../island/risk";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -617,7 +618,12 @@ function buildApproval(actions: ViewActions): ViewHost {
         if (reasonsOpen) { reasonsOpen = false; if (rowKey === "built") buildRow(); }
       }
       clear(who);
-      who.append(agentWho(State.focusTask, t("needs permission")));
+      const whoRow = agentWho(State.focusTask, t("needs permission"));
+      // What the command reaches ("deletes files", "as root"…): read-only hints beside the name.
+      for (const tag of riskTags(State.pendingApproval?.command ?? "")) {
+        whoRow.append(h("span", { class: `risk-tag ${tag.level}`, text: tag.label }));
+      }
+      who.append(whoRow);
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.

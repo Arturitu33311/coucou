@@ -274,6 +274,8 @@ export const Bridge = {
    */
   codexPlanUsage: () => call<unknown>("codex_plan_usage"),
 
+  /** Hold (true, renewed every minute) or drop (false) the "do not suspend" lock. */
+  keepAwake: (on: boolean) => call<void>("keep_awake", { on }),
   /** Deny, and tell the agent why (one of the island's fixed reasons, never typed text). */
   approvalDenyNote: (requestId: string, note: string) =>
     call<void>("approval_deny_note", { requestId, note }),

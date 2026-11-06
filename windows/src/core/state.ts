@@ -226,6 +226,8 @@ export interface Settings {
   islandOffsetX: number;
   /** The island steps aside when the pointer goes for the buttons of a window behind it. */
   dodgeWindows: boolean;
+  /** Ask the system not to suspend while an agent works. */
+  keepAwake: boolean;
   /** Jinx may control the island from the server: music, pills, Mochi, the Hub, apps (src-tauri/src/island_cmd.rs). */
   jinxIsland: boolean;
   /** The apps Jinx may ask to close, by name, separated by commas. */
@@ -338,6 +340,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hoverOpenDelay: 0.9,
   islandOffsetX: 0,
   dodgeWindows: true,
+  keepAwake: false,
   jinxIsland: true,
   jinxCloseApps: "Spotify, VLC, Rhythmbox, Celluloid, Totem, Document Viewer, Image Viewer, Calculator, Files, Text Editor",
   finishSound: "finish",

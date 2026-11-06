@@ -22,6 +22,7 @@ mod clip_sync;
 mod calendar;
 mod chat;
 mod claude;
+mod awake;
 mod claude_sessions;
 mod remote_agents;
 mod clipboard;
@@ -528,6 +529,20 @@ async fn codex_plan_usage() -> Option<serde_json::Value> {
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     recap::record_decision(&app, &request_id, &decision);
     pipe::answer(&app, &request_id, &decision);
+}
+
+/// Keep the computer from suspending (true) or let it (false); the island renews it while agents work.
+#[tauri::command]
+async fn keep_awake(on: bool) -> Result<(), String> {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let result = tauri::async_runtime::spawn_blocking(move || awake::set(on)).await.map_err(|e| e.to_string())?;
+    // Said once in the log, not every minute.
+    if let Err(e) = &result {
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            log::line(format!("keep awake: {e}"));
+        }
+    }
+    result
 }
 
 /// Deny, and tell the agent why (so it changes course instead of retrying).
@@ -1458,6 +1473,7 @@ pub fn run() {
             codex_plan_usage,
             approval_decision,
             approval_deny_note,
+            keep_awake,
             approval_answer,
             approval_ack,
             approval_decline,
@@ -1709,6 +1725,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 phone_link::stop_on_exit(app);
                 notes::shutdown(app);
+                awake::release();
             }
         });
 }
