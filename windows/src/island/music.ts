@@ -206,7 +206,13 @@ function patch(key: string, change: Partial<MusicInfo>) {
   State.notify();
 }
 
-async function loadArt(key: string, url: string) {
+/**
+ * Loads the cover of `url` for the track `key`. An answer counts only while that is still the cover on screen: the
+ * laptop swaps the phone's cover file when a new one arrives (the old file is deleted), so a read of the old one can
+ * fail after the new one was loaded and, without this check, blank it.
+ */
+async function loadArt(key: string, url: string, retried = false) {
+  const current = () => State.music?.key === key && State.music.artUrl === url;
   if (!url) {
     patch(key, { art: null, rgb: null, accent: MUSIC_RED });
     setPillColor(MUSIC_RED);
@@ -214,11 +220,19 @@ async function loadArt(key: string, url: string) {
   }
   try {
     const art = await Bridge.musicArt(url);
+    if (!current()) return;
     const rgb = await averageColor(art);
+    if (!current()) return;
     const accent = rgb ? readableAccent(rgb) : MUSIC_RED;
     patch(key, { art, rgb, accent });
-    if (State.music?.key === key) setPillColor(accent);
+    setPillColor(accent);
   } catch {
+    if (!current()) return;
+    // A cover that has only just been written may not be readable yet: once more, a moment later.
+    if (!retried) {
+      window.setTimeout(() => void loadArt(key, url, true), 500);
+      return;
+    }
     // No art (a web URL while online fetching is off, a missing file): the card
     // keeps its note icon and the default colour.
     patch(key, { art: null, rgb: null, accent: MUSIC_RED });

@@ -117,6 +117,15 @@ pub fn setup(app: &AppHandle) {
         }
         match builder.build() {
             Ok(win) => {
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = win.with_webview(|webview| {
+                        use webkit2gtk::{SettingsExt, WebViewExt};
+                        if let Some(settings) = webview.inner().settings() {
+                            settings.set_media_playback_requires_user_gesture(false);
+                        }
+                    });
+                }
                 if !platform::prepare_pill_window(&win, mode) {
                     let _ = win.destroy();
                     mode = DesktopMode::Off;

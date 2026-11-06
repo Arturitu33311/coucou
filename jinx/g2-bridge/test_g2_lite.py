@@ -99,6 +99,20 @@ class HaTest(unittest.TestCase):
         self.assertEqual([e["entity_id"] for e in ha.find("puerta")], ["lock.puerta"])  # readable, not controllable
         self.assertEqual(ha.find("auto"), [])
 
+    def test_find_understands_how_the_same_thing_is_said(self):
+        # A TV called "Tv habitacion" with an id that says nothing ("55_oled…"): "la tele" has to find it.
+        tv = {"entity_id": "media_player.55_oled_qn55s90fafxzx", "state": "on", "attributes": {"friendly_name": "Tv habitación"}}
+        ha = self.make(self.STATES + [tv])
+        for q in ("tele", "televisor", "television", "tv", "tele habitacion", "pantalla"):
+            self.assertEqual([e["entity_id"] for e in ha.find(q)], ["media_player.55_oled_qn55s90fafxzx"], q)
+        self.assertEqual([e["entity_id"] for e in ha.find("lampara salon")], ["light.salon"])
+        self.assertEqual(ha.find("tele cocina"), [])  # a synonym does not make unrelated words match
+        # A box whose name merely contains "tv" ("INTV 1000") is not a TV: short words count only as whole words.
+        box = {"entity_id": "media_player.intv_1000", "state": "paused", "attributes": {"friendly_name": "INTV 1000"}}
+        ha2 = self.make(self.STATES + [tv, box])
+        self.assertEqual([e["entity_id"] for e in ha2.find("tele")], ["media_player.55_oled_qn55s90fafxzx"])
+        self.assertEqual([e["entity_id"] for e in ha2.find("intv")], ["media_player.intv_1000"])
+
     def test_states_are_cached_for_30_s(self):
         ha = self.make(self.STATES)
         ha.find("luz")
@@ -127,12 +141,117 @@ class HaTest(unittest.TestCase):
             ha.states()
 
 
+class SeqHA(FakeHA):
+    """Un Home Assistant cuyo aparato va cambiando de estado cada vez que se mira."""
+    def __init__(self, states):
+        super().__init__()
+        self.seq = list(states)
+
+    def state(self, e):
+        return {"entity_id": e, "state": self.seq.pop(0) if len(self.seq) > 1 else self.seq[0]}
+
+
+class VerifyTest(unittest.TestCase):
+    def run_action(self, states, service="turn_on", domain="media_player", entity="media_player.tele"):
+        lite = L.Lite(None, SeqHA(states), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": domain, "servicio": service, "entity_id": entity})
+
+    def test_turning_on_is_confirmed_when_the_state_changes(self):
+        out = self.run_action(["off", "off", "paused"])
+        self.assertIn("ahora está «paused»", out)
+        self.assertNotIn("NO digas", out)
+
+    def test_turning_on_that_does_nothing_is_not_reported_as_done(self):
+        out = self.run_action(["off"])
+        self.assertIn("sigue «off»", out)
+        self.assertIn("NO digas que funcionó", out)
+
+    def test_turning_off_is_confirmed_and_a_failed_one_is_reported(self):
+        self.assertIn("ahora está «off»", self.run_action(["on", "off"], service="turn_off"))
+        self.assertIn("sigue «on»", self.run_action(["on"], service="turn_off"))
+
+    def test_other_services_are_not_checked(self):
+        out = self.run_action(["off"], service="volume_set")
+        self.assertEqual(out, "hecho")
+
+
+class SlowCallHA(SeqHA):
+    """Un Home Assistant que tarda más de la cuenta en confirmar la orden, aunque el aparato sí la cumpla."""
+    def call(self, d, s, e, data=None):
+        raise L.HaTimeout("Home Assistant tardó en contestar")
+
+
+class LevelHA(FakeHA):
+    """Un aparato con volumen: cada vez que se mira, el siguiente valor de la lista."""
+    def __init__(self, levels):
+        super().__init__()
+        self.levels = list(levels)
+
+    def state(self, e):
+        return {"entity_id": e, "state": "on", "volume_level": self.levels.pop(0) if len(self.levels) > 1 else self.levels[0]}
+
+
+class VolumeTest(unittest.TestCase):
+    def run_vol(self, levels, service, data=None):
+        lite = L.Lite(None, LevelHA(levels), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": "media_player", "servicio": service, "entity_id": "media_player.tele",
+                                        "datos": data or {}})
+
+    def test_volume_up_is_confirmed_only_when_the_level_rises(self):
+        self.assertIn("ahora es 12%", self.run_vol([0.11, 0.11, 0.12], "volume_up"))
+        out = self.run_vol([0.11], "volume_up")
+        self.assertIn("sigue en 11%", out)
+        self.assertIn("NO digas que cambió", out)
+
+    def test_volume_down_and_set(self):
+        self.assertIn("ahora es 10%", self.run_vol([0.11, 0.10], "volume_down"))
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_down"))
+        self.assertIn("ahora es 30%", self.run_vol([0.11, 0.30], "volume_set", {"volume_level": 0.3}))
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_set", {"volume_level": 0.3}))
+        # Two points away is not "done" on a TV that moves one point at a time.
+        self.assertIn("sigue en 11%", self.run_vol([0.11], "volume_set", {"volume_level": 0.09}))
+        self.assertIn("ahora es 9%", self.run_vol([0.11, 0.09], "volume_set", {"volume_level": 0.09}))
+
+    def test_a_device_without_volume_is_not_checked(self):
+        lite = L.Lite(None, SeqHA(["on"]), lambda t: "x", sleep=lambda s: None)  # state() has no volume_level
+        out = lite._tool("ha_accion", {"dominio": "media_player", "servicio": "volume_up", "entity_id": "media_player.x"})
+        self.assertEqual(out, "hecho")
+
+
+class TimeoutTest(unittest.TestCase):
+    def action(self, states, service):
+        lite = L.Lite(None, SlowCallHA(states), lambda t: "x", sleep=lambda s: None)
+        return lite._tool("ha_accion", {"dominio": "media_player", "servicio": service, "entity_id": "media_player.tele"})
+
+    def test_a_slow_confirmation_is_checked_against_the_real_state(self):
+        # The TV did turn on, only Home Assistant answered late: that is a success, not "no llego a Home Assistant".
+        self.assertIn("ahora está «paused»", self.action(["off", "paused"], "turn_on"))
+        self.assertIn("sigue «off»", self.action(["off"], "turn_on"))
+
+    def test_a_slow_answer_to_anything_else_is_not_claimed_as_done(self):
+        self.assertIn("no sé si hizo efecto", self.action(["on"], "volume_set"))
+
+    def test_the_request_waits_longer_for_orders_than_for_reads(self):
+        seen = []
+
+        def opener(req, timeout=0):
+            seen.append((req.get_method(), timeout))
+            raise TimeoutError("timed out")
+        ha = L.HomeAssistant("http://ha", lambda: "T", opener)
+        with self.assertRaises(L.HaTimeout):
+            ha.call("media_player", "turn_on", "media_player.tele")
+        with self.assertRaises(L.HaTimeout):
+            ha.states()
+        self.assertEqual(seen, [("POST", L.SERVICE_TIMEOUT), ("GET", 8)])
+
+
 class LiteTest(unittest.TestCase):
     def make(self, script, now=None):
         self.llm = FakeLLM(script)
         self.ha = FakeHA()
         self.handed = []
-        return L.Lite(self.llm, self.ha, lambda t: self.handed.append(t) or "pasado", now=now or (lambda: 100.0))
+        return L.Lite(self.llm, self.ha, lambda t: self.handed.append(t) or "pasado", now=now or (lambda: 100.0),
+                      sleep=lambda s: None)
 
     def test_plain_answer_is_cleaned_and_short(self):
         lite = self.make([{"content": "**Hola** Alan, `listo`."}])

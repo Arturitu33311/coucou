@@ -143,7 +143,7 @@ against its SHA-256, kept in Coucou's data folder under `Models`).
 | Tap the key twice | Hands-free: speak as long as you like, tap once to paste. `Esc` cancels |
 | Hover the pill at the bottom of the screen | Dictate, record a call, open Coucou. Put the pill on the left or right edge in Flow → Settings |
 | Click **Record a call** | Your microphone and what the computer plays, transcribed live, then written person by person with a summary and to-dos by Claude (your key). The audio is deleted once the transcript is written |
-| Say **« OK Coucou »**, then ask | Jinx answers in the pill and out loud, with an OpenRouter key (or Claude's if there is none): pills, Spotify, your services' numbers, your agents, open an app, an email prepared in your mail app, web search (Claude only). With the house bridge set (Settings → Integrations → Jinx) she also runs the house — TV, lights, volume — through the quick Jinx on the server, and can hand work to the full Jinx. Turn it on in Notch → OK Coucou |
+| Say **« OK Jinx »**, **« Hey Jinx »** or just **« Jinx »** (« OK Coucou » still works), then ask | Jinx answers in the pill and out loud, with an OpenRouter key (or Claude's if there is none): pills, Spotify, your services' numbers, your agents, open an app, an email prepared in your mail app, web search (Claude only). With the house bridge set (Settings → Integrations → Jinx) she also runs the house — TV, lights, volume — through the quick Jinx on the server, and can hand work to the full Jinx. Turn it on in Notch → OK Coucou |
 
 Your voice never leaves the computer. With the clean-up (Flow → Styles), a
 call's summary or « OK Coucou », the text — never the audio — goes to OpenRouter

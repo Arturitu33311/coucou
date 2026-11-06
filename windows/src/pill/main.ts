@@ -478,7 +478,10 @@ async function say(s: Say) {
   speaking = true;
   wake();
   try {
-    if (!(s.audio && (await sayMp3(s.audio)))) await sayWithSystem(s.text, s.lang, s.gender);
+    if (!(s.audio && (await sayMp3(s.audio)))) {
+      // The webview refused: ElevenLabs' voice is still said, by a player of the system, before the robot is.
+      if (!(s.audio && (await FlowBridge.playMp3Native(s.id)))) await sayWithSystem(s.text, s.lang, s.gender);
+    }
   } finally {
     speaking = false;
     void FlowBridge.voiceDone(s.id);

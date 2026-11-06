@@ -364,6 +364,19 @@ fn build_stream(source: &Source, mut sink: impl FnMut(&[f32]) + Send + 'static) 
             err_fn,
             None,
         ),
+        // A USB microphone opened directly (not through a sound-server filter) often gives 24 bits.
+        cpal::SampleFormat::I24 => device.build_input_stream::<cpal::I24, _, _>(
+            config,
+            move |data: &[cpal::I24], _| push(&mut data.iter().map(|&s| cpal::Sample::to_sample::<f32>(s))),
+            err_fn,
+            None,
+        ),
+        cpal::SampleFormat::F64 => device.build_input_stream::<f64, _, _>(
+            config,
+            move |data: &[f64], _| push(&mut data.iter().map(|&s| s as f32)),
+            err_fn,
+            None,
+        ),
         other => return Err(format!("unsupported sample format {other:?}")),
     };
     stream.map_err(|e| e.to_string())

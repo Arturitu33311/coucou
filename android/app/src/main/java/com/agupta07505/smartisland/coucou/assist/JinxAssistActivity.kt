@@ -114,6 +114,8 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         // Laptop first (in the repository), then OpenRouter from this phone, then the model that lives here.
         listOf(OpenRouterBrain(secrets, { personas.load() }), localBrain),
         TelegramMirror(secrets),
+        // The quick Jinx of the server goes before all of them (she also runs the house); see QuickBrain.
+        quick = QuickBrain(secrets, { PhoneSettings.g2Url(app) }),
     )
     private val appContext = app
 
@@ -218,6 +220,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
                             Via.Laptop -> "laptop"
                             Via.Cloud -> "este teléfono · nube"
                             Via.Local -> "este teléfono · sin conexión"
+                            Via.Quick -> "Jinx rápida"
                         },
                     )
                     is SendResult.Pending -> ui.copy(

@@ -303,6 +303,11 @@ export const Bridge = {
     }
   },
 
+  /** Coucou is about to make a sound of `ms` ms: the audio relay must not take it for the computer's music (it would pause the phone's). */
+  audiolinkOwnSound: (ms: number) => {
+    if (IS_TAURI) void invoke("audiolink_own_sound", { ms }).catch(() => {});
+  },
+
   // ── Music (MPRIS) ─────────────────────────────────────────────────────────
   /** What the last `music` event said, for a page that has just loaded. */
   musicState: () => call<MusicTrack | null>("music_state"),

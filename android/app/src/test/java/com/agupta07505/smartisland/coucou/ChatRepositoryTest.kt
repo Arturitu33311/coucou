@@ -59,8 +59,31 @@ class ChatRepositoryTest {
     private var n = 0
     private fun store() = ThreadStore(File(tmp.root, "t.jsonl"))
     private fun repo(
-        store: ThreadStore, laptop: ChatApi?, brains: List<LocalBrain>, mirror: Mirror? = null,
-    ) = ChatRepository(store, "s21", laptop, brains, mirror, clock = { 100.0 + n }, newCid = { "c${++n}" })
+        store: ThreadStore, laptop: ChatApi?, brains: List<LocalBrain>, mirror: Mirror? = null, quick: LocalBrain? = null,
+    ) = ChatRepository(store, "s21", laptop, brains, mirror, clock = { 100.0 + n }, newCid = { "c${++n}" }, quick = quick)
+
+    @Test fun theQuickJinxAnswersBeforeTheLaptopAndStaysOnThePhone() {
+        val s = store(); val lap = FakeLaptop(); val quick = FakeBrain(Via.Quick, text = "Tele apagada.")
+        val r = repo(s, lap, listOf(FakeBrain(Via.Cloud)), quick = quick).send("apaga la tele") as SendResult.Answered
+        assertEquals(Via.Quick, r.via)
+        assertEquals("Tele apagada.", r.line.text)
+        assertEquals(emptyList<String>(), lap.sent)         // the laptop was not asked
+        assertTrue(s.unmirrored().isEmpty())                  // read here, not repeated to Telegram
+    }
+
+    @Test fun whenTheQuickJinxCannotAnswerTheLaptopDoes() {
+        val s = store(); val lap = FakeLaptop(); val quick = FakeBrain(Via.Quick, text = null)
+        val r = repo(s, lap, emptyList(), quick = quick).send("hola") as SendResult.Answered
+        assertEquals(Via.Laptop, r.via)
+        assertEquals(1, quick.calls)
+        assertEquals(1, lap.sent.size)
+    }
+
+    @Test fun withoutAQuickJinxNothingChanges() {
+        val s = store(); val lap = FakeLaptop()
+        val r = repo(s, lap, emptyList()).send("hola") as SendResult.Answered
+        assertEquals(Via.Laptop, r.via)
+    }
 
     @Test fun laptopAnswersFirstAndTheLocalBrainIsNotUsed() {
         val s = store(); val lap = FakeLaptop(); val b = FakeBrain(Via.Cloud)

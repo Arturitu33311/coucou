@@ -8,6 +8,14 @@ import android.graphics.Bitmap
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 
+/**
+ * What makes a track "new" for the laptop: its words and which picture it has. The picture matters: a player often
+ * changes the title first and the new cover a moment later, and with the same words and "there is a cover" the second
+ * event looked like the first, so the new cover was never sent and the laptop kept the old one. `artId` is the
+ * bitmap's own generation id (a new picture is a new id), or null when the app gave none.
+ */
+fun nowKey(now: NowPlaying, artId: Int?): String = "${now.title}|${now.artist}|${now.album}|${artId ?: "none"}"
+
 /** Turns the cover an app gives the phone's media session into a small JPEG for the laptop. */
 object NowArt {
     private const val SIDE = 320

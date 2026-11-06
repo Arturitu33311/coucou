@@ -84,7 +84,7 @@ pub enum SummaryEngine {
 
 /// Jinx's ElevenLabs voice and the fast model « OK Coucou » speaks with by default.
 pub const DEFAULT_VOICE_ID: &str = "smfxcYtxs2hlvFrxbKIg";
-pub const DEFAULT_VOICE_MODEL: &str = "eleven_flash_v2_5";
+pub const DEFAULT_VOICE_MODEL: &str = "eleven_v4_turbo";
 
 /// The preferences of dictation and of the window.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

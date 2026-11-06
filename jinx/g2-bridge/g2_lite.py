@@ -66,6 +66,10 @@ class HaError(Exception):
     pass
 
 
+class HaTimeout(HaError):
+    """Home Assistant no contestó a tiempo: la orden pudo salir igualmente (una tele tarda en responder al encendido)."""
+
+
 # ---------- política: lo único que se puede pedir a la casa ----------
 
 def check_call(domain, service, entity_id, data):
@@ -98,6 +102,20 @@ def check_call(domain, service, entity_id, data):
     return True, clean
 
 
+# Cómo se dice lo mismo en casa. La búsqueda ve "nombre + entity_id", y un televisor suele llamarse "Tv ..." o por su
+# modelo; sin esto, pedir "la tele" fallaba según la palabra que el modelo eligiera buscar.
+_TELE = ("tv", "tele", "televisor", "television", "pantalla")
+SINONIMOS = {
+    "tele": _TELE, "televisor": _TELE, "television": _TELE, "tv": _TELE, "pantalla": _TELE,
+    "luz": ("luz", "light", "lampara", "foco"), "luces": ("luz", "light", "lampara", "foco"),
+    "lampara": ("lampara", "luz", "light"), "foco": ("foco", "luz", "light"),
+    "ventilador": ("ventilador", "fan", "abanico"), "abanico": ("abanico", "ventilador", "fan"),
+    "bocina": ("bocina", "altavoz", "speaker"), "altavoz": ("altavoz", "bocina", "speaker"),
+    "enchufe": ("enchufe", "switch", "plug"), "clima": ("clima", "aire", "climate", "ac"),
+    "aire": ("aire", "clima", "climate", "ac"),
+}
+
+
 def _fold(s):
     s = unicodedata.normalize("NFKD", str(s).lower())
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -113,7 +131,7 @@ class HomeAssistant:
         self.now = now
         self._cache = (0.0, [])
 
-    def _req(self, method, path, body=None):
+    def _req(self, method, path, body=None, timeout=8):
         token = self.token_fn()
         if not token:
             raise HaError("no hay llave de Home Assistant en el servidor")
@@ -121,11 +139,13 @@ class HomeAssistant:
                                      data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
         try:
-            with self.opener(req, timeout=8) as r:
+            with self.opener(req, timeout=timeout) as r:
                 return json.loads(r.read() or b"null")
         except urllib.error.HTTPError as e:
             raise HaError("Home Assistant contestó %d" % e.code)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, TimeoutError) or "timed out" in str(e).lower():
+                raise HaTimeout("Home Assistant tardó en contestar")
             raise HaError("no llego a Home Assistant (%s)" % type(e).__name__)
 
     def states(self):
@@ -138,6 +158,8 @@ class HomeAssistant:
 
     def find(self, query, domain=None):
         words = [w for w in _fold(query).split() if w]
+        # Cada palabra puede decirse de otra forma: "tele" encuentra "Tv habitacion", que ninguna palabra suya contiene.
+        alts = [SINONIMOS.get(w, (w,)) for w in words]
         out = []
         for s in self.states():
             eid = s.get("entity_id", "")
@@ -148,7 +170,9 @@ class HomeAssistant:
                 continue
             name = (s.get("attributes") or {}).get("friendly_name") or eid
             hay = _fold(name + " " + eid)
-            if all(w in hay for w in words):
+            tokens = set(hay.replace("_", " ").replace(".", " ").split())
+            # Una palabra corta ("tv") solo cuenta entera: "INTV 1000" es una caja, no una tele.
+            if all(any((a in tokens) if len(a) <= 3 else (a in hay) for a in options) for options in alts):
                 out.append({"entity_id": eid, "name": name, "state": s.get("state")})
             if len(out) >= FIND_MAX:
                 break
@@ -170,7 +194,7 @@ class HomeAssistant:
         payload = dict(clean, entity_id=entity_id)
         if "volume_mute" in payload:
             payload["is_volume_muted"] = payload.pop("volume_mute")
-        self._req("POST", "/api/services/%s/%s" % (domain, service), payload)
+        self._req("POST", "/api/services/%s/%s" % (domain, service), payload, timeout=SERVICE_TIMEOUT)
         self._cache = (0.0, [])
         return "hecho"
 
@@ -216,7 +240,7 @@ class OpenAICompatLLM:
         key = self.key_fn()
         if not key:
             raise LiteError("sin llave del modelo rápido")
-        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.7, "max_tokens": 300}
+        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.4, "max_tokens": 300}
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers={
             "Content-Type": "application/json", "Authorization": "Bearer " + key})
         try:
@@ -226,11 +250,67 @@ class OpenAICompatLLM:
             raise LiteError("el modelo rápido falló (%s)" % type(e).__name__) from None
 
 
+SERVICE_TIMEOUT = 20      # segundos que se espera a que Home Assistant dé por hecha una orden
+VERIFY_TRIES = 10       # veces que se mira si la orden hizo efecto
+VERIFY_EVERY = 0.6      # segundos entre miradas: se confirma en cuanto cambia, sin esperar de más (seis segundos en total)
+
+
 class Lite:
-    def __init__(self, llm, ha, handoff, persona=PERSONA, now=time.time):
+    def __init__(self, llm, ha, handoff, persona=PERSONA, now=time.time, sleep=time.sleep):
         self.llm, self.ha, self.handoff, self.persona, self.now = llm, ha, handoff, persona, now
+        self.sleep = sleep
         self.history = []
         self.last = 0.0
+
+    def _level(self, entity_id):
+        """El volumen que dice el aparato (0..1), o None si no lo dice."""
+        try:
+            v = self.ha.state(entity_id).get("volume_level")
+            return float(v) if v is not None else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _verified_volume(self, result, service, entity_id, before, data):
+        """Subir, bajar o fijar el volumen solo está hecho cuando el aparato muestra otro volumen."""
+        if before is None:
+            return result
+        target = (data or {}).get("volume_level")
+        now = before
+        for _ in range(VERIFY_TRIES):
+            self.sleep(VERIFY_EVERY)
+            now = self._level(entity_id)
+            if now is None:
+                return result
+            if service == "volume_set" and target is not None and abs(now - float(target)) <= 0.006:  # una tele sube de 1 en 1: dos puntos de diferencia ya es otro volumen
+                break
+            if service == "volume_up" and now > before + 0.001:
+                break
+            if service == "volume_down" and now < before - 0.001:
+                break
+        else:
+            return ("la orden se envió pero el volumen de %s sigue en %d%%. NO digas que cambió: dile que no ha respondido "
+                    "o inténtalo de nuevo." % (entity_id, round(now * 100)))
+        return "%s; el volumen de %s ahora es %d%%" % (result, entity_id, round(now * 100))
+
+    def _verified(self, result, service, entity_id):
+        """Encender o apagar solo está hecho cuando el aparato lo dice: Home Assistant contesta "ok" aunque la tele
+        no se entere. Sin esto el modelo anunciaba "ya está encendida" con la tele apagada."""
+        if service not in ("turn_on", "turn_off"):
+            return result
+        state = None
+        for i in range(VERIFY_TRIES):
+            self.sleep(VERIFY_EVERY)
+            try:
+                state = self.ha.state(entity_id).get("state")
+            except Exception:  # noqa: BLE001 - si no se puede mirar, se dice tal cual
+                return result
+            if service == "turn_on" and state not in ("off", "unavailable", "unknown"):
+                return "%s; %s ahora está «%s»" % (result, entity_id, state)
+            if service == "turn_off" and state in ("off", "standby"):
+                return "%s; %s ahora está «%s»" % (result, entity_id, state)
+        return ("la orden se envió pero %s sigue «%s». NO digas que funcionó: si hay otro aparato del mismo tipo "
+                "(busca con otra palabra, p. ej. parte de su entity_id) prueba con ese; si no, di que no respondió."
+                % (entity_id, state))
 
     def _tool(self, name, args):
         try:
@@ -239,7 +319,19 @@ class Lite:
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":
-                return self.ha.call(args.get("dominio"), args.get("servicio"), args.get("entity_id"), args.get("datos"))
+                service, eid, data = args.get("servicio"), args.get("entity_id"), args.get("datos")
+                volume = service in ("volume_up", "volume_down", "volume_set")
+                before = self._level(eid) if volume else None
+                try:
+                    result = self.ha.call(args.get("dominio"), service, eid, data)
+                except HaTimeout:
+                    # La orden pudo salir: se mira el estado antes de decir nada (encender una tele tarda en confirmarse).
+                    result = "orden enviada (Home Assistant tardó en confirmarla)"
+                    if args.get("servicio") not in ("turn_on", "turn_off"):
+                        return result + "; no sé si hizo efecto"
+                if volume:
+                    return self._verified_volume(result, service, eid, before, data)
+                return self._verified(result, service, eid)
             if name == "pasar_a_jinx":
                 return self.handoff(str(args.get("peticion", ""))[:1000])
             return "herramienta desconocida"
