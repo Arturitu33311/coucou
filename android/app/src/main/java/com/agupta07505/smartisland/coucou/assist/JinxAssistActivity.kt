@@ -221,6 +221,9 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
 
     private fun allLines(): List<ChatLine> = (store.all() + aboutScreen).sortedBy { it.ts }
 
+    /** A new invocation: the answer of the last one is not shown again. */
+    fun clearReply() { _ui.update { it.copy(reply = null, notice = "") } }
+
     /** Forget the screen and what was said about it: the chip is dismissed. */
     fun dropScreen() {
         ScreenHolder.clear()
@@ -241,6 +244,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         }
         val screen = if (_ui.value.screenApp != null) ScreenHolder.take() else null
         _ui.update { it.copy(busy = true, notice = "", reply = null) }
+        val t0 = android.os.SystemClock.elapsedRealtime()
         viewModelScope.launch(Dispatchers.IO) {
             val r = if (screen != null) {
                 // About the screen: question and answer stay in memory (see aboutScreen), nothing is stored or synced.
@@ -257,6 +261,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
                 refresh()
                 repo.answer(line)
             }
+            android.util.Log.i("JinxLatency", "answer ${if (r is SendResult.Answered) r.via.name else "pending"} in ${android.os.SystemClock.elapsedRealtime() - t0} ms")
             // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
             if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->

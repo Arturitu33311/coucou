@@ -38,7 +38,7 @@ class Clock:
 
 
 class Server:
-    def __init__(self, gw, stt=None, notices=None, now=None, speak=None, budget=None):
+    def __init__(self, gw, stt=None, notices=None, now=None, speak=None, budget=None, speak_stream=None):
         self.clock = now or Clock()
         self.gw = gw
         self.jobs = b.Jobs(gw, now=self.clock)
@@ -51,6 +51,8 @@ class Server:
             kw["speak"] = speak
         if budget:
             kw["budget"] = budget
+        if speak_stream:
+            kw["speak_stream"] = speak_stream
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), b.make_handler(b.App(self.jobs, KEY, **kw)))
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
         self.base = "http://127.0.0.1:%d" % self.httpd.server_address[1]
@@ -125,6 +127,68 @@ class SpeakEndpointTest(unittest.TestCase):
         self.assertTrue(line.startswith("[warmly]"))
         self.assertNotIn("http", line)
         self.assertLessEqual(js.spoken_words(line), g2_speak.REPLY_WORDS + 2)
+
+
+class SpeakStreamTest(unittest.TestCase):
+    def test_stream_sends_pcm_as_it_comes(self):
+        def gen(text, kind="info"):
+            yield b"\x01\x00" * 100
+            yield b"\x02\x00" * 100
+
+        s = Server(FakeGateway(), speak_stream=gen)
+        try:
+            code, body, headers = s.call("POST", "/api/g2/speak/stream", {"text": "hola"})
+            self.assertEqual((code, headers["Content-Type"], headers["X-Audio-Rate"]), (200, "audio/pcm", "24000"))
+            self.assertEqual(body, b"\x01\x00" * 100 + b"\x02\x00" * 100)
+            self.assertEqual(s.json("POST", "/api/g2/speak/stream", {"text": "x"}, key=None)[0], 401)
+            self.assertEqual(s.json("POST", "/api/g2/speak/stream", {"text": ""})[0], 400)
+        finally:
+            s.close()
+
+    def test_a_failure_before_audio_is_still_an_error(self):
+        import g2_speak
+
+        def broken(text, kind="info"):
+            raise g2_speak.SpeakError("sin crédito")
+            yield b""
+
+        s = Server(FakeGateway(), speak_stream=broken)
+        try:
+            self.assertEqual(s.json("POST", "/api/g2/speak/stream", {"text": "a"}), (502, {"error": "sin crédito"}))
+        finally:
+            s.close()
+
+    def test_generator_walks_the_variants_and_streams(self):
+        import io
+        import urllib.error
+        import g2_speak
+        import jinx_speak as js
+        calls = []
+
+        class Resp(io.BytesIO):
+            pass
+
+        def opener(req, timeout=0):
+            calls.append(json.loads(req.data)["model_id"] + ("+s" if "voice_settings" in json.loads(req.data) else ""))
+            if len(calls) == 1:
+                raise urllib.error.HTTPError(req.full_url, 422, "bad settings", {}, io.BytesIO(b"{}"))
+            return Resp(b"\x05\x00" * 3000)
+
+        out = b"".join(g2_speak.stream("Hola Alan", js=js, key="k", opener=opener))
+        self.assertEqual(out, b"\x05\x00" * 3000)
+        self.assertEqual(calls, ["eleven_v4+s", "eleven_v4"])
+
+    def test_generator_stops_on_a_real_error(self):
+        import io
+        import urllib.error
+        import g2_speak
+        import jinx_speak as js
+
+        def opener(req, timeout=0):
+            raise urllib.error.HTTPError(req.full_url, 401, "no", {}, io.BytesIO(b"{}"))
+
+        with self.assertRaises(g2_speak.SpeakError):
+            list(g2_speak.stream("Hola", js=js, key="k", opener=opener))
 
 
 class BridgeTest(unittest.TestCase):

@@ -69,6 +69,10 @@ class VoiceInput(
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
                 .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                // The recognizer waits this long in silence before deciding Alan has finished: its default is ~1.5-2 s of
+                // dead air before every answer, so ask for less (some recognizers ignore it).
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 900L)
+                .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 700L)
                 .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName),
         )
     }

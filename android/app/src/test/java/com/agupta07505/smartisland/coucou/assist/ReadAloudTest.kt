@@ -67,6 +67,20 @@ class ReadAloudTest {
         dir.deleteRecursively()
     }
 
+    @Test fun longAnswersStartWithTheirFirstSentences() {
+        assertEquals(listOf("Listo."), Speaker.splitForSpeech("Listo."))
+        val s1 = "Tienes una tarea abierta en la lista y nada nuevo de Zynara."
+        val s2 = "Mañana tienes laboratorio a las diez, así que descansa y carga el teléfono antes de dormir para que no te falle."
+        val s3 = "Ah, y el servidor sigue arriba."
+        val parts = Speaker.splitForSpeech("[warmly] $s1 $s2 $s3")
+        assertEquals(2, parts.size)
+        assertTrue(parts[0].length <= 170)
+        assertTrue(parts[0].startsWith("[warmly] Tienes"))
+        assertEquals("[warmly] $s1 $s2 $s3", parts.joinToString(" "))
+        // One very long sentence cannot be cut at a sentence end: it stays whole.
+        assertEquals(1, Speaker.splitForSpeech("palabra ".repeat(60).trim()).size)
+    }
+
     @Test fun tagsAreKeptForHerVoiceAndDroppedForTheSystemOne() {
         val t = "**[warmly]** Mira https://x.co/a esto"
         assertEquals("Mira esto", Speaker.spokenForm(t))

@@ -53,13 +53,25 @@ class ChatRepository(
     /** Asks again for what was typed and never answered (a model came back, or the laptop did). */
     fun retryPending(): List<SendResult> = store.pending().map { answer(it) }
 
+    private inline fun <T> timed(stage: String, block: () -> T): T {
+        val t0 = System.nanoTime()
+        try {
+            val r = block()
+            android.util.Log.i("JinxLatency", "$stage ok in ${(System.nanoTime() - t0) / 1_000_000} ms")
+            return r
+        } catch (e: ChatException) {
+            android.util.Log.i("JinxLatency", "$stage FAILED in ${(System.nanoTime() - t0) / 1_000_000} ms: ${e.message}")
+            throw e
+        }
+    }
+
     /** Gets an answer for a line already in the thread: the laptop first, then this phone's own brains. */
     fun answer(user: ChatLine): SendResult {
         val cid = user.cid ?: return SendResult.Pending("sin cid")
         store.answerFor(cid)?.let { return SendResult.Answered(it, Via.Laptop) }
         quick?.let { b ->
             try {
-                val text = b.reply(store.tail(CONTEXT))
+                val text = timed("quick") { b.reply(store.tail(CONTEXT)) }
                 // Alan is on this phone: he reads it here (as with the phone's own brains), it does not go to Telegram.
                 val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true))
                 store.markMirrored(setOf(user.id, line.id))
@@ -70,7 +82,7 @@ class ChatRepository(
         }
         laptop?.let { api ->
             try {
-                val done = api.send(user.text, cid, deviceId)
+                val done = timed("laptop") { api.send(user.text, cid, deviceId) }
                 val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", done.text, cid, done.mirrored, done.mood, done.mode.takeIf { it in BACKUP_VIAS }))
                 if (done.mirrored) store.markMirrored(setOf(user.id, line.id))
                 return SendResult.Answered(line, Via.Laptop)
@@ -81,7 +93,7 @@ class ChatRepository(
         var reason = "sin modelo disponible"
         for (b in brains) {
             try {
-                val text = b.reply(store.tail(CONTEXT))
+                val text = timed("brain:${b.via}") { b.reply(store.tail(CONTEXT)) }
                 val via = if (b.via == Via.Cloud) "or" else "local"
                 // Alan is on this phone (he just wrote here): he reads it here, it does not go to Telegram.
                 val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true, via = via))
@@ -107,7 +119,7 @@ class ChatRepository(
                 val context = (store.tail(CONTEXT) + earlier + user).map {
                     if (it.id == user.id) it.copy(text = ScreenText.forModel(screen, it.text)) else it
                 }
-                val text = b.reply(context)
+                val text = timed("screen:${b.via}") { b.reply(context) }
                 val line = ChatLine("${user.id}:jinx", clock(), "jinx", text, null, true, via = if (b.via == Via.Cloud) "or" else "local")
                 return SendResult.Answered(line, b.via)
             } catch (e: ChatException) {

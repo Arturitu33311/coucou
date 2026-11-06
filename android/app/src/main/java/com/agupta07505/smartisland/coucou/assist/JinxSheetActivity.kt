@@ -96,6 +96,14 @@ class JinxSheetActivity : ComponentActivity() {
     /** The system's permission dialog pauses this screen: that is not leaving it, the screen Jinx sees stays. */
     @Volatile internal var askingPermission = false
 
+    /** Counts invocations while this screen lives (it is single-task: the gesture again arrives as a new intent). */
+    internal var invocations by androidx.compose.runtime.mutableIntStateOf(0)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        invocations++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -130,6 +138,8 @@ internal fun JinxDock(onClose: () -> Unit, onOpenFull: () -> Unit) {
     val ui by model.ui.collectAsState()
     val backdrop by BackdropHolder.flow.collectAsState()
     var rootSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+
+    LaunchedEffect(activity?.invocations) { model.clearReply() }
 
     LifecycleResumeEffect(model) {
         model.onOpen()
