@@ -405,7 +405,11 @@ class Lite:
     def _tool(self, name, args):
         try:
             if name == "ha_buscar":
-                return json.dumps(self.ha.find(str(args.get("consulta", "")), args.get("dominio")), ensure_ascii=False)
+                found = self.ha.find(str(args.get("consulta", "")), args.get("dominio"))
+                if not found:
+                    return ("sin resultados: en la casa no hay ningún aparato con ese nombre. Díselo a Alan tal cual y pregúntale cuál es; "
+                            "NO supongas su estado ni lo confundas con otro aparato.")
+                return json.dumps(found, ensure_ascii=False)
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":

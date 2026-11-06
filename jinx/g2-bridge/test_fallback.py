@@ -117,3 +117,8 @@ print("OK accion-no-confirmada")
 lt = L.Lite(Acc("La cerradura la abres tú a mano."), HAmal(), lambda x: "p", sleep=lambda s: None); lt._verified_volume = lambda *a, **k: "NO digas que cambió"
 assert lt.reply("abre la puerta") == "La cerradura la abres tú a mano."
 print("OK sin-relajar+honesta")
+
+# 12) búsqueda sin resultados: el modelo recibe la orden de decir que no existe
+lt = L.Lite(Prim(False), FakeHA(), lambda x: "p")
+assert "sin resultados" in lt._tool("ha_buscar", {"consulta": "tele de la sala"}) and "media_player" in lt._tool("ha_buscar", {"consulta": "tele del cuarto"})
+print("OK busqueda-vacia")
