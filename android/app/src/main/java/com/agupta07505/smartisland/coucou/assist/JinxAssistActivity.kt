@@ -124,7 +124,18 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(AssistUi(lines = store.all(), model = modelStore.state()))
     val ui: StateFlow<AssistUi> = _ui.asStateFlow()
 
+    /** What was said about the screen: memory only, never in the shared thread (see [ChatRepository.answerAboutScreen]). */
+    @Volatile private var aboutScreen: List<ChatLine> = emptyList()
+
     init {
+        // The chip follows the screen Jinx was invoked over, whenever it is read (before or after the panel opens).
+        viewModelScope.launch {
+            ScreenHolder.flow.collect { snap ->
+                val fresh = snap?.takeIf { it.isFresh() }
+                if (fresh != null) aboutScreen = emptyList()
+                _ui.update { it.copy(screenApp = fresh?.appLabel, lines = allLines()) }
+            }
+        }
         viewModelScope.launch {
             ModelDownloads.percent.collect { p ->
                 _ui.update { it.copy(modelBusy = p >= 0, modelPercent = p) }
@@ -146,6 +157,8 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
     fun setShown(visible: Boolean) {
         shown.value = visible
+        // The screen belongs to this visit: leaving the panel forgets it and what was said about it.
+        if (!visible) { ScreenHolder.clear(); aboutScreen = emptyList() }
         com.agupta07505.smartisland.coucou.presence.JinxChatScreen.visible = visible
     }
 
@@ -179,7 +192,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
 
     /** Every write goes through [update], so two coroutines can never overwrite each other's field. */
     private fun refresh(change: (AssistUi) -> AssistUi = { it }) {
-        _ui.update { change(it).copy(lines = store.all(), model = modelStore.state()) }
+        _ui.update { change(it).copy(lines = allLines(), model = modelStore.state()) }
     }
 
     /**
@@ -203,15 +216,13 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Looks for the screen Jinx was invoked over; call when the panel comes to the front. */
-    fun refreshScreen() {
-        _ui.update { it.copy(screenApp = ScreenHolder.take()?.appLabel) }
-    }
+    private fun allLines(): List<ChatLine> = (store.all() + aboutScreen).sortedBy { it.ts }
 
-    /** Forget the screen: the chip is dismissed, or the question has been answered. */
+    /** Forget the screen and what was said about it: the chip is dismissed. */
     fun dropScreen() {
         ScreenHolder.clear()
-        _ui.update { it.copy(screenApp = null) }
+        aboutScreen = emptyList()
+        refresh { it.copy(screenApp = null) }
     }
 
     fun send(text: String) {
@@ -228,10 +239,21 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         val screen = if (_ui.value.screenApp != null) ScreenHolder.take() else null
         _ui.update { it.copy(busy = true, notice = "") }
         viewModelScope.launch(Dispatchers.IO) {
-            // What the user typed shows up at once; the answer arrives when some brain has it.
-            val line = repo.enqueue(t)
-            refresh()
-            val r = if (screen != null) repo.answerAboutScreen(line, screen) else repo.answer(line)
+            val r = if (screen != null) {
+                // About the screen: question and answer stay in memory (see aboutScreen), nothing is stored or synced.
+                val ask = ChatLine("screen:${System.nanoTime()}", System.currentTimeMillis() / 1000.0, deviceId, t, null, true)
+                val earlier = aboutScreen
+                aboutScreen = earlier + ask
+                refresh()
+                repo.answerAboutScreen(ask, screen, earlier).also { res ->
+                    if (res is SendResult.Answered) aboutScreen = aboutScreen + res.line
+                }
+            } else {
+                // What the user typed shows up at once; the answer arrives when some brain has it.
+                val line = repo.enqueue(t)
+                refresh()
+                repo.answer(line)
+            }
             // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
             if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->
@@ -364,7 +386,6 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
     val agents by CoucouRuntime.agentUi.collectAsState()
     LifecycleResumeEffect(model) {
         model.onOpen()
-        model.refreshScreen()
         model.setShown(true)
         onPauseOrDispose { model.setShown(false) }
     }

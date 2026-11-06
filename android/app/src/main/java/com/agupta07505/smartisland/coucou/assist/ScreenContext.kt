@@ -108,11 +108,17 @@ object ScreenReader {
     private const val MAX_DEPTH = 40
 }
 
-/** The last screen Jinx was invoked over. One slot, in memory, expiring: nothing else keeps it. */
+/**
+ * The screen Jinx was invoked over. One slot, in memory, expiring, and cleared when the panel is left: it belongs
+ * to that visit only. Nothing else keeps it.
+ */
 object ScreenHolder {
-    @Volatile private var snap: ScreenSnapshot? = null
+    private val slot = kotlinx.coroutines.flow.MutableStateFlow<ScreenSnapshot?>(null)
 
-    fun put(s: ScreenSnapshot?) { snap = s }
-    fun take(now: Long = System.currentTimeMillis()): ScreenSnapshot? = snap?.takeIf { it.isFresh(now) }
-    fun clear() { snap = null }
+    /** Changes when a screen is read or dropped, so the panel shows (or hides) its chip at once. */
+    val flow: kotlinx.coroutines.flow.StateFlow<ScreenSnapshot?> get() = slot
+
+    fun put(s: ScreenSnapshot?) { slot.value = s }
+    fun take(now: Long = System.currentTimeMillis()): ScreenSnapshot? = slot.value?.takeIf { it.isFresh(now) }
+    fun clear() { slot.value = null }
 }
