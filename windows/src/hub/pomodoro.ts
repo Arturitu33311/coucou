@@ -80,11 +80,19 @@ function save() {
   State.pomodoroPhase = st.phase;
   State.pomodoroRunning = st.endsAt != null;
   onChange();
+  pushShare();
   try {
     window.localStorage.setItem(KEY, JSON.stringify(st));
   } catch {
     /* the timer still runs without being remembered */
   }
+}
+
+/** Jinx reads this file on the server: stats plus `live`, what the timer is doing now (focus mode on the phone follows it). */
+function pushShare() {
+  if (!sharing()) return;
+  const live = { phase: st.phase, running: st.endsAt != null, endsAt: st.endsAt };
+  void Bridge.sharePush("pomodoro.json", JSON.stringify({ updated: new Date().toISOString(), ...(stats ?? {}), live }, null, 2)).catch(() => {});
 }
 
 const preset = () => PRESETS[st.preset];
@@ -201,7 +209,7 @@ export async function refreshStats() {
     stats = await Bridge.pomodoroStats();
     if (sharing()) {
       shareReadmeOnce();
-      void Bridge.sharePush("pomodoro.json", JSON.stringify({ updated: new Date().toISOString(), ...stats }, null, 2)).catch(() => {});
+      pushShare();
     }
   } catch {
     /* no statistics yet */
