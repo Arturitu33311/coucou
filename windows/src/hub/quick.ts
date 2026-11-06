@@ -110,4 +110,4 @@ function build(): HubHost {
   };
 }
 
-export const quickTool: HubTool = { id: "quick", label: "Quick", build };
+export const quickTool: HubTool = { id: "quick", group: "system", label: "Quick", build };

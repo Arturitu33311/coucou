@@ -344,7 +344,7 @@ function build(): HubHost {
   };
 }
 
-export const pomodoroTool: HubTool = { id: "pomodoro", label: "Pomodoro", build };
+export const pomodoroTool: HubTool = { id: "pomodoro", group: "focus", label: "Pomodoro", build };
 
 /** What Jinx is told about the timer. */
 export function pomodoroSummary(): { phase: Phase; minutesLeft: number | null; running: boolean; cycle: number } {
