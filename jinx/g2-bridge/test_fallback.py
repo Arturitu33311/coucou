@@ -77,7 +77,7 @@ assert ids("tele del cuarto")[0] == "media_player.55_oled_qn55s90fafxzx", ids("t
 assert ids("la tele de la habitación") == ["media_player.55_oled_qn55s90fafxzx"]
 assert ids("tele")[0].startswith("media_player.") and ids("tele").index("sensor.55_oled_canal_de_tv") > 0      # el aparato antes que el sensor
 assert "media_player.intv_1000" not in ids("tele")                                                           # "INTV 1000" no es una tele
-assert ids("tele de la sala") == ["media_player.55_oled_qn55s90fafxzx", "sensor.55_oled_canal_de_tv"]         # sin "sala": ofrece las teles que hay
+assert ids("tele de la sala") == [] and ids("tele cocina") == []                                               # una palabra de más NO convierte otra habitación en esta
 assert ids("pi hole") == ["switch.pi_hole"]
 assert L.ahora_texto(0).startswith("Ahora: ") and "de " in L.ahora_texto(1793928277)
 m = L._compact_for_local([{"role": "system", "content": "P\nAhora: jueves 5 de noviembre de 2026, 21:45."}, {"role": "user", "content": "hora"}])
@@ -112,3 +112,8 @@ assert lt.reply("sube el volumen") == L.NO_CONFIRMADA
 lt = L.Lite(Acc("No cambió, la tele no respondió."), HAmal(), lambda x: "p", sleep=lambda s: None); lt._verified_volume = lambda *a, **k: "la orden se envió pero el volumen sigue en 9%. NO digas que cambió"
 assert lt.reply("sube el volumen") == "No cambió, la tele no respondió."
 print("OK accion-no-confirmada")
+
+# 11) una respuesta honesta ("a mano") no se reemplaza aunque la acción haya fallado
+lt = L.Lite(Acc("La cerradura la abres tú a mano."), HAmal(), lambda x: "p", sleep=lambda s: None); lt._verified_volume = lambda *a, **k: "NO digas que cambió"
+assert lt.reply("abre la puerta") == "La cerradura la abres tú a mano."
+print("OK sin-relajar+honesta")

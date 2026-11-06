@@ -179,14 +179,7 @@ class HomeAssistant:
         words = [w for w in _fold(query).split() if w and w not in STOPWORDS] or [w for w in _fold(query).split() if w]
         # Cada palabra puede decirse de otra forma: "tele" encuentra "Tv habitacion", que ninguna palabra suya contiene.
         alts = [SINONIMOS.get(w, (w,)) for w in words]
-        out = self._find(alts, domain)
-        if not out and len(alts) > 1:
-            # Sin coincidencia exacta ("tele de la sala" y solo hay una "Tv habitacion"): se ofrecen los aparatos de ese TIPO para que se
-            # pregunte cuál es, en vez de contestar que no existe.
-            kinds = [a for w, a in zip(words, alts) if w in SINONIMOS and a not in (_HABITACION,)]
-            if kinds:
-                out = self._find(kinds, domain)
-        return out
+        return self._find(alts, domain)
 
     def _find(self, alts, domain):
         out = []
@@ -254,6 +247,7 @@ TOOLS = [
 
 _TOOL_WORDS = re.compile(r"^\s*(pasar[_ ]?a[_ ]?jinx|ha[_ ]?(buscar|estado|accion))\b", re.I)
 NO_CONFIRMADA = "No pude confirmar que se hiciera: el aparato no respondió. Inténtalo de nuevo."
+_EXITO = re.compile(r"\b(listo|hecho|hecha|ya (est[aá]|qued[oó]|lo|la|puse|apagu[eé]|prend[ií])|encendid\w*|apagad\w*|prendid\w*|sub[ií]|baj[eé]|puse|qued[oó]|al \d+|en \d+)\b", re.I)
 _NEGACION = re.compile(r"\b(no|sigue|siguen|falló|fallo|error|inténtalo|intenta|pude|respond\w*|confirm\w*)\b", re.I)
 SIN_JINX_COMPLETA = "Eso necesita a la Jinx completa y ahora no está disponible; pídemelo en un rato."
 _RAW_CALL = re.compile(r"^\s*([A-Za-z_]+)\s*(\{.*\})\s*$", re.S)
@@ -475,7 +469,7 @@ class Lite:
                 msgs.append({"role": "tool", "tool_call_id": c.get("id", ""), "content": result[:TOOL_RESULT_MAX]})
         if not out:
             raise LiteError("el modelo no llegó a una respuesta")
-        if failed and not _NEGACION.search(out):
+        if failed and _EXITO.search(out) and not _NEGACION.search(out):
             out = NO_CONFIRMADA                      # el modelo (sobre todo el local) decía "listo" aunque la orden no surtió efecto
         self.history = (self.history + [{"role": "user", "content": text}, {"role": "assistant", "content": out}]
                         )[-HISTORY_TURNS:]
