@@ -1228,6 +1228,7 @@ function hubSection(): HTMLElement {
     h("div", { class: "hint", text:
       "The Hub (the fourth tab of the island) shows this computer's vitals, your server's, a Pomodoro timer, " +
       "notes, your calendar, the weather, a file shelf and quick switches. It reads nothing while it is closed." }),
+    h("h3", { text: "Jinx & server" }),
     h("div", { class: "row" }, h("label", { text: "Server" }), host,
       h("span", { class: "hint", text: "read over ssh with your key; nothing is installed there" })),
     h("div", { class: "row" }, h("label", { text: "Jinx through" }), jinxBackendSelect(),
@@ -1261,6 +1262,7 @@ function hubSection(): HTMLElement {
       h("span", { class: "hint", text:
         "Names of installed apps, separated by commas. She asks the app to close its window (it asks to save what is " +
         "unsaved); any app not listed here is refused. Needs wmctrl (sudo apt install wmctrl)." })),
+    h("h3", { text: "Notifications & phone" }),
     h("div", { class: "row" }, h("label", { text: "Notifications" }),
       toggle(settings.notificationPeek === true, (v) => { settings.notificationPeek = v; void save(); }),
       h("span", { class: "hint", text:
@@ -1291,6 +1293,7 @@ function hubSection(): HTMLElement {
         "(Ask) and, once you tap it, this computer pauses and lets go of the Bluetooth headphones so the phone can take them. " +
         "Auto lets them go as soon as the card is out. Spotify (via Sonora) and YouTube open on the phone; the position is " +
         "shown on the card. Off until you turn it on." })),
+    h("h3", { text: "Data & integrations" }),
     h("div", { class: "row" }, h("label", { text: "Server activity" }),
       toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
       h("span", { class: "hint", text:

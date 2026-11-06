@@ -25,6 +25,7 @@ import { registerNotificationPeek } from "./hub/notifications";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { musicSettingsChanged, registerMusicHandlers } from "./island/music";
 import { startSceneSync } from "./mochi/scene";
+import { TiredClock } from "./mochi/tired";
 import { startPresence } from "./core/presence";
 
 // A script error must not vanish into a webview nobody is looking at: it goes to the log.
@@ -220,6 +221,17 @@ async function main() {
   registerPomodoro(island);
   registerTasks(island);
   registerDictation(island);
+  // Long hours with the agents and no break: Mochi yawns now and then (Mac 0.6, #970).
+  const tired = new TiredClock();
+  window.setInterval(() => {
+    if (State.paused) return;
+    const working = State.tasks.some(
+      (t) =>
+        (t.id === "integration_claude" || t.id.startsWith("agent_")) &&
+        (t.state === "working" || t.state === "thinking" || t.state === "searching"),
+    );
+    if (tired.update(Date.now(), working)) island.emote("sleepy", 4);
+  }, 30_000);
   registerSysState(island);
   registerMic(island);
   registerPeripherals(island);
