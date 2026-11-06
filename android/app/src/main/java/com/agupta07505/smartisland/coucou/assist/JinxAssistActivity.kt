@@ -84,6 +84,9 @@ data class AssistUi(
     val answering: String? = null,
     /** The app whose screen Jinx can see right now (she was invoked over it), else null. */
     val screenApp: String? = null,
+    /** Her latest answer (or what an order did) for the compact panel; [replySeq] changes with each one. */
+    val reply: String? = null,
+    val replySeq: Int = 0,
 )
 
 class AssistModel(app: Application) : AndroidViewModel(app) {
@@ -155,10 +158,10 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
-    fun setShown(visible: Boolean) {
+    fun setShown(visible: Boolean, forgetScreen: Boolean = true) {
         shown.value = visible
         // The screen belongs to this visit: leaving the panel forgets it and what was said about it.
-        if (!visible) { ScreenHolder.clear(); aboutScreen = emptyList() }
+        if (!visible && forgetScreen) { ScreenHolder.clear(); aboutScreen = emptyList() }
         com.agupta07505.smartisland.coucou.presence.JinxChatScreen.visible = visible
     }
 
@@ -232,12 +235,12 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         LocalActions.parse(t)?.let { action ->
             val done = LocalActionRunner(appContext).run(action)
             if (done.handled) {
-                _ui.update { it.copy(notice = done.message) }
+                _ui.update { it.copy(notice = "", reply = done.message, replySeq = it.replySeq + 1) }
                 return
             }
         }
         val screen = if (_ui.value.screenApp != null) ScreenHolder.take() else null
-        _ui.update { it.copy(busy = true, notice = "") }
+        _ui.update { it.copy(busy = true, notice = "", reply = null) }
         viewModelScope.launch(Dispatchers.IO) {
             val r = if (screen != null) {
                 // About the screen: question and answer stay in memory (see aboutScreen), nothing is stored or synced.
@@ -260,6 +263,8 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
                 when (r) {
                     is SendResult.Answered -> ui.copy(
                         busy = false,
+                        reply = r.line.text,
+                        replySeq = ui.replySeq + 1,
                         badge = when (r.via) {
                             Via.Laptop -> "laptop"
                             Via.Cloud -> "este teléfono · nube"
