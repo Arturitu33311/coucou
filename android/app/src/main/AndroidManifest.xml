@@ -207,6 +207,14 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.SmartIsland" />
 
+        <activity
+            android:name=".coucou.assist.JinxSheetActivity"
+            android:exported="false"
+            android:label="Jinx"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Coucou.Sheet" />
+
         <receiver
             android:name=".receiver.AutostartReceiver"
             android:exported="true">

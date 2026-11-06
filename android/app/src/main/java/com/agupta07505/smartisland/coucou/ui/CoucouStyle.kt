@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -44,7 +45,8 @@ object CoucouColors {
     val Outline = Color.White.copy(alpha = 0.07f)
     val Text = Color(0xFFF5F6F8)
     val TextSecondary = Color.White.copy(alpha = 0.64f)
-    val TextTertiary = Color.White.copy(alpha = 0.42f)
+    // 0.55 gives 5.9:1 on SurfaceHigh (0.42 gave 4.0:1, under WCAG AA for the small text this colour is used for).
+    val TextTertiary = Color.White.copy(alpha = 0.55f)
     val Accent = MochiEmerald
     val AccentSoft = MochiEmerald.copy(alpha = 0.16f)
     val Warning = Color(0xFFF5A524)
@@ -193,9 +195,11 @@ fun StatusLine(text: String, tone: Tone = Tone.Neutral) {
 fun Chip(text: String, tint: Color = CoucouColors.TextSecondary, dot: Color? = null, onClick: (() -> Unit)? = null) {
     Row(
         Modifier
+            // A tappable chip keeps its look but is 48 dp to touch (an invisible margin around it).
+            .then(if (onClick != null) Modifier.minimumInteractiveComponentSize() else Modifier)
             .clip(RoundedCornerShape(50))
             .background(Color.White.copy(alpha = 0.06f))
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick) else Modifier)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

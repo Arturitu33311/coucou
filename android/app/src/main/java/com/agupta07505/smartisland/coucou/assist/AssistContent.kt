@@ -7,6 +7,10 @@ package com.agupta07505.smartisland.coucou.assist
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -176,7 +180,7 @@ internal fun AssistContent(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
                 ) {
-                    items(ui.lines, key = { it.id }) { l -> Bubble(l) }
+                    items(ui.lines, key = { it.id }) { l -> Bubble(l, announce = l.fromJinx && l.id == ui.lines.last().id) }
                     if (ui.busy) item(key = "typing") { Typing() }
                 }
             }
@@ -274,11 +278,19 @@ private fun ModelStrip(ui: AssistUi) {
 private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 @Composable
-private fun Bubble(l: ChatLine) {
+private fun Bubble(l: ChatLine, announce: Boolean = false) {
     val mine = !l.fromJinx
     val shape = if (mine) RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
+    val meta = listOfNotNull(
+        l.sourceLabel,
+        l.ts.takeIf { it > 0 }?.let { timeFormat.format(Date((it * 1000).toLong())) },
+    ).joinToString(" · ")
     Column(
-        Modifier.fillMaxWidth(),
+        // One thing for TalkBack: who said it, what, and when; the newest of Jinx's is read out when it arrives.
+        Modifier.fillMaxWidth().semantics(mergeDescendants = true) {
+            contentDescription = (if (mine) "Tú" else "Jinx") + (if (meta.isNotEmpty()) ", $meta" else "") + ": " + l.text
+            if (announce) liveRegion = LiveRegionMode.Polite
+        },
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
     ) {
         Column(
@@ -290,12 +302,8 @@ private fun Bubble(l: ChatLine) {
         ) {
             Text(l.text, color = CoucouColors.Text, fontSize = 15.sp, lineHeight = 21.sp)
         }
-        val meta = listOfNotNull(
-            l.sourceLabel,
-            l.ts.takeIf { it > 0 }?.let { timeFormat.format(Date((it * 1000).toLong())) },
-        ).joinToString(" · ")
         if (meta.isNotEmpty()) {
-            Text(meta, color = CoucouColors.TextTertiary, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+            Text(meta, color = CoucouColors.TextTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
         }
     }
 }
@@ -304,7 +312,7 @@ private fun Bubble(l: ChatLine) {
 @Composable
 private fun Typing() {
     Row(
-        Modifier.clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)).background(CoucouColors.SurfaceHigh)
+        Modifier.semantics { contentDescription = "Jinx está escribiendo"; liveRegion = LiveRegionMode.Polite }.clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)).background(CoucouColors.SurfaceHigh)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {

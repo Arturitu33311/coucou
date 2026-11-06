@@ -21,12 +21,12 @@ class JinxSessionService : VoiceInteractionSessionService() {
     override fun onNewSession(args: Bundle?): VoiceInteractionSession = JinxSession(this)
 }
 
-/** The assistant gesture arrives here: open the panel as a normal activity (simpler to build and test than a window). */
+/** The assistant gesture arrives here: Jinx opens as a bottom sheet over the app Alan was in (see [JinxSheetActivity]). */
 class JinxSession(private val service: JinxSessionService) : VoiceInteractionSession(service) {
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         startAssistantActivity(
-            Intent(service, JinxAssistActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(service, JinxSheetActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         finish()
     }

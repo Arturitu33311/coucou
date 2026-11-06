@@ -12,4 +12,11 @@
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#1B73E8</item>
     </style>
+    <!-- Jinx's bottom sheet: a translucent window over the app that was open; the scrim is drawn by the screen itself. -->
+    <style name="Theme.Coucou.Sheet" parent="Theme.SmartIsland">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>
