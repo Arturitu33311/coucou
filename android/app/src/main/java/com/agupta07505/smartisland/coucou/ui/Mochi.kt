@@ -182,6 +182,22 @@ fun MochiGlyph(
         ),
         label = "beat",
     )
+    // The dance is a phrase, not a loop of one move: four beats (5.6 s) in which his head wanders, the
+    // fourth beat hops twice, and every other phrase (11.2 s) ends in a full turn. Both clocks are
+    // multiples of the beat, so everything stays on it. (The laptop's Mochi has a head that turns in 3-D;
+    // here the face slides and the whole body flips about its vertical axis instead.)
+    val bar by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 5600, easing = LinearEasing), repeatMode = RepeatMode.Restart),
+        label = "bar",
+    )
+    val phrase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 11200, easing = LinearEasing), repeatMode = RepeatMode.Restart),
+        label = "phrase",
+    )
     // A fresh surprise pops in once and settles back: a soft one-shot spring (not a loop), so
     // every new arrival replays the pop instead of throbbing forever.
     val pop by animateFloatAsState(
@@ -228,12 +244,27 @@ fun MochiGlyph(
         label = "peek",
     )
     val wave = (beat * 2 * PI).toFloat()
+    // The dance phrase (see `bar` and `phrase` above). Everything here is 0 unless he dances.
+    val barRad = (bar * 2 * PI).toFloat()
+    // Where his head is turned, -1..1: two slow waves that never line up with the sway.
+    val danceLook = if (dancing) sin(barRad) * 0.7f + sin(barRad * 2f + 1f) * 0.3f else 0f
+    // The last beat of the four hops twice as fast; the change eases in and out so nothing jumps.
+    val doubleTime = if (dancing) minOf(((bar * 4f - 2.7f) / 0.3f).coerceIn(0f, 1f), ((4f - bar * 4f) / 0.1f).coerceIn(0f, 1f)) else 0f
+    // How high he is in the hop, 0..1: one hop a beat, two in the double-time beat.
+    val hopAbs = if (dancing) abs(sin(wave)) * (1f - doubleTime) + abs(sin(wave * 2f)) * doubleTime else 0f
+    // Stretches at the top of the hop and squashes on landing, as a ball does.
+    val danceStretch = if (dancing) (hopAbs - 0.64f) * 0.12f else 0f
+    // Every other phrase ends in a full turn about his vertical axis, in about a beat.
+    val turn = if (dancing) {
+        val s = ((phrase - 0.78f) / 0.1f).coerceIn(0f, 1f)
+        s * s * (3f - 2f * s) * 360f
+    } else 0f
     // Whole-body language, done as GPU transforms (no redraw): tilt/sway/hop for dancing, a
     // tremble for surprise, a weary lean for low battery, and quiet breathing only while calm
     // (dance, surprise and tiredness already move him).
     // NOTE: the pop scale applies only while surprised — every other mood draws at full size.
     val tilt = when {
-        dancing -> sin(wave) * 13f
+        dancing -> sin(wave) * 13f + danceLook * 4f
         celebrating -> sin(wave) * 8f
         tired -> 7f
         glancing -> lookX * 6f
@@ -248,7 +279,7 @@ fun MochiGlyph(
         else -> gestureTilt
     }
     val shiftX = when {
-        dancing -> sin(wave) * 0.07f
+        dancing -> sin(wave) * 0.07f + danceLook * 0.03f
         surprised -> (bob - 0.5f) * 0.05f
         mood == MochiMood.Scared -> sin(wave * 24f) * 0.015f
         mood == MochiMood.Flustered -> sin(wave * 10f) * 0.025f
@@ -258,7 +289,7 @@ fun MochiGlyph(
         mood == MochiMood.Excited -> -abs(sin(wave * 2f)) * 0.08f
         mood == MochiMood.Laughing -> -abs(sin(wave * 5f)) * 0.035f
         mood == MochiMood.Proud -> -0.03f
-        dancing -> -abs(sin(wave)) * 0.09f
+        dancing -> -hopAbs * 0.09f
         celebrating -> -abs(sin(wave)) * 0.13f
         g == IdleGesture.Hop -> -abs(sin(gp * 2f * PI.toFloat())) * 0.16f
         g == IdleGesture.Tickle -> -abs(sin(gp * 5f * PI.toFloat())) * 0.05f * env
@@ -295,11 +326,13 @@ fun MochiGlyph(
             .size(size)
             .graphicsLayer {
                 rotationZ = tilt
+                rotationY = turn
+                cameraDistance = 12f * density
                 translationX = shiftX * size.toPx()
                 translationY = (hop + drop) * size.toPx()
                 // (`fit` shrinks him with a big outfit on, so a witch's brim stays in his box.)
-                scaleX = scale * breathe * fit * gestureStretchX * moodSx
-                scaleY = scale * (if (dancing) 2f - breathe else 1f) * fit * gestureStretchY * moodSy
+                scaleX = scale * breathe * fit * gestureStretchX * moodSx * (1f - danceStretch * 0.6f)
+                scaleY = scale * (if (dancing) 2f - breathe else 1f) * fit * gestureStretchY * moodSy * (1f + danceStretch)
             },
     ) {
         val w = this.size.width
@@ -312,7 +345,7 @@ fun MochiGlyph(
             mood == MochiMood.Alert -> -bob * h * 0.07f
             mood == MochiMood.Happy -> -bob * h * 0.035f
             surprised -> -pop * h * 0.08f
-            dancing -> -abs(sin(wave)) * h * 0.05f
+            dancing -> -hopAbs * h * 0.05f
             mood == MochiMood.Sad || mood == MochiMood.Crying -> h * 0.035f
             else -> 0f
         }
@@ -326,7 +359,7 @@ fun MochiGlyph(
                     IdleGesture.LookAround -> sin(gp * 2f * PI.toFloat()) * 0.4f
                     else -> 0f
                 }
-                dancing -> sin(wave) * 0.25f
+                dancing -> sin(wave) * 0.25f + danceLook * 0.35f
                 else -> 0f
             },
             physDx = if (dancing) sin(wave) * 0.4f else if (celebrating) sin(wave) * 0.3f else 0f,
@@ -352,10 +385,12 @@ fun MochiGlyph(
             )
         }
         val ink = Color(0xFF1B1B20)
-        val eyeY = top + bodyH * 0.46f - (if (g == IdleGesture.LookUp) bodyH * 0.07f * env else 0f)
+        // Dancing, the face slides with his head turn and nods a little on each hop.
+        val danceNod = if (dancing) -hopAbs * bodyH * 0.025f + danceLook * bodyH * 0.012f else 0f
+        val eyeY = top + bodyH * 0.46f + danceNod - (if (g == IdleGesture.LookUp) bodyH * 0.07f * env else 0f)
         val lean = if (mood == MochiMood.Listening) w * 0.04f else 0f
         // Looking aside: on purpose toward the main pill when glancing, idly both ways in Idle.
-        val glanceShift = if (glancing) lookX * w * 0.10f else 0f
+        val glanceShift = if (glancing) lookX * w * 0.10f else if (dancing) danceLook * w * 0.09f else 0f
         val idleShift = if (mood == MochiMood.Idle) {
             peek * w * 0.07f + if (g == IdleGesture.LookAround) sin(gp * 2f * PI.toFloat()) * w * 0.08f else 0f
         } else 0f
