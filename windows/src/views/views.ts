@@ -342,7 +342,8 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "needs permission"));
+      const waiting = State.approvalQueue.length;
+      who.append(agentWho(State.focusTask, waiting > 0 ? `needs permission · +${waiting} waiting` : "needs permission"));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.

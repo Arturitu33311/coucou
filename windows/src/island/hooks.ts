@@ -10,8 +10,64 @@ import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
 
-/** Clears the approval card if no decision was made before the hook gave up. */
-let pendingTimeout: number | null = null;
+/** Most permission requests held at once; one more goes back to the terminal. */
+const MAX_APPROVALS = 5;
+/** Per request: clears its card (or queue slot) if no decision was made before the hook gave up. */
+const approvalTimers = new Map<string, number>();
+
+function armApprovalTimer(island: Island, requestId: string) {
+  if (!requestId) return;
+  const old = approvalTimers.get(requestId);
+  if (old != null) window.clearTimeout(old);
+  // Coucou answers within 108 s or not at all; after that the terminal has
+  // taken over and the card would be lying.
+  approvalTimers.set(
+    requestId,
+    window.setTimeout(() => dropApproval(island, requestId), 110_000),
+  );
+}
+
+/** A request is over (answered elsewhere, timed out): off the card or out of the line. */
+function dropApproval(island: Island, requestId: string) {
+  const t = approvalTimers.get(requestId);
+  if (t != null) window.clearTimeout(t);
+  approvalTimers.delete(requestId);
+  State.approvalQueue = State.approvalQueue.filter((x) => x.requestId !== requestId);
+  if (State.pendingApproval?.requestId === requestId) {
+    State.pendingApproval = null;
+    if (!promoteNextApproval(island)) {
+      State.isPinned = false;
+      island.dropPin();
+      State.updateTask(CLAUDE_ID, "working");
+      State.setPillBadge(CLAUDE_ID, null);
+      if (State.view === "approval") island.setView(State.defaultView());
+    }
+  }
+  State.notify();
+}
+
+/** The user answered the card: stop its clock and bring up the next waiting request, if any. */
+export function settleApproval(island: Island, requestId: string): boolean {
+  const t = approvalTimers.get(requestId);
+  if (t != null) window.clearTimeout(t);
+  approvalTimers.delete(requestId);
+  State.pendingApproval = null;
+  return promoteNextApproval(island);
+}
+
+/** Put the next waiting request on the card. False when nobody is waiting. */
+export function promoteNextApproval(island: Island): boolean {
+  const next = State.approvalQueue.shift();
+  if (!next) return false;
+  // Its own timer has been running since it arrived: the relay's clock started then, not now.
+  State.pendingApproval = next;
+  State.updateTask(CLAUDE_ID, "approval");
+  State.isPinned = true;
+  Sound.play("approval");
+  island.alert("approval");
+  State.notify();
+  return true;
+}
 
 interface HookPayload {
   hook_event_name?: string;
@@ -167,20 +223,15 @@ function clearSession() {
   if (!t) return;
   t.steps = [];
   t.stepIndex = 0;
+  delete t.stepSeq;
   t.name = "Claude Code";
   t.pillBadge = null;
 }
 
 /** A request was settled somewhere else (the phone, the clock): its card must not stay up. */
 function resolvedElsewhere(island: Island, requestId: string) {
-  const approval = State.pendingApproval;
-  if (approval && approval.requestId === requestId) {
-    State.pendingApproval = null;
-    State.isPinned = false;
-    island.dropPin();
-    State.updateTask(CLAUDE_ID, "working");
-    State.setPillBadge(CLAUDE_ID, null);
-    if (State.view === "approval") island.setView(State.defaultView());
+  if (State.pendingApproval?.requestId === requestId || State.approvalQueue.some((x) => x.requestId === requestId)) {
+    dropApproval(island, requestId);
   }
   const question = State.pendingQuestion;
   if (question && question.requestId === requestId) {
@@ -400,23 +451,38 @@ function handleHook(island: Island, payload: HookPayload) {
       }
 
       const requestId = payload.request_id ?? "";
-      // One card, one request. A second one must never quietly replace the first
-      // — that would leave a human staring at request B while request A waits for
-      // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingQuestion || (State.pendingApproval && State.pendingApproval.requestId !== requestId)) {
+      // A question holds the whole turn and owns the card: a permission cannot take its place.
+      if (State.pendingQuestion) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
-      upsert(projectName, cwd);
-      if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+      // The same request again (the relay re-sends): ack it and leave it where it is.
+      if (State.pendingApproval?.requestId === requestId || State.approvalQueue.some((x) => x.requestId === requestId)) {
+        if (requestId) void Bridge.approvalAck(requestId);
+        break;
+      }
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};
-      State.pendingApproval = {
+      const info = {
         requestId,
         sessionId: payload.session_id ?? "",
         tool,
         command: approvalTarget(tool, input),
       };
+      // One card at a time, the rest wait in line (never replacing the one on screen, which would
+      // leave a human staring at request B while A waits). Past the limit, back to the terminal.
+      if (State.pendingApproval) {
+        if (State.approvalQueue.length + 1 >= MAX_APPROVALS) {
+          if (requestId) void Bridge.approvalDecline(requestId);
+          break;
+        }
+        State.approvalQueue.push(info);
+        armApprovalTimer(island, requestId);
+        if (requestId) void Bridge.approvalAck(requestId);
+        break;
+      }
+      upsert(projectName, cwd);
+      State.pendingApproval = info;
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
@@ -432,19 +498,7 @@ function handleHook(island: Island, payload: HookPayload) {
         State.setPillBadge(CLAUDE_ID, "approval");
         island.reveal();
       }
-      // Coucou answers within 108 s or not at all; after that the terminal has
-      // taken over and the card would be lying.
-      pendingTimeout = window.setTimeout(() => {
-        pendingTimeout = null;
-        if (!State.pendingApproval) return;
-        State.pendingApproval = null;
-        State.isPinned = false;
-        island.dropPin();
-        State.updateTask(CLAUDE_ID, "working");
-        State.setPillBadge(CLAUDE_ID, null);
-        if (State.view === "approval") island.setView(State.defaultView());
-        State.notify();
-      }, 110_000);
+      armApprovalTimer(island, requestId);
       break;
     }
 

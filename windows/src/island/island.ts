@@ -12,6 +12,7 @@ import {
 import { Sound } from "../core/sound";
 import { INTEGRATION_AGENTS, JINX_ID, BACKEND_MOCHI, State } from "../core/state";
 import { answerJinxApproval } from "./jinx";
+import { settleApproval } from "./hooks";
 import { selectedAgent } from "./agents";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
@@ -191,6 +192,11 @@ export class Island {
         this.fsm.pinned = false;
         State.updateTask(agent, "working");
         State.setPillBadge(agent, null);
+        // Another request may be waiting its turn: it takes the card instead of the island going home.
+        if (!req.jinxRun && settleApproval(this, req.requestId)) {
+          this.fsm.pinned = true;
+          return;
+        }
         this.setView(State.defaultView());
       },
       talkToJinx: () => {

@@ -13,6 +13,11 @@ export interface AgentTask {
   state: BotStateName;
   stepIndex: number;
   steps: string[];
+  /**
+   * Position of the newest step in the whole session. `steps` is capped, so
+   * `stepIndex` stops moving once it is full; this keeps counting.
+   */
+  stepSeq?: number;
   source: AgentSource;
   isIntegration: boolean;
   emote?: BotEmoteName | null;
@@ -403,6 +408,8 @@ class AppState {
   /** A Jinx run is under way (from sending until its last event). */
   jinxBusy = false;
   pendingApproval: ApprovalInfo | null = null;
+  /** Permission requests waiting their turn behind the card on screen (Mac's ApprovalQueue). */
+  approvalQueue: ApprovalInfo[] = [];
   pendingQuestion: QuestionInfo | null = null;
   /** What the Music pill is showing; null when no player has a track. */
   music: MusicInfo | null = null;
@@ -469,9 +476,11 @@ class AppState {
   appendStep(id: string, step: string) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
+    const newest = t.stepSeq ?? t.steps.length - 1;
     t.steps.push(step);
     if (t.steps.length > 20) t.steps.shift();
     t.stepIndex = t.steps.length - 1;
+    t.stepSeq = newest + 1;
     this.notify();
   }
 
