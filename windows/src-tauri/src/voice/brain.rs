@@ -218,7 +218,25 @@ impl Brain {
                         self.or_messages.pop();
                     }
                     crate::or_brain::repair(&mut self.or_messages);
-                    return acted.then(|| Reply { text: String::new(), acted });
+                    if acted {
+                        return Some(Reply { text: String::new(), acted });
+                    }
+                    // OpenRouter is out (no credits, offline) and nothing was done yet: the small local model answers in a few words.
+                    let mut ctx = self.or_messages.clone();
+                    ctx.push(json!({ "role": "user", "content": transcript }));
+                    return match tauri::async_runtime::block_on(crate::or_brain::local_turn(&ctx)) {
+                        Ok(text) if !text.trim().is_empty() => {
+                            crate::log::line("voice: answered by the local model");
+                            self.or_messages.push(json!({ "role": "user", "content": transcript }));
+                            self.or_messages.push(json!({ "role": "assistant", "content": text }));
+                            Some(Reply { text: spoken_text(&text), acted: false })
+                        }
+                        Ok(_) => None,
+                        Err(e) => {
+                            crate::log::line(format!("voice: local model failed: {e}"));
+                            None
+                        }
+                    };
                 }
             };
             // Only the fields the API needs go back into the history (providers add others).

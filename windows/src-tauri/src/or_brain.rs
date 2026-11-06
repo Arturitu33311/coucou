@@ -65,6 +65,43 @@ pub async fn chat_turn(system: &str, messages: &[Value], tools: &[Value]) -> Res
     parse_turn(&post(&body, Duration::from_secs(45)).await?)
 }
 
+const LOCAL_ENDPOINT: &str = "http://127.0.0.1:11435/v1/chat/completions";
+const LOCAL_MODEL: &str = "gemma4:e2b";
+const LOCAL_SYSTEM: &str = "Eres Jinx, la asistente personal de Alan: directa, mexicana, casual. Hablas en voz alta desde su computadora. \
+Responde en español con una o dos frases cortas. Ahora no tienes herramientas (estás en modo local): si te pide actuar (música, casa, pills), \
+dilo en pocas palabras y que lo intente en un rato. No inventes datos.";
+
+/// OpenRouter did not answer (no credits, offline): a short, text-only answer from the small local model on this laptop (Ollama on :11435).
+/// No tools and no memory, so it only talks. `COUCOU_LOCAL_MODEL` replaces the model.
+pub async fn local_turn(messages: &[Value]) -> Result<String, String> {
+    let model = std::env::var("COUCOU_LOCAL_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| LOCAL_MODEL.into());
+    let mut all = vec![json!({ "role": "system", "content": LOCAL_SYSTEM })];
+    let mut recent: Vec<Value> = messages
+        .iter()
+        .filter(|m| m["content"].is_string() && (m["role"] == "user" || m["role"] == "assistant"))
+        .rev()
+        .take(6)
+        .cloned()
+        .collect();
+    recent.reverse();
+    all.extend(recent);
+    let body = json!({ "model": model, "max_tokens": 80, "stream": false, "reasoning_effort": "none", "messages": all });
+    let url = reqwest::Url::parse(LOCAL_ENDPOINT).map_err(|e| e.to_string())?;
+    let response = net::client(&url, Duration::from_secs(90))?
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("local model {status}"));
+    }
+    let bytes = net::read_capped(response, net::MAX_BODY).await?;
+    let reply: Value = serde_json::from_slice(&bytes).map_err(|e| format!("Bad API response: {e}"))?;
+    Ok(parse_turn(&reply)?.text)
+}
+
 /// What the model answered.
 #[derive(Debug, PartialEq)]
 pub struct Turn {

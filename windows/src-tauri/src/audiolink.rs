@@ -315,6 +315,40 @@ pub const SOUND_GAP_MS: u64 = 1_000;
 /// This long without sound and the computer is no longer playing.
 pub const PLAYING_ENDS_MS: u64 = 3_000;
 
+// The relay tells "the computer is playing" from the sound itself and then asks the phone to pause its music. It cannot
+// tell whose sound it is, so Coucou's own (an agent that finished, a notification, « OK Coucou »'s spoken answer) paused
+// the phone's music. Coucou says when it makes a sound and for how long; that stretch does not count for this decision
+// (the sound still goes to the phone like any other).
+
+/// Longest own sound that is believed, and the tail left after it (room for the output's own delay).
+const OWN_SOUND_MAX_MS: u64 = 20_000;
+const OWN_SOUND_TAIL_MS: u64 = 400;
+
+static OWN_SOUND_UNTIL: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// When the current own-sound stretch ends if one of `ms` starts at `now`: never earlier than what was already declared.
+fn own_sound_end(current: Option<std::time::Instant>, now: std::time::Instant, ms: u64) -> std::time::Instant {
+    let until = now + std::time::Duration::from_millis(ms.min(OWN_SOUND_MAX_MS) + OWN_SOUND_TAIL_MS);
+    current.map_or(until, |c| c.max(until))
+}
+
+/// Coucou is about to make a sound of `ms` milliseconds.
+pub fn own_sound(ms: u64) {
+    let mut g = OWN_SOUND_UNTIL.lock().unwrap();
+    *g = Some(own_sound_end(*g, std::time::Instant::now(), ms));
+}
+
+/// Whether the sound heard now is Coucou's own.
+fn own_sound_now() -> bool {
+    OWN_SOUND_UNTIL.lock().unwrap().is_some_and(|t| std::time::Instant::now() < t)
+}
+
+/// The island's sounds (an agent finished, a notification…) say here how long they last.
+#[tauri::command]
+pub fn audiolink_own_sound(ms: u64) {
+    own_sound(ms);
+}
+
 /// Whether this computer is really playing, told by the sound itself, chunk by chunk. A media player's own status
 /// cannot be trusted for this: some players only mirror another device (Sonora shows what plays on the phone's
 /// Spotify, KDE Connect shows the phone's media) and report "playing" without making any sound here.
@@ -613,7 +647,7 @@ fn start_capture() {
         // is not sent (past a short tail): a quiet laptop costs the network and the phone nothing.
         while let Ok(true) = capture.read_chunk(&mut chunk) {
             // Whether this computer is playing is told by the sound itself, not by a player's status (see SoundWatch).
-            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk), crate::audiolink_players::non_mirror_playing) {
+            if let Some(playing) = watch.feed(started.elapsed().as_millis() as u64, !is_silent(&chunk) && !own_sound_now(), crate::audiolink_players::non_mirror_playing) {
                 send_event(Event::PcMedia(playing));
             }
             if gate.pass(&chunk) {
