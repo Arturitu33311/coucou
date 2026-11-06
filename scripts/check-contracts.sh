@@ -16,4 +16,5 @@ check windows/scripts/phone/due-vectors.json android/app/src/test/resources/due-
 # Lo que Jinx puede pedirle a la isla: el validador de Python (servidor y herramienta de Jinx) y el de Rust (el PC).
 check jinx/jinx-assist/island-vectors.json windows/scripts/phone/island-vectors.json
 check windows/scripts/phone/audiolink-vectors.json android/app/src/test/resources/audiolink-vectors.json
+check windows/scripts/phone/wire-fixtures.json    android/app/src/test/resources/wire-fixtures.json
 exit "$bad"

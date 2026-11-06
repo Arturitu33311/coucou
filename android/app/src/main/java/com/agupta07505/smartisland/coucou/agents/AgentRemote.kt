@@ -6,6 +6,7 @@ package com.agupta07505.smartisland.coucou.agents
 
 import android.content.Context
 import com.agupta07505.smartisland.coucou.CoucouTasks
+import com.agupta07505.smartisland.coucou.handoff.HandoffFlow
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
 import com.agupta07505.smartisland.coucou.phone.Ssh
 import com.agupta07505.smartisland.coucou.presence.DeviceActivity
@@ -190,7 +191,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
                     continue
                 }
                 lastHeard = System.currentTimeMillis()
-                when (val msg = RemoteProtocol.parse(line, lastHeard)) {
+                when (val msg = RemoteProtocol.parse(line, lastHeard, DeviceActivity.myId)) {
                     null -> Unit
                     RemoteMsg.Offline -> return "laptop-closed"
                     RemoteMsg.Disabled -> return "The phone link is off on the laptop (Settings → Phone)"
@@ -199,6 +200,8 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
                         DeviceActivity.onPeer(context, msg.beat, msg.music, msg.news, msg.limit)
                     }
                     is RemoteMsg.PeerGone -> DeviceActivity.onPeerGone(context, msg.device)
+                    is RemoteMsg.Handoff -> HandoffFlow.offered(context, msg.offer)
+                    is RemoteMsg.HandoffDone -> HandoffFlow.done(msg)
                     else -> {
                         model.apply(msg, lastHeard)
                         publish(AgentUi.Status.Connected)

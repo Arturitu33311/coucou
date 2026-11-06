@@ -256,6 +256,10 @@ export interface Settings {
   remoteEnabled: boolean;
   /** Send what plays on this computer to the phone's headphones, through a second audio-only ssh key (off until turned on). */
   audiolinkEnabled: boolean;
+  /** Carry the music to the phone you moved to: "off", "ask" (a card on the phone) or "auto" (also frees the headphones). */
+  musicHandoff: "off" | "ask" | "auto";
+  /** Seconds on the phone (and away from this computer) before the music is offered to it. */
+  handoffDwellS: number;
   /** A dot on the island, with the program's name, while something records the microphone. */
   micIndicator: boolean;
   /** The Hub's Clipboard keeps what was copied (memory only; pins on disk). Off until turned on. */
@@ -352,6 +356,8 @@ export const DEFAULT_SETTINGS: Settings = {
   notificationPeek: false,
   remoteEnabled: false,
   audiolinkEnabled: false,
+  musicHandoff: "off",
+  handoffDwellS: 90,
   micIndicator: true,
   clipboardHistory: false,
   activitiesOn: false,

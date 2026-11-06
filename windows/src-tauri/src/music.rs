@@ -50,6 +50,8 @@ pub struct Track {
     pub album: String,
     pub length_ms: i64,
     pub art_url: String,
+    /// The player's own address for what it plays (`xesam:url`): a page for a browser, empty for most apps.
+    pub url: String,
     /// Where the track was `position_at` (epoch ms). The island extrapolates from here.
     pub position_ms: i64,
     pub position_at: i64,
@@ -721,6 +723,7 @@ pub mod mpris {
             album: meta.get("xesam:album").and_then(text).unwrap_or_default(),
             length_ms: meta.get("mpris:length").and_then(integer).unwrap_or(0) / 1000,
             art_url: meta.get("mpris:artUrl").and_then(text).unwrap_or_default(),
+            url: meta.get("xesam:url").and_then(text).unwrap_or_default(),
             position_ms: (position_us / 1000).max(0),
             position_at: now_ms(),
             can_seek: flag("CanSeek"),
@@ -785,6 +788,26 @@ pub mod mpris {
         Some(read.track)
     }
 
+    /// A fresh look at the players, for callers that must not depend on the pill's watcher (which is off
+    /// when the pill is).
+    pub fn read_now() -> Option<Track> {
+        let conn = Connection::session().ok()?;
+        snapshot(&conn)
+    }
+
+    /// Pauses (or resumes) that player by its short name. Never a toggle: if the state raced, a toggle
+    /// would start the music instead of stopping it.
+    pub fn set_playing(short_name: &str, playing: bool) -> Result<(), String> {
+        let conn = Connection::session().map_err(|e| e.to_string())?;
+        let name = format!("{PREFIX}{short_name}");
+        let player = proxy(&conn, &name, PLAYER).ok_or("player is gone")?;
+        player
+            .call_method(if playing { "Play" } else { "Pause" }, &())
+            .map_err(|e| e.to_string())?;
+        wake();
+        Ok(())
+    }
+
     /// PlayPause / Next / Previous, or a seek to an absolute position.
     pub fn control(action: &str, value_ms: Option<i64>) -> Result<(), String> {
         let name = ACTIVE.lock().unwrap().clone().ok_or("no player")?;
@@ -839,6 +862,31 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
 #[cfg(not(target_os = "linux"))]
 pub fn sync_enabled(_app: &AppHandle, on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+}
+
+/// What is playing right now, read fresh (not what the pill last showed).
+pub fn read_now() -> Option<Track> {
+    #[cfg(target_os = "linux")]
+    {
+        mpris::read_now()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Pauses or resumes one player by its short name (`Track::player`).
+pub fn set_playing(player: &str, playing: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        mpris::set_playing(player, playing)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (player, playing);
+        Err("no media players on this platform".into())
+    }
 }
 
 #[tauri::command]
@@ -1010,7 +1058,7 @@ mod tests {
     fn track(status: &str, pos: i64, at: i64) -> Track {
         Track {
             player: "p".into(), identity: "P".into(), status: status.into(), title: "T".into(),
-            artists: vec!["A".into()], album: "B".into(), length_ms: 200_000, art_url: String::new(),
+            artists: vec!["A".into()], album: "B".into(), length_ms: 200_000, art_url: String::new(), url: String::new(),
             position_ms: pos, position_at: at, can_seek: true, can_next: true, can_previous: true, volume: 0.5,
         }
     }

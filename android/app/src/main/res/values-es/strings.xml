@@ -76,4 +76,11 @@
     <string name="audiolink_release_text">La laptop los quiere. Toca para abrir Bluetooth y desconectarlos de este celular.</string>
     <string name="audiolink_connect_title">Conecta los audífonos</string>
     <string name="audiolink_connect_text">La laptop los soltó. Toca para abrir Bluetooth y conectarlos a este celular.</string>
+    <string name="coucou_handoff_title">Continuar en el celular</string>
+    <string name="coucou_handoff_working">Pasándolo…</string>
+    <string name="coucou_handoff_nolink">Sin enlace con la laptop</string>
+    <string name="coucou_handoff_noanswer">La laptop no respondió</string>
+    <string name="coucou_handoff_failed">No se pasó: %1$s</string>
+    <string name="coucou_handoff_connect">Conecta %1$s a este celular</string>
+    <string name="coucou_handoff_ready">Abierto. Dale play cuando tengas los audífonos</string>
 </resources>

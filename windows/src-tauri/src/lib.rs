@@ -34,6 +34,7 @@ mod drive;
 mod files;
 mod flow;
 mod github;
+mod handoff;
 mod hooks;
 mod i18n;
 mod identity;
@@ -1661,6 +1662,8 @@ pub fn run() {
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
             // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
             presence::start(&handle);
+            // A Bluetooth block left from a run that died before lifting it.
+            handoff::recover();
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
             #[cfg(target_os = "linux")]
             dictation::start(&handle);

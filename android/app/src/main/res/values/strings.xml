@@ -683,4 +683,11 @@
     <string name="audiolink_release_text">The laptop wants them. Tap to open Bluetooth and disconnect them from this phone.</string>
     <string name="audiolink_connect_title">Connect the headphones</string>
     <string name="audiolink_connect_text">The laptop let them go. Tap to open Bluetooth and connect them to this phone.</string>
+    <string name="coucou_handoff_title">Continue on this phone</string>
+    <string name="coucou_handoff_working">Moving it over…</string>
+    <string name="coucou_handoff_nolink">No link to the laptop</string>
+    <string name="coucou_handoff_noanswer">The laptop did not answer</string>
+    <string name="coucou_handoff_failed">Not moved: %1$s</string>
+    <string name="coucou_handoff_connect">Connect %1$s to this phone</string>
+    <string name="coucou_handoff_ready">Opened. Press play when the headphones are on</string>
 </resources>

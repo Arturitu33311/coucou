@@ -973,6 +973,24 @@ function mochiSection(): HTMLElement {
   );
 }
 
+
+/** Selects for the music handoff row (kept out of the long section function). */
+function handoffControls(): [HTMLSelectElement, HTMLSelectElement] {
+  const mode = h("select", {}) as HTMLSelectElement;
+  mode.append(
+    h("option", { value: "off", text: "Off" }),
+    h("option", { value: "ask", text: "Ask on the phone" }),
+    h("option", { value: "auto", text: "Auto" }),
+  );
+  mode.value = settings.musicHandoff ?? "off";
+  mode.addEventListener("change", () => { settings.musicHandoff = mode.value as Settings["musicHandoff"]; void save(); });
+  const dwell = h("select", {}) as HTMLSelectElement;
+  for (const s of [30, 60, 90, 180, 300]) dwell.append(h("option", { value: String(s), text: `after ${s} s` }));
+  dwell.value = String(settings.handoffDwellS ?? 90);
+  dwell.addEventListener("change", () => { settings.handoffDwellS = Number(dwell.value); void save(); });
+  return [mode, dwell];
+}
+
 // ── Music section ─────────────────────────────────────────────────────────────
 
 function musicSection(): HTMLElement {
@@ -1172,6 +1190,7 @@ function finishSoundRow(): HTMLElement {
 
 /** The Hub's sources: the server it reads over ssh. */
 function hubSection(): HTMLElement {
+  const [handoffMode, handoffDwell] = handoffControls();
   const host = h("input", {
     type: "text", placeholder: "server  (a name from ~/.ssh/config, or user@host)", spellcheck: "false",
     value: settings.serverHost ?? "", style: "flex:1 1 auto;min-width:0",
@@ -1265,6 +1284,13 @@ function hubSection(): HTMLElement {
         swapButton("Back to the phone", "phone", (m) => { note.textContent = m; }),
         note);
     })(),
+    h("div", { class: "row" }, h("label", { text: "Music handoff" }),
+      handoffMode, handoffDwell,
+      h("span", { class: "hint", text:
+        "After you have been on the phone for a while, offer the song or video playing here to it: a card on the phone " +
+        "(Ask) and, once you tap it, this computer pauses and lets go of the Bluetooth headphones so the phone can take them. " +
+        "Auto lets them go as soon as the card is out. Spotify (via Sonora) and YouTube open on the phone; the position is " +
+        "shown on the card. Off until you turn it on." })),
     h("div", { class: "row" }, h("label", { text: "Server activity" }),
       toggle(settings.activitiesOn === true, (v) => { settings.activitiesOn = v; void save(); }),
       h("span", { class: "hint", text:

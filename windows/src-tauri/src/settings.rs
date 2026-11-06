@@ -113,6 +113,14 @@ pub struct Settings {
     /// Send what plays here to the phone's headphones through a second, audio-only ssh key (off until turned on).
     #[serde(default)]
     pub audiolink_enabled: bool,
+    /// Music handoff: when you have been on the phone for a while, offer to carry what plays here to it.
+    /// "off", "ask" (a card on the phone; nothing happens until you tap it) or "auto" (also frees the
+    /// headphones by itself once the offer is out). Off until turned on.
+    #[serde(default = "default_handoff")]
+    pub music_handoff: String,
+    /// How long the phone must have been the one in use (and this computer untouched) before the offer.
+    #[serde(default = "default_handoff_dwell")]
+    pub handoff_dwell_s: u64,
     /// A dot on the island, with the program's name, while something records the microphone.
     #[serde(default = "default_true")]
     pub mic_indicator: bool,
@@ -208,6 +216,14 @@ pub struct DesktopSpot {
     pub y: f64,
     /// What x and y are measured in (`DesktopMode::space`).
     pub space: String,
+}
+
+fn default_handoff() -> String {
+    "off".into()
+}
+
+fn default_handoff_dwell() -> u64 {
+    90
 }
 
 fn default_drive_remote() -> String {
@@ -314,6 +330,8 @@ impl Default for Settings {
             notification_peek: false,
             remote_enabled: false,
             audiolink_enabled: false,
+            music_handoff: default_handoff(),
+            handoff_dwell_s: default_handoff_dwell(),
             mic_indicator: true,
             clipboard_history: false,
             activities_on: false,
