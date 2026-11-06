@@ -5,6 +5,8 @@
 package com.agupta07505.smartisland.coucou.assist
 
 import android.content.Intent
+import android.app.assist.AssistContent
+import android.app.assist.AssistStructure
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
@@ -27,6 +29,13 @@ class JinxSession(private val service: JinxSessionService) : VoiceInteractionSes
             Intent(service, JinxAssistActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         finish()
+    }
+
+    /** What Alan was looking at when he invoked Jinx: kept in memory for a few minutes, only for this phone's own brains. */
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onHandleAssist(data: Bundle?, structure: AssistStructure?, content: AssistContent?) {
+        super.onHandleAssist(data, structure, content)
+        ScreenHolder.put(runCatching { ScreenReader.read(service, structure) }.getOrNull())
     }
 }
 

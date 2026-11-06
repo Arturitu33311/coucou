@@ -94,6 +94,28 @@ class ChatRepository(
         return SendResult.Pending(reason)
     }
 
+    /**
+     * Answers a question about what is on the screen. The screen goes only to this phone's own brains (OpenRouter
+     * from here, or the model on the phone), as a note on the last line that is never stored: not the quick Jinx
+     * on the server, not the laptop, not Telegram.
+     */
+    fun answerAboutScreen(user: ChatLine, screen: ScreenSnapshot): SendResult {
+        val cid = user.cid ?: return SendResult.Pending("sin cid")
+        var reason = "sin modelo disponible"
+        for (b in brains) {
+            try {
+                val context = store.tail(CONTEXT).map { if (it.id == user.id) it.copy(text = ScreenText.forModel(screen, it.text)) else it }
+                val text = b.reply(context)
+                val line = store.append(ChatLine("$cid:jinx", clock(), "jinx", text, cid, true, via = if (b.via == Via.Cloud) "or" else "local"))
+                store.markMirrored(setOf(user.id, line.id))
+                return SendResult.Answered(line, b.via)
+            } catch (e: ChatException) {
+                reason = e.message ?: reason
+            }
+        }
+        return SendResult.Pending(reason)
+    }
+
     /** Repeats, in order, the lines Telegram has not seen; stops at the first failure. */
     fun flushMirror() {
         val m = mirror ?: return

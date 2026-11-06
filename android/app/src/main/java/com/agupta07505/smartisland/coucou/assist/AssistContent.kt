@@ -6,6 +6,7 @@ package com.agupta07505.smartisland.coucou.assist
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,6 +83,7 @@ internal fun AssistContent(
     onTestModel: () -> Unit,
     modifier: Modifier = Modifier,
     onApproval: (JinxApproval, String) -> Unit = { _, _ -> },
+    onDropScreen: () -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
@@ -177,6 +179,30 @@ internal fun AssistContent(
                     items(ui.lines, key = { it.id }) { l -> Bubble(l) }
                     if (ui.busy) item(key = "typing") { Typing() }
                 }
+            }
+        }
+
+        ui.screenApp?.let { app ->
+            // Jinx was invoked over this app: she can read its screen for the next question (only on this phone's brains).
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Chip("Viendo: $app", dot = CoucouColors.Accent)
+                for (q in listOf("¿Qué hay aquí?", "Resume esto", "Traduce esto", "¿Qué me recomiendas hacer?")) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(CoucouColors.SurfaceHigh)
+                            .clickable(role = androidx.compose.ui.semantics.Role.Button) { onSend(q) }
+                            .heightIn(min = 48.dp).padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(q, color = CoucouColors.Text, fontSize = 13.sp) }
+                }
+                Box(
+                    Modifier.clip(RoundedCornerShape(50)).clickable(role = androidx.compose.ui.semantics.Role.Button) { onDropScreen() }
+                        .heightIn(min = 48.dp).padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("Quitar pantalla", color = CoucouColors.TextTertiary, fontSize = 13.sp) }
             }
         }
 

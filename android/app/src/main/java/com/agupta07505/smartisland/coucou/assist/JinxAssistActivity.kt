@@ -82,6 +82,8 @@ data class AssistUi(
     val approvals: List<JinxApproval> = emptyList(),
     /** The key of the approval whose answer is on its way. */
     val answering: String? = null,
+    /** The app whose screen Jinx can see right now (she was invoked over it), else null. */
+    val screenApp: String? = null,
 )
 
 class AssistModel(app: Application) : AndroidViewModel(app) {
@@ -201,15 +203,35 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Looks for the screen Jinx was invoked over; call when the panel comes to the front. */
+    fun refreshScreen() {
+        _ui.update { it.copy(screenApp = ScreenHolder.take()?.appLabel) }
+    }
+
+    /** Forget the screen: the chip is dismissed, or the question has been answered. */
+    fun dropScreen() {
+        ScreenHolder.clear()
+        _ui.update { it.copy(screenApp = null) }
+    }
+
     fun send(text: String) {
         val t = text.trim()
         if (t.isEmpty() || _ui.value.busy) return
+        // An order for the phone (open an app, a setting, a search…) is done here, with no model and no network.
+        LocalActions.parse(t)?.let { action ->
+            val done = LocalActionRunner(appContext).run(action)
+            if (done.handled) {
+                _ui.update { it.copy(notice = done.message) }
+                return
+            }
+        }
+        val screen = if (_ui.value.screenApp != null) ScreenHolder.take() else null
         _ui.update { it.copy(busy = true, notice = "") }
         viewModelScope.launch(Dispatchers.IO) {
             // What the user typed shows up at once; the answer arrives when some brain has it.
             val line = repo.enqueue(t)
             refresh()
-            val r = repo.answer(line)
+            val r = if (screen != null) repo.answerAboutScreen(line, screen) else repo.answer(line)
             // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
             if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->
@@ -342,6 +364,7 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
     val agents by CoucouRuntime.agentUi.collectAsState()
     LifecycleResumeEffect(model) {
         model.onOpen()
+        model.refreshScreen()
         model.setShown(true)
         onPauseOrDispose { model.setShown(false) }
     }
@@ -354,6 +377,7 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
         onDownloadModel = { model.downloadModel() },
         onTestModel = { model.testLocalModel() },
         onApproval = { a, choice -> model.answerApproval(a, choice) },
+        onDropScreen = { model.dropScreen() },
         modifier = modifier,
     )
 }
