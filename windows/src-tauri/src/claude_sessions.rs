@@ -430,6 +430,106 @@ pub fn start(cwd: &str, prompt: &str) -> Result<String, String> {
         .ok_or_else(|| "Claude Code did not start the agent".to_string())
 }
 
+/// The arguments that make `terminal` open in `dir` and run `cmd` (a program and its arguments), or
+/// None for a terminal this does not know. Each family spells it differently.
+#[cfg(target_os = "linux")]
+fn terminal_args(terminal: &str, dir: &Path, cmd: &[String]) -> Option<Vec<String>> {
+    let d = dir.to_string_lossy().to_string();
+    let mut v: Vec<String> = Vec::new();
+    match terminal {
+        "gnome-terminal" => {
+            v.extend(["--working-directory".to_string(), d, "--".to_string()]);
+        }
+        "konsole" => v.extend(["--workdir".to_string(), d, "-e".to_string()]),
+        "xfce4-terminal" => v.extend([format!("--working-directory={d}"), "-x".to_string()]),
+        "alacritty" => v.extend(["--working-directory".to_string(), d, "-e".to_string()]),
+        "kitty" => v.extend(["--directory".to_string(), d]),
+        "wezterm" => v.extend(["start".to_string(), "--cwd".to_string(), d, "--".to_string()]),
+        "kgx" => v.extend(["--working-directory".to_string(), d, "-e".to_string()]),
+        "tilix" => v.extend(["--working-directory".to_string(), d, "-e".to_string()]),
+        _ => return None,
+    }
+    v.extend(cmd.iter().cloned());
+    Some(v)
+}
+
+/// A new Claude Code session in the user's own terminal, in `cwd`, with `prompt` already typed
+/// (an empty prompt just opens Claude). Unlike `start`, the session is a normal interactive one.
+/// The prompt is never put on a command line (anyone can read those with `ps`): it goes into a
+/// private file that a fixed script reads and deletes.
+#[cfg(target_os = "linux")]
+pub fn start_terminal(cwd: &str, prompt: &str) -> Result<String, String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let home = home_dir();
+    let dir = if cwd.is_empty() { home.as_path() } else { Path::new(cwd) };
+    if !dir.is_dir() {
+        return Err("That folder does not exist".into());
+    }
+    let claude = claude_bin()?;
+    // The first terminal on the machine that this knows how to drive.
+    let terminal = ["gnome-terminal", "kgx", "konsole", "xfce4-terminal", "tilix", "alacritty", "kitty", "wezterm"]
+        .into_iter()
+        .find(|t| which(t).is_some())
+        .ok_or_else(|| "No supported terminal found (gnome-terminal, konsole, kitty, alacritty…)".to_string())?;
+
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let file = runtime.join(format!("coucou-prompt-{}-{}", std::process::id(), now_ms()));
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&file)
+        .map_err(|e| format!("cannot prepare the prompt: {e}"))?;
+    f.write_all(prompt.trim().as_bytes()).map_err(|e| e.to_string())?;
+    drop(f);
+
+    // $1 = the prompt file, $2 = claude. The script reads the prompt, deletes the file, and becomes Claude.
+    const SCRIPT: &str = r#"p=$(cat -- "$1"); rm -f -- "$1"; if [ -n "$p" ]; then exec "$2" "$p"; else exec "$2"; fi"#;
+    let cmd = vec![
+        "bash".to_string(),
+        "-c".to_string(),
+        SCRIPT.to_string(),
+        "_".to_string(),
+        file.to_string_lossy().to_string(),
+        claude.to_string_lossy().to_string(),
+    ];
+    let args = terminal_args(terminal, dir, &cmd).ok_or_else(|| "unsupported terminal".to_string())?;
+    let spawned = Command::new(terminal)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    if let Err(e) = spawned {
+        let _ = std::fs::remove_file(&file);
+        return Err(format!("cannot open {terminal}: {e}"));
+    }
+    Ok("terminal".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn start_terminal(_cwd: &str, _prompt: &str) -> Result<String, String> {
+    Err("Starting a session in a terminal is only available on Linux for now".into())
+}
+
+#[cfg(target_os = "linux")]
+fn which(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH")?
+        .to_string_lossy()
+        .split(':')
+        .map(|d| Path::new(d).join(name))
+        .find(|p| p.is_file())
+}
+
+#[cfg(target_os = "linux")]
+fn now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
 pub fn stop(id: &str) -> Result<(), String> {
     if !valid_id(id) {
         return Err("invalid agent id".into());
@@ -550,5 +650,20 @@ mod tests {
         assert_eq!(b.messages, vec![Msg { role: "assistant", text: "dos".into() }]);
         assert!(messages_from(&projects, "../../etc/passwd", 0).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_terminal_gets_the_folder_and_the_command_and_nothing_else() {
+        let cmd = vec!["bash".to_string(), "-c".to_string(), "script".to_string(), "_".to_string(), "/run/f".to_string()];
+        let dir = Path::new("/home/u/proj");
+        let g = terminal_args("gnome-terminal", dir, &cmd).unwrap();
+        assert_eq!(&g[..3], ["--working-directory", "/home/u/proj", "--"]);
+        assert_eq!(&g[3..], &cmd[..]);
+        let w = terminal_args("wezterm", dir, &cmd).unwrap();
+        assert_eq!(&w[..4], ["start", "--cwd", "/home/u/proj", "--"]);
+        let k = terminal_args("kitty", dir, &cmd).unwrap();
+        assert_eq!(&k[..2], ["--directory", "/home/u/proj"]);
+        assert!(terminal_args("not-a-terminal", dir, &cmd).is_none());
     }
 }

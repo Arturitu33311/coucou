@@ -270,12 +270,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   // Who the next message goes to.
   const targetRow = h("div", { class: "chat-target" });
   const statusTxt = h("span", {});
+  /** A line that replaces the status for a few seconds (e.g. after opening a terminal). */
+  let flashNote = "";
   const cwdSel = h("select", { class: "agent-cwd", title: "Folder the new agent works in" }) as HTMLSelectElement;
   const backendSel = h("select", { class: "agent-cwd", title: "What runs the new agent" }) as HTMLSelectElement;
   backendSel.append(h("option", { value: "claude", text: "Claude Code" }));
+  backendSel.append(h("option", { value: "terminal", text: "Claude Code (terminal)" }));
   backendSel.append(h("option", { value: "opencode", text: "OpenCode" }));
   backendSel.addEventListener("change", () => {
-    State.chatBackend = backendSel.value as "claude" | "opencode";
+    // The terminal option opens a plain Claude session, so it keeps the Claude colour.
+    State.chatBackend = backendSel.value === "opencode" ? "opencode" : "claude";
     State.notify();
   });
   // Usage limits, small, at the end of the line: "5h 9% · 7d 59%".
@@ -469,9 +473,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     Sound.play("send");
     State.notify();
     try {
-      const id = await Bridge.agentStart(cwdSel.value, text, backendSel.value as "claude" | "opencode");
+      const backend = backendSel.value as "claude" | "opencode" | "terminal";
+      const id = await Bridge.agentStart(cwdSel.value, text, backend);
       if (sentPath) State.agentFilePath = sentPath;
-      await adoptAgent(id);
+      if (backend === "terminal") {
+        // A normal interactive session in your terminal: nothing to follow from here.
+        flashNote = "✓ opened in your terminal";
+        window.setTimeout(() => { flashNote = ""; State.notify(); }, 4000);
+      } else {
+        await adoptAgent(id);
+      }
     } catch (err) {
       State.agentsError = String(err).replace(/^Error:\s*/, "");
       Sound.play("error");
@@ -587,7 +598,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
           : `waiting for your answer — answer its card, or run: claude attach ${agent.id}`;
       }
       else if (agent) status = STATE_TEXT[agent.state] ?? agent.state;
-      else if (target === "new") status = "starts a background agent in:";
+      else if (target === "new") {
+        status = flashNote ||
+          (backendSel.value === "terminal" ? "opens your terminal in:" : "starts a background agent in:");
+      }
       else if (target === "jinx") {
         // Through the gateway: the thread shared with the phones and Telegram, and who answered last.
         void loadJinxThread();

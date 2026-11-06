@@ -84,6 +84,26 @@ pub fn decision_json(decision: &str, question: Option<&Value>) -> Option<String>
             .to_string(),
         );
     }
+    // "deny:<note>": a denial that tells the agent why (AgentBar's "deny with a note"), so it can
+    // change course instead of retrying the same thing. The note is cut and stripped of control
+    // characters here too: the island already limits it, but this is the last stop before the agent.
+    if let Some(note) = decision.trim().strip_prefix("deny:") {
+        let note: String = note.chars().filter(|c| !c.is_control()).take(240).collect();
+        let message = if note.trim().is_empty() {
+            "Denied from Coucou".to_string()
+        } else {
+            format!("Denied from Coucou: {}", note.trim())
+        };
+        return Some(
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": { "behavior": "deny", "message": message },
+                }
+            })
+            .to_string(),
+        );
+    }
     let behavior = match decision.trim() {
         // "always" still answers a plain allow; remembering it is the island's
         // business, not the agent's.
@@ -150,6 +170,21 @@ mod tests {
         // choice back to the agent's own prompt.
         let decided = v.get("decision").map_or(false, |d| d.as_str() != Some("ask"));
         text.contains("allow") || decided || v.get("permission").is_some() || v.get("continue").is_some()
+    }
+
+    #[test]
+    fn a_denial_can_carry_a_note() {
+        let v: Value = serde_json::from_str(&decision_json("deny:use pnpm, not npm", None).unwrap()).unwrap();
+        let d = &v["hookSpecificOutput"]["decision"];
+        assert_eq!(d["behavior"], "deny");
+        assert_eq!(d["message"], "Denied from Coucou: use pnpm, not npm");
+        // An empty note is the plain denial; control characters and length never reach the agent.
+        let plain: Value = serde_json::from_str(&decision_json("deny:", None).unwrap()).unwrap();
+        assert_eq!(plain["hookSpecificOutput"]["decision"]["message"], "Denied from Coucou");
+        let long = format!("deny:a\nb{}", "x".repeat(500));
+        let cut: Value = serde_json::from_str(&decision_json(&long, None).unwrap()).unwrap();
+        let msg = cut["hookSpecificOutput"]["decision"]["message"].as_str().unwrap().to_string();
+        assert!(!msg.contains('\n') && msg.chars().count() <= "Denied from Coucou: ".len() + 240);
     }
 
     #[test]

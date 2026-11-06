@@ -270,6 +270,8 @@ pub fn publish_resolved(id: &str, decision: Option<&str>) {
     let word = match decision {
         Some("allow") => "allow",
         Some("deny") => "deny",
+        // A denial that carries a note to the agent is still a denial; the note stays on this machine.
+        Some(d) if d.starts_with("deny:") => "deny",
         Some(_) => "answered",
         None => "none",
     };

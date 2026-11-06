@@ -343,7 +343,13 @@ async fn wait_for_decision(
 
 /// The log says a question was answered, never with what.
 fn loggable(decision: &str) -> &str {
-    if decision.starts_with('{') { "a question" } else { decision }
+    if decision.starts_with('{') {
+        "a question"
+    } else if decision.starts_with("deny:") {
+        "deny with a note"
+    } else {
+        decision
+    }
 }
 
 fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
@@ -384,6 +390,16 @@ pub fn answer_question(app: &AppHandle, request_id: &str, answers: Value) {
     log::line(format!("question id={request_id} answered"));
     let line = json!({ "permissionDecision": "answer", "answers": answers }).to_string();
     send(app, request_id, Reply::Decision(line), false);
+}
+
+/// A denial that tells the agent why. The note is cut and cleaned here; coucou-hook turns
+/// `deny:<note>` into Claude Code's JSON (and cleans it once more). It is never logged.
+pub fn answer_deny_note(app: &AppHandle, request_id: &str, note: &str) {
+    let note: String = note.chars().filter(|c| !c.is_control()).take(240).collect();
+    let note = note.trim();
+    log::line(format!("decision id={request_id} deny (note of {} chars)", note.chars().count()));
+    let word = if note.is_empty() { "deny".to_string() } else { format!("deny:{note}") };
+    send(app, request_id, Reply::Decision(word), false);
 }
 
 /// Called by the island's Allow / Deny buttons. Only ever a bare word: turning

@@ -530,6 +530,13 @@ fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     pipe::answer(&app, &request_id, &decision);
 }
 
+/// Deny, and tell the agent why (so it changes course instead of retrying).
+#[tauri::command]
+fn approval_deny_note(app: AppHandle, request_id: String, note: String) {
+    recap::record_decision(&app, &request_id, "deny");
+    pipe::answer_deny_note(&app, &request_id, &note);
+}
+
 /// An option picked on the island for a question Claude Code asked.
 #[tauri::command]
 fn approval_answer(
@@ -1170,6 +1177,12 @@ async fn agent_send(id: String, text: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn agent_start(cwd: String, prompt: String, backend: String) -> Result<String, String> {
+    // Claude Code in the user's own terminal (a normal interactive session, not a background agent).
+    if backend == "terminal" {
+        return tauri::async_runtime::spawn_blocking(move || claude_sessions::start_terminal(&cwd, &prompt))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     if backend == "opencode" {
         return tauri::async_runtime::spawn_blocking(move || opencode::start(&cwd, &prompt))
             .await
@@ -1444,6 +1457,7 @@ pub fn run() {
             status_line_apply,
             codex_plan_usage,
             approval_decision,
+            approval_deny_note,
             approval_answer,
             approval_ack,
             approval_decline,

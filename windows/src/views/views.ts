@@ -43,7 +43,7 @@ export interface ViewActions {
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
-  decide(d: "allow" | "deny"): void;
+  decide(d: "allow" | "deny", note?: string): void;
   /** Opens the chat addressed to Jinx. */
   talkToJinx(): void;
   stopJinx(): void;
@@ -578,9 +578,33 @@ function buildApproval(actions: ViewActions): ViewHost {
   // moments after a new request appears are ignored.
   let shownFor: string | null = null;
   let shownAt = 0;
-  const guarded = (d: "allow" | "deny") => () => {
+  const guarded = (d: "allow" | "deny", note?: string) => () => {
     if (performance.now() - shownAt < CLICK_GUARD_MS) return;
-    actions.decide(d);
+    actions.decide(d, note);
+  };
+  // "Deny, and say why": fixed reasons (nothing typed, so no keyboard is needed) that go back to the
+  // agent with the denial, so it changes course instead of asking the same thing again.
+  const REASONS: { label: string; note: string }[] = [
+    { label: "Not now", note: "Not now: do not run this. Ask again later or take another approach." },
+    { label: "Another way", note: "Do not run this: find another way to do it." },
+    { label: "Explain first", note: "Explain what this does and why it is needed before asking again." },
+  ];
+  let reasonsOpen = false;
+  const buildRow = () => {
+    clear(row);
+    if (reasonsOpen) {
+      for (const r of REASONS) row.append(btn(r.label, "secondary", guarded("deny", r.note)));
+      row.append(h("button", { class: "link-btn", text: "‹ Back", onclick: () => { reasonsOpen = false; buildRow(); } }));
+      return;
+    }
+    row.append(
+      h("button", {
+        class: "link-btn", title: "Deny, and tell the agent why", text: "Deny + reason…",
+        onclick: () => { reasonsOpen = true; buildRow(); },
+      }),
+      btn(tl("Deny"), "secondary", guarded("deny"), "N"),
+      btn(tl("Allow"), "primary", guarded("allow"), "Y"),
+    );
   };
   return {
     el,
@@ -589,6 +613,8 @@ function buildApproval(actions: ViewActions): ViewHost {
       if (req !== shownFor) {
         shownFor = req;
         shownAt = performance.now();
+        // A new request starts on the plain buttons.
+        if (reasonsOpen) { reasonsOpen = false; if (rowKey === "built") buildRow(); }
       }
       clear(who);
       who.append(agentWho(State.focusTask, t("needs permission")));
@@ -601,11 +627,7 @@ function buildApproval(actions: ViewActions): ViewHost {
       // "Always" is gone until the remembered-rules list exists to back it.
       if (rowKey === "built") return;
       rowKey = "built";
-      clear(row);
-      row.append(
-        btn(tl("Deny"), "secondary", guarded("deny"), "N"),
-        btn(tl("Allow"), "primary", guarded("allow"), "Y"),
-      );
+      buildRow();
     },
   };
 }

@@ -274,6 +274,9 @@ export const Bridge = {
    */
   codexPlanUsage: () => call<unknown>("codex_plan_usage"),
 
+  /** Deny, and tell the agent why (one of the island's fixed reasons, never typed text). */
+  approvalDenyNote: (requestId: string, note: string) =>
+    call<void>("approval_deny_note", { requestId, note }),
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
   /** "The card is up" — until this lands the relay only waits a moment. */
@@ -378,7 +381,7 @@ export const Bridge = {
     callOrThrow<{ offset: number; messages: { role: "user" | "assistant" | "tool" | "queued" | "dequeued" | "queue-clear"; text: string }[] }>(
       "agent_messages", { sessionId, offset }),
   agentSend: (id: string, text: string) => callOrThrow<void>("agent_send", { id, text }),
-  agentStart: (cwd: string, prompt: string, backend: "claude" | "opencode") =>
+  agentStart: (cwd: string, prompt: string, backend: "claude" | "opencode" | "terminal") =>
     callOrThrow<string>("agent_start", { cwd, prompt, backend }),
   agentStop: (id: string) => callOrThrow<void>("agent_stop", { id }),
   calendarEvents: (days: number) => callOrThrow<unknown[]>("calendar_events", { days }),

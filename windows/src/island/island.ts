@@ -241,13 +241,14 @@ export class Island {
       openUrl: (url) => {
         if (url) void Bridge.openUrl(url);
       },
-      decide: (d) => {
+      decide: (d, note) => {
         const req = State.pendingApproval;
         void Bridge.log(`decide ${d} req=${req?.requestId ?? "none"}`);
         if (!req) return;
         Sound.play(d === "deny" ? "blip" : "approve");
         // Jinx's requests go back to Hermes; everything else is the agent's relay.
         if (req.jinxRun) answerJinxApproval(d === "allow");
+        else if (d === "deny" && note) void Bridge.approvalDenyNote(req.requestId, note);
         else void Bridge.approvalDecision(req.requestId, d);
         this.closeApproval();
       },
