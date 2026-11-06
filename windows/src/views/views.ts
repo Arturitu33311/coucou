@@ -25,7 +25,8 @@ export interface ViewActions {
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
-  decide(d: "allow" | "deny"): void;
+  /** `requestId` is the request the clicked card was showing; a click for another one is dropped. */
+  decide(d: "allow" | "deny", requestId?: string): void;
   /** Opens the chat addressed to Jinx. */
   talkToJinx(): void;
   stopJinx(): void;
@@ -338,10 +339,13 @@ function buildApproval(actions: ViewActions): ViewHost {
   const row = h("div", { class: "actions" });
   const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, code, row)));
   let rowKey = "";
+  // The request this card was last drawn for: a click is a decision about that one only.
+  let shownId: string | undefined;
   return {
     el,
     sync() {
       clear(who);
+      shownId = State.pendingApproval?.requestId;
       const waiting = State.approvalQueue.length;
       who.append(agentWho(State.focusTask, waiting > 0 ? `needs permission · +${waiting} waiting` : "needs permission"));
       // The whole point of approving here rather than in the terminal: this line
@@ -355,8 +359,8 @@ function buildApproval(actions: ViewActions): ViewHost {
       rowKey = "built";
       clear(row);
       row.append(
-        btn("Deny", "secondary", () => actions.decide("deny"), "N"),
-        btn("Allow", "primary", () => actions.decide("allow"), "Y"),
+        btn("Deny", "secondary", () => actions.decide("deny", shownId), "N"),
+        btn("Allow", "primary", () => actions.decide("allow", shownId), "Y"),
       );
     },
   };

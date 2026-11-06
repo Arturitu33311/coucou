@@ -31,6 +31,9 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** The project and folder the request came from, so a queued one names the right session when its turn comes. */
+  project?: string;
+  cwd?: string;
   /** Set when Jinx (Hermes) is the one asking: the run to answer. */
   jinxRun?: string;
 }
@@ -410,6 +413,8 @@ class AppState {
   pendingApproval: ApprovalInfo | null = null;
   /** Permission requests waiting their turn behind the card on screen (Mac's ApprovalQueue). */
   approvalQueue: ApprovalInfo[] = [];
+  /** When the card now on screen appeared (ms): clicks right after are ignored, so one meant for the previous card cannot land on it. */
+  approvalShownAt = 0;
   pendingQuestion: QuestionInfo | null = null;
   /** What the Music pill is showing; null when no player has a track. */
   music: MusicInfo | null = null;

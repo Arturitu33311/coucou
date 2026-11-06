@@ -61,6 +61,9 @@ export function promoteNextApproval(island: Island): boolean {
   if (!next) return false;
   // Its own timer has been running since it arrived: the relay's clock started then, not now.
   State.pendingApproval = next;
+  State.approvalShownAt = Date.now();
+  // Name the session this request came from, not the one that was on the card before.
+  if (next.project !== undefined) upsert(next.project, next.cwd ?? "");
   State.updateTask(CLAUDE_ID, "approval");
   State.isPinned = true;
   Sound.play("approval");
@@ -468,6 +471,8 @@ function handleHook(island: Island, payload: HookPayload) {
         sessionId: payload.session_id ?? "",
         tool,
         command: approvalTarget(tool, input),
+        project: projectName,
+        cwd,
       };
       // One card at a time, the rest wait in line (never replacing the one on screen, which would
       // leave a human staring at request B while A waits). Past the limit, back to the terminal.
@@ -483,6 +488,7 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       upsert(projectName, cwd);
       State.pendingApproval = info;
+      State.approvalShownAt = Date.now();
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
