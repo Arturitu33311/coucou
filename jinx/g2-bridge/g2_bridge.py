@@ -19,6 +19,7 @@ superficie más, no cambian quién es el dispositivo activo.
 import hmac
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -69,6 +70,16 @@ def gateway_call(req, cmd=GATEWAY_CMD, run=subprocess.run, timeout=540):
         if isinstance(d, dict):
             out.append(d)
     return out
+
+
+_ERR_RE = re.compile(
+    r"didn.?t answer after|provider said:|hermes fallback add|send /retry|switch models with /model|API call failed|\bHTTP [45]\d\d\b"
+    r"|insufficient (credits|funds|quota)|requires more credits|exceeded your (current )?quota|Traceback \(most recent", re.I)
+
+
+def es_error_llm(text):
+    """¿Es el mensaje de error de un proveedor de modelo en vez de una respuesta de Jinx?"""
+    return bool(_ERR_RE.search(text or ""))
 
 
 def final_event(events):
@@ -133,6 +144,9 @@ class Jobs:
         with self.cv:
             j = self.jobs[cid]
             j["ts"] = self.now()
+            if ev and ev.get("ev") == "done" and es_error_llm(str(ev.get("text", ""))):
+                # Sin créditos el gateway devuelve el error del proveedor COMO respuesta: no se entrega a las gafas ni al teléfono.
+                ev = {"ev": "error", "error": "la Jinx completa no está disponible ahora (sin modelo)"}
             if ev and ev.get("ev") == "done":
                 j.update(status="done", text=str(ev.get("text", "")), mode=ev.get("mode"), mood=ev.get("mood"))
                 if deliver_now:
@@ -470,8 +484,27 @@ def build_lite(jobs_ref):
             persona = f.read().strip() or persona
     except OSError:
         pass
-    llm = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LLM_URL", "https://openrouter.ai/api/v1/chat/completions"),
-                                  os.environ.get("JINX_G2_MODEL", "deepseek/deepseek-v4-flash"), key)
+    primary = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LLM_URL", "https://openrouter.ai/api/v1/chat/completions"),
+                                      os.environ.get("JINX_G2_MODEL", "deepseek/deepseek-v4-flash"), key)
+    # Sin OpenRouter (sin créditos, sin red): el Gemma de la laptop por el túnel hermes-lap-ollama (127.0.0.1:11435), con persona mínima.
+    local = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LOCAL_URL", "http://127.0.0.1:11436/v1/chat/completions"),
+                                    os.environ.get("JINX_G2_LOCAL_MODEL", "qwen3:4b-instruct-2507-q4_K_M"), lambda: "ollama",
+                                    timeout=120, max_tokens=120)
+    llm = g2_lite.FallbackLLM(primary, local, log=lambda m: print("[g2] " + m, file=sys.stderr, flush=True))
+
+    def keep_warm():
+        # Mientras OpenRouter esté caído, el modelo local se mantiene cargado (cargarlo en frío tarda ~35 s): un aviso vacío cada 4 min.
+        base = local.url.split("/v1/")[0]
+        while True:
+            time.sleep(240)
+            if llm.recently_failed():
+                try:
+                    req = urllib.request.Request(base + "/api/chat", data=json.dumps(
+                        {"model": local.model, "messages": [], "keep_alive": "30m"}).encode(), headers={"Content-Type": "application/json"})
+                    urllib.request.urlopen(req, timeout=60).read()
+                except Exception:  # noqa: BLE001
+                    pass
+    threading.Thread(target=keep_warm, daemon=True).start()
     ha = g2_lite.HomeAssistant(os.environ.get("JINX_HA_URL", "http://127.0.0.1:8123"), ha_token)
     return g2_lite.Lite(llm, ha, lambda text: jobs_ref[0].hand_off(text), persona)
 
