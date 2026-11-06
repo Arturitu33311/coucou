@@ -67,27 +67,23 @@ pub async fn chat_turn(system: &str, messages: &[Value], tools: &[Value]) -> Res
 
 const LOCAL_ENDPOINT: &str = "http://127.0.0.1:11435/v1/chat/completions";
 const LOCAL_MODEL: &str = "gemma4:e2b";
-const LOCAL_SYSTEM: &str = "Eres Jinx, la asistente personal de Alan: directa, mexicana, casual. Hablas en voz alta desde su computadora. \
-Responde en español con una o dos frases cortas. Ahora no tienes herramientas (estás en modo local): si te pide actuar (música, casa, pills), \
-dilo en pocas palabras y que lo intente en un rato. No inventes datos.";
+/// Short on purpose: on this laptop's CPU every prompt token costs time, and a turn must come back in seconds.
+pub const LOCAL_SYSTEM: &str = "Eres Jinx, la asistente de Alan: directa, mexicana, casual. Hablas en voz alta desde su computadora: \
+responde en español con una o dos frases cortas, sin markdown ni emojis. Actúa con las herramientas (pills, music, casa, open_app) en vez de describir, \
+y di lo que hiciste en pocas palabras. Si te pide algo que no puedes hacer ahora (correo, agenda, notas, memoria), dilo y que lo intente en un rato. No inventes datos.";
 
-/// OpenRouter did not answer (no credits, offline): a short, text-only answer from the small local model on this laptop (Ollama on :11435).
-/// No tools and no memory, so it only talks. `COUCOU_LOCAL_MODEL` replaces the model.
-pub async fn local_turn(messages: &[Value]) -> Result<String, String> {
+/// OpenRouter did not answer (no credits, offline): one turn from the small local model on this laptop (Ollama on :11435), with the few essential tools.
+/// `COUCOU_LOCAL_MODEL` replaces the model. Same message format as `chat_turn`.
+pub async fn local_chat_turn(system: &str, messages: &[Value], tools: &[Value]) -> Result<Turn, String> {
     let model = std::env::var("COUCOU_LOCAL_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| LOCAL_MODEL.into());
-    let mut all = vec![json!({ "role": "system", "content": LOCAL_SYSTEM })];
-    let mut recent: Vec<Value> = messages
-        .iter()
-        .filter(|m| m["content"].is_string() && (m["role"] == "user" || m["role"] == "assistant"))
-        .rev()
-        .take(6)
-        .cloned()
-        .collect();
-    recent.reverse();
-    all.extend(recent);
-    let body = json!({ "model": model, "max_tokens": 80, "stream": false, "reasoning_effort": "none", "messages": all });
+    let mut all = vec![json!({ "role": "system", "content": system })];
+    all.extend(messages.iter().cloned());
+    let mut body = json!({ "model": model, "max_tokens": 120, "stream": false, "reasoning_effort": "none", "messages": all });
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools.to_vec());
+    }
     let url = reqwest::Url::parse(LOCAL_ENDPOINT).map_err(|e| e.to_string())?;
-    let response = net::client(&url, Duration::from_secs(90))?
+    let response = net::client(&url, Duration::from_secs(120))?
         .post(url)
         .json(&body)
         .send()
@@ -99,7 +95,7 @@ pub async fn local_turn(messages: &[Value]) -> Result<String, String> {
     }
     let bytes = net::read_capped(response, net::MAX_BODY).await?;
     let reply: Value = serde_json::from_slice(&bytes).map_err(|e| format!("Bad API response: {e}"))?;
-    Ok(parse_turn(&reply)?.text)
+    parse_turn(&reply)
 }
 
 /// What the model answered.

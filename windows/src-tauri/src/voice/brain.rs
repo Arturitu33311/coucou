@@ -221,22 +221,8 @@ impl Brain {
                     if acted {
                         return Some(Reply { text: String::new(), acted });
                     }
-                    // OpenRouter is out (no credits, offline) and nothing was done yet: the small local model answers in a few words.
-                    let mut ctx = self.or_messages.clone();
-                    ctx.push(json!({ "role": "user", "content": transcript }));
-                    return match tauri::async_runtime::block_on(crate::or_brain::local_turn(&ctx)) {
-                        Ok(text) if !text.trim().is_empty() => {
-                            crate::log::line("voice: answered by the local model");
-                            self.or_messages.push(json!({ "role": "user", "content": transcript }));
-                            self.or_messages.push(json!({ "role": "assistant", "content": text }));
-                            Some(Reply { text: spoken_text(&text), acted: false })
-                        }
-                        Ok(_) => None,
-                        Err(e) => {
-                            crate::log::line(format!("voice: local model failed: {e}"));
-                            None
-                        }
-                    };
+                    // OpenRouter is out (no credits, offline) and nothing was done yet: the local model, with the essential tools.
+                    return self.respond_local(app, transcript);
                 }
             };
             // Only the fields the API needs go back into the history (providers add others).
@@ -259,6 +245,52 @@ impl Brain {
             spoken.clear();
         }
         crate::or_brain::repair(&mut self.or_messages);
+        Some(Reply { text: spoken_text(&spoken), acted })
+    }
+
+    /// OpenRouter is out: the small local model with only the essential tools (pills, music, casa, open_app) and a short prompt, so it answers in seconds.
+    fn respond_local(&mut self, app: &AppHandle, transcript: &str) -> Option<Reply> {
+        self.or_messages.push(json!({ "role": "user", "content": transcript }));
+        crate::or_brain::trim(&mut self.or_messages, 12);
+        let mut declared = tools();
+        declared.extend(super::home::tools(app));
+        declared.retain(|t| matches!(t["name"].as_str(), Some("pills" | "music" | "casa" | "open_app")));
+        let tools = crate::or_brain::function_tools(&declared);
+        let mut acted = false;
+        let mut spoken = String::new();
+        for _ in 0..3 {
+            let turn = tauri::async_runtime::block_on(crate::or_brain::local_chat_turn(crate::or_brain::LOCAL_SYSTEM, &self.or_messages, &tools));
+            let turn = match turn {
+                Ok(t) => t,
+                Err(err) => {
+                    crate::log::line(format!("voice: local model failed: {err}"));
+                    if self.or_messages.last().is_some_and(|m| m["role"] == "user") {
+                        self.or_messages.pop();
+                    }
+                    crate::or_brain::repair(&mut self.or_messages);
+                    return acted.then(|| Reply { text: String::new(), acted });
+                }
+            };
+            let mut assistant = json!({ "role": "assistant", "content": turn.text });
+            if !turn.calls.is_empty() {
+                assistant["tool_calls"] = turn.message["tool_calls"].clone();
+            }
+            self.or_messages.push(assistant);
+            if !turn.text.trim().is_empty() {
+                spoken = turn.text.clone();
+            }
+            if turn.calls.is_empty() {
+                break;
+            }
+            for c in &turn.calls {
+                let (result, did) = self.run(app, &c.name, &c.input);
+                acted |= did;
+                self.or_messages.push(json!({ "role": "tool", "tool_call_id": c.id, "content": result }));
+            }
+            spoken.clear();
+        }
+        crate::or_brain::repair(&mut self.or_messages);
+        crate::log::line("voice: answered by the local model");
         Some(Reply { text: spoken_text(&spoken), acted })
     }
 
