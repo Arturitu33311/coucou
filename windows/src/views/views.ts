@@ -44,7 +44,8 @@ export interface ViewActions {
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
-  decide(d: "allow" | "deny", note?: string): void;
+  /** `requestId` is the request the clicked card was showing; a click for another one is dropped. */
+  decide(d: "allow" | "deny", note?: string, requestId?: string): void;
   /** Opens the chat addressed to Jinx. */
   talkToJinx(): void;
   stopJinx(): void;
@@ -581,7 +582,8 @@ function buildApproval(actions: ViewActions): ViewHost {
   let shownAt = 0;
   const guarded = (d: "allow" | "deny", note?: string) => () => {
     if (performance.now() - shownAt < CLICK_GUARD_MS) return;
-    actions.decide(d, note);
+    // A click is a decision about the request this card was drawn for, not whichever one is current.
+    actions.decide(d, note, shownFor ?? undefined);
   };
   // "Deny, and say why": fixed reasons (nothing typed, so no keyboard is needed) that go back to the
   // agent with the denial, so it changes course instead of asking the same thing again.
