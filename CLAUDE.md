@@ -3,10 +3,11 @@
 Coucou is a native macOS app (`NotchBuddy/`); `windows/` is the Tauri version for Windows and Linux. Mochi, a small animated character living in the MacBook notch, shows AI coding agent sessions (Claude Code, Gemini CLI, Antigravity and more) and a few integrations, and lets the user approve, answer, chat and drop files from the notch.
 
 ## Where things are
-- `NotchBuddy/Sources/App/` — Mac-only Swift code. `NotchBuddy/Sources/CoucouKit/` — code shared with the iPhone app (Mochi's BotEngine and outfits, pills, diff, models). `NotchBuddy/Sources/Phone/` — iPhone app (`CoucouPhone` target), with its widgets in `Sources/Widgets/` and the expanded approval notification in `Sources/NotificationContent/`. `NotchBuddy/Resources/sounds/` — the 28 WAV sounds. `NotchBuddy/project.yml` — XcodeGen project (never edit the `.xcodeproj` by hand).
+- `NotchBuddy/Sources/App/` — Mac-only Swift code. `NotchBuddy/Sources/CoucouKit/` — code shared with the iPhone app (Mochi's BotEngine and outfits, pills, diff, models). `NotchBuddy/Sources/Phone/` — iPhone app (`CoucouPhone` target), with its widgets in `Sources/Widgets/` and the expanded approval notification in `Sources/NotificationContent/`. `NotchBuddy/Resources/sounds/` — the 29 WAV sounds. `NotchBuddy/project.yml` — XcodeGen project (never edit the `.xcodeproj` by hand).
 - `NotchBuddy/Sources/CoucouKit/PillCatalog.swift` — single source of truth for all declared pills (workspace tools, agents, AI providers, services). Every pill ID, color, category and subtitle lives here.
 - `docs/SPEC.md`, `docs/INTEGRATIONS.md` — behaviour, views, states, integrations (in French).
 - `design/prototype/notch-buddy.html` — original prototype, the visual source of truth. `design/captures/` — target screenshots.
+- `linux/arch/` — the Arch `PKGBUILD` and `.desktop` for the Linux build. `linux-wallpaper/` — the animated-wallpaper server (`server.py`, `wallpaper.html`, systemd unit). `tests/` — the Mac's Swift tests (XCTest) plus `fake_local_llm.py`; the desktop's tests live in `windows/tests/`.
 - `windows/` — the Tauri app for Windows and Linux: Rust in `src-tauri/`, TypeScript in `src/`, the `coucou-hook` relay in `hook/`. `windows/README.md` lists what differs from the Mac.
 - `docs/*.html` — the GitHub Pages site (privacy, terms, support, legal notice).
 - `relay/` — the Coucou relay, a stateless Cloudflare Worker that forwards the iPhone Live Activity pushes (it holds the APNs key, which must never ship in an app). See `relay/README.md`.
@@ -18,11 +19,18 @@ build). Branch from it and merge back into it; never start from `main` or from a
 - `windows/` desktop (Tauri) · `NotchBuddy/` macOS · `relay/` · `android/` the phone app (SmartIsland-derived, **GPL-3.0**,
   its own `android/LICENSE`) · `jinx/` Jinx's tooling and the server-side sources (`jinx/server-side/`) · `glasses/` Jinx on the Even G2 glasses (with `jinx/g2-bridge/`).
 - Layout, shared contracts and how to pull Louis's upstream: `docs/MONOREPO.md`. Read it before touching `android/` or `windows/`.
-- The PC and the phone share two JSON vectors (`merge-vectors.json`, `presence-vectors.json`). Change both sides, then run
-  `bash scripts/check-contracts.sh`.
+- The PC and the phone share JSON vectors (`merge-vectors.json`, `presence-vectors.json`, and five more: jinx-mood, due, island,
+  audiolink, wire-fixtures). Change both sides, then run `bash scripts/check-contracts.sh` (it checks all seven).
+- Project state and notes live in one place, outside the repo: `~/estado/proyectos/coucou.md` (rules in `~/estado/README.md`;
+  sync with `~/estado/bin/estado-sync`). Read it when you start and update it when you finish something relevant.
+- Finished, stable, verified work is merged into the main branch (`unify/monorepo`), not left on a side branch.
 - Verify before saying "done": desktop `cd windows && npx tsc --noEmit`; hook `cd windows/hook && cargo test`;
   Android `cd android && ./gradlew :app:compileDebugKotlin` (needs `local.properties`); Jinx panel
   `node --test jinx/vga-panel/test_mochi_logic.js` and `python3 -m unittest discover -s jinx/vga-panel/server`; glasses `cd glasses && npm test && npm run typecheck`, bridge `python3 -m unittest discover -s jinx/g2-bridge`.
+- Toolchain on Alan's laptop: the desktop tests (`windows/tests`) need Node ≥ 22 (the default `node` is 20; use
+  `~/.nvm/versions/node/v22.*/bin/node`), and Gradle needs a full JDK (the system java is 25 without `javac`):
+  `JAVA_HOME=~/Android/jdk21 ./gradlew …`. The checkout `~/dev/coucou-suite` can lag far behind `origin/unify/monorepo`:
+  branch from `origin/unify/monorepo`, never from the local `unify/monorepo`.
 - Install the Android app on a phone **only** with `android/scripts/install-phone.sh [ip:port]`, never a plain
   `adb install`: without Play Store as the installer, banking apps (Nu) refuse to open beside the island
   (`android/docs/BANK-APPS.md`). Never `adb uninstall` (it loses the Keystore key and the phone link).
