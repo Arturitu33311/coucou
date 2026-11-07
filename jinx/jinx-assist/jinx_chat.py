@@ -637,6 +637,12 @@ def ssh_events_reader(timeout=12, runner=subprocess.run):
     return parse_events_log(p.stdout)
 
 
+_ERROR_LLM = re.compile(
+    r"didn'?t answer after|provider said:|the model provider|hermes fallback add|send /retry|switch models with /model"
+    r"|API call failed|\bHTTP [45]\d\d\b|insufficient (credits|funds|quota)|requires more credits|exceeded your (current )?quota"
+    r"|\{\s*\"error\"\s*:|Traceback \(most recent", re.I)
+
+
 class HermesBrain:
     """La Jinx real, con su memoria, sus herramientas y la conversación de Telegram."""
 
@@ -650,6 +656,9 @@ class HermesBrain:
         ev = self.runner({"op": "send", "text": user})
         if ev.get("ev") != "done":
             raise RuntimeError(ev.get("msg") or "Hermes no contestó")
+        # Con OpenRouter sin créditos el gateway devuelve su error como si fuera la respuesta (HTTP 200): eso NO es Jinx, que conteste el siguiente cerebro.
+        if _ERROR_LLM.search(ev.get("text") or ""):
+            raise RuntimeError("Hermes devolvió un error del proveedor LLM, no una respuesta")
         return "hermes", ev["text"]
 
     def history(self, n=40):

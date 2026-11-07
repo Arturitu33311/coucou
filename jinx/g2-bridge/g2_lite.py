@@ -30,6 +30,11 @@ No tienes memoria larga ni internet. Si te piden algo que necesita tu memoria, t
 programar o tocar el PC, usa la herramienta pasar_a_jinx y dile que se lo pasas; no lo inventes.
 No inventes datos: si no lo sabes, dilo."""
 
+# Persona MÍNIMA para el modelo local (sin OpenRouter): en CPU cada token de prompt cuesta tiempo, así que solo lo justo para que se note
+# quién es Jinx y que use las herramientas. El resto de la persona queda para el modelo principal.
+PERSONA_LOCAL = """Eres Jinx, la asistente de Alan: directa, cálida, un poco guasona. Español, UNA frase corta, sin markdown ni emojis. \
+Para la casa usa las herramientas, no supongas. Si necesita memoria, correo, notas o agenda, usa pasar_a_jinx. No inventes."""
+
 MAX_ROUNDS = 4
 HISTORY_TURNS = 8        # mensajes (4 idas y vueltas)
 HISTORY_IDLE = 10 * 60   # tras diez minutos callados se empieza de cero
@@ -56,6 +61,15 @@ DATA_RULES = {
     "temperature": (16, 30),
 }
 ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+
+
+_DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+_MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
+
+
+def ahora_texto(ts):
+    t = time.localtime(ts)
+    return "Ahora: %s %d de %s de %d, %02d:%02d." % (_DIAS[t.tm_wday], t.tm_mday, _MESES[t.tm_mon - 1], t.tm_year, t.tm_hour, t.tm_min)
 
 
 class LiteError(Exception):
@@ -105,7 +119,12 @@ def check_call(domain, service, entity_id, data):
 # Cómo se dice lo mismo en casa. La búsqueda ve "nombre + entity_id", y un televisor suele llamarse "Tv ..." o por su
 # modelo; sin esto, pedir "la tele" fallaba según la palabra que el modelo eligiera buscar.
 _TELE = ("tv", "tele", "televisor", "television", "pantalla")
+_HABITACION = ("habitacion", "cuarto", "recamara", "dormitorio", "alcoba")
+STOPWORDS = frozenset(("de", "del", "la", "el", "los", "las", "un", "una", "en", "mi", "mis", "tu", "al", "a", "y", "por", "para", "que", "esta", "este", "ese", "esa"))
+# Primero lo que se puede controlar; los sensores y el resto, después (así "tele" no devuelve antes un sensor de canal que el aparato).
+DOMAIN_RANK = {"media_player": 0, "light": 1, "switch": 2, "fan": 3, "climate": 4, "scene": 5, "input_boolean": 6, "remote": 7}
 SINONIMOS = {
+    "cuarto": _HABITACION, "recamara": _HABITACION, "dormitorio": _HABITACION, "alcoba": _HABITACION, "habitacion": _HABITACION,
     "tele": _TELE, "televisor": _TELE, "television": _TELE, "tv": _TELE, "pantalla": _TELE,
     "luz": ("luz", "light", "lampara", "foco"), "luces": ("luz", "light", "lampara", "foco"),
     "lampara": ("lampara", "luz", "light"), "foco": ("foco", "luz", "light"),
@@ -157,9 +176,12 @@ class HomeAssistant:
         return items
 
     def find(self, query, domain=None):
-        words = [w for w in _fold(query).split() if w]
+        words = [w for w in _fold(query).split() if w and w not in STOPWORDS] or [w for w in _fold(query).split() if w]
         # Cada palabra puede decirse de otra forma: "tele" encuentra "Tv habitacion", que ninguna palabra suya contiene.
         alts = [SINONIMOS.get(w, (w,)) for w in words]
+        return self._find(alts, domain)
+
+    def _find(self, alts, domain):
         out = []
         for s in self.states():
             eid = s.get("entity_id", "")
@@ -174,9 +196,8 @@ class HomeAssistant:
             # Una palabra corta ("tv") solo cuenta entera: "INTV 1000" es una caja, no una tele.
             if all(any((a in tokens) if len(a) <= 3 else (a in hay) for a in options) for options in alts):
                 out.append({"entity_id": eid, "name": name, "state": s.get("state")})
-            if len(out) >= FIND_MAX:
-                break
-        return out
+        out.sort(key=lambda o: (DOMAIN_RANK.get(o["entity_id"].split(".")[0], 9), len(o["name"])))
+        return out[:FIND_MAX]
 
     def state(self, entity_id):
         if not isinstance(entity_id, str) or not ENTITY_RE.match(entity_id):
@@ -224,6 +245,30 @@ TOOLS = [
 ]
 
 
+_TOOL_WORDS = re.compile(r"^\s*(pasar[_ ]?a[_ ]?jinx|ha[_ ]?(buscar|estado|accion))\b", re.I)
+NO_CONFIRMADA = "No pude confirmar que se hiciera: el aparato no respondió. Inténtalo de nuevo."
+_EXITO = re.compile(r"\b(listo|hecho|hecha|ya (est[aá]|qued[oó]|lo|la|puse|apagu[eé]|prend[ií])|encendid\w*|apagad\w*|prendid\w*|sub[ií]|baj[eé]|puse|qued[oó]|al \d+|en \d+)\b", re.I)
+_NEGACION = re.compile(r"\b(no|sigue|siguen|falló|fallo|error|inténtalo|intenta|pude|respond\w*|confirm\w*)\b", re.I)
+SIN_JINX_COMPLETA = "Eso necesita a la Jinx completa y ahora no está disponible; pídemelo en un rato."
+_RAW_CALL = re.compile(r"^\s*([A-Za-z_]+)\s*(\{.*\})\s*$", re.S)
+
+
+def raw_tool_call(content, names):
+    """Los modelos pequeños a veces escriben la llamada como TEXTO (`ha_buscar{"consulta": "tele"}`) en vez de usar el formato de
+    herramientas. Si el contenido es solo eso, con el nombre de una herramienta conocida y JSON válido, se trata como la llamada.
+    Cualquier otra cosa (texto normal, JSON roto, herramienta desconocida) devuelve None."""
+    m = _RAW_CALL.match(content or "")
+    if not m or m.group(1) not in names:
+        return None
+    try:
+        args = json.loads(m.group(2))
+    except ValueError:
+        return None
+    if not isinstance(args, dict):
+        return None
+    return {"id": "raw-%s" % m.group(1), "type": "function", "function": {"name": m.group(1), "arguments": json.dumps(args)}}
+
+
 def clean_reply(text):
     t = re.sub(r"[*_`#>]+", "", text or "")
     t = " ".join(t.split())
@@ -233,21 +278,66 @@ def clean_reply(text):
 class OpenAICompatLLM:
     """Un modelo por una API compatible con OpenAI (OpenRouter por defecto). Lanza LiteError."""
 
-    def __init__(self, url, model, key_fn, opener=urllib.request.urlopen):
+    def __init__(self, url, model, key_fn, opener=urllib.request.urlopen, extra=None, timeout=25, max_tokens=300):
         self.url, self.model, self.key_fn, self.opener = url, model, key_fn, opener
+        self.extra, self.timeout, self.max_tokens = extra or {}, timeout, max_tokens
 
     def chat(self, messages, tools):
         key = self.key_fn()
         if not key:
             raise LiteError("sin llave del modelo rápido")
-        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.4, "max_tokens": 300}
+        body = {"model": self.model, "messages": messages, "tools": tools, "temperature": 0.4, "max_tokens": self.max_tokens, **self.extra}
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers={
             "Content-Type": "application/json", "Authorization": "Bearer " + key})
         try:
-            with self.opener(req, timeout=25) as r:
+            with self.opener(req, timeout=self.timeout) as r:
                 return json.loads(r.read().decode("utf-8", "replace"))["choices"][0]["message"]
         except Exception as e:  # noqa: BLE001
             raise LiteError("el modelo rápido falló (%s)" % type(e).__name__) from None
+
+
+def _compact_for_local(messages, prior=4):
+    """Para el modelo local: persona mínima + hasta `prior` mensajes de texto previos + el turno actual completo (desde el último
+    mensaje del usuario, con sus llamadas y resultados de herramientas, que no se pueden cortar a la mitad)."""
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=len(messages) - 1)
+    before = [m for m in messages[1:last_user]
+              if m.get("role") in ("user", "assistant") and not m.get("tool_calls") and isinstance(m.get("content"), str)]
+    ahora = next((l for l in str(messages[0].get("content", "")).splitlines() if l.startswith("Ahora:")), "") if messages else ""
+    return [{"role": "system", "content": PERSONA_LOCAL + ("\n" + ahora if ahora else "")}] + before[-prior:] + messages[last_user:]
+
+
+class FallbackLLM:
+    """El modelo principal (OpenRouter) y, si falla —sin créditos, sin red, error—, el local. Tras un fallo del principal se salta durante
+    `cooldown` segundos para no perder un segundo por turno esperando algo que ya sabemos que no responde."""
+
+    def __init__(self, primary, local, cooldown=120, now=time.time, log=None):
+        self.primary, self.local, self.cooldown, self.now = primary, local, cooldown, now
+        self.log = log or (lambda m: None)
+        self.down_until = 0.0
+        self.last_fail = 0.0
+        self.last_via = None
+
+    def degraded(self):
+        """True mientras el principal está caído: lo que necesite a la Jinx completa (que también usa OpenRouter) no va a salir."""
+        return self.now() < self.down_until
+
+    def recently_failed(self, window=1800):
+        """¿Falló el principal hace poco? Mientras sí, conviene tener el modelo local cargado."""
+        return self.last_fail > 0 and self.now() - self.last_fail < window
+
+    def chat(self, messages, tools):
+        if not self.degraded():
+            try:
+                m = self.primary.chat(messages, tools)
+                self.last_via = "principal"
+                return m
+            except LiteError as e:
+                self.down_until = self.now() + self.cooldown
+                self.last_fail = self.now()
+                self.log("modelo principal falló (%s): uso el local %ds" % (e, self.cooldown))
+        m = self.local.chat(_compact_for_local(messages), tools)      # si también falla, LiteError sube (Jobs cae a la Jinx completa)
+        self.last_via = "local"
+        return m
 
 
 SERVICE_TIMEOUT = 20      # segundos que se espera a que Home Assistant dé por hecha una orden
@@ -315,7 +405,11 @@ class Lite:
     def _tool(self, name, args):
         try:
             if name == "ha_buscar":
-                return json.dumps(self.ha.find(str(args.get("consulta", "")), args.get("dominio")), ensure_ascii=False)
+                found = self.ha.find(str(args.get("consulta", "")), args.get("dominio"))
+                if not found:
+                    return ("sin resultados: en la casa no hay ningún aparato con ese nombre. Díselo a Alan tal cual y pregúntale cuál es; "
+                            "NO supongas su estado ni lo confundas con otro aparato.")
+                return json.dumps(found, ensure_ascii=False)
             if name == "ha_estado":
                 return json.dumps(self.ha.state(args.get("entity_id")), ensure_ascii=False)
             if name == "ha_accion":
@@ -333,6 +427,9 @@ class Lite:
                     return self._verified_volume(result, service, eid, before, data)
                 return self._verified(result, service, eid)
             if name == "pasar_a_jinx":
+                if getattr(self.llm, "degraded", lambda: False)():
+                    return ("la Jinx completa no está disponible ahora (sin OpenRouter): dile a Alan que eso lo intente en un rato; "
+                            "NO digas que lo pasaste")
                 return self.handoff(str(args.get("peticion", ""))[:1000])
             return "herramienta desconocida"
         except (HaError, LiteError) as e:
@@ -344,12 +441,23 @@ class Lite:
         if self.now() - self.last > HISTORY_IDLE:
             self.history = []
         self.last = self.now()
-        msgs = [{"role": "system", "content": self.persona}] + self.history + [{"role": "user", "content": text}]
+        msgs = [{"role": "system", "content": self.persona + "\n" + ahora_texto(self.now())}] + self.history + [{"role": "user", "content": text}]
         out = ""
+        failed = []        # acciones de la casa que no se pudieron confirmar: la respuesta no puede decir que se hicieron
         for _ in range(MAX_ROUNDS):
             m = self.llm.chat(msgs, TOOLS)
             calls = m.get("tool_calls") or []
             if not calls:
+                raw = raw_tool_call(m.get("content"), {t["function"]["name"] for t in TOOLS})
+                if raw:
+                    m, calls = {"content": ""}, [raw]
+            if not calls:
+                if _TOOL_WORDS.match(m.get("content") or ""):
+                    # El modelo escribió el nombre de una herramienta como si fuera la respuesta ("Pasar a jinx: anotar…"): eso no se le dice a Alan.
+                    if getattr(self.llm, "degraded", lambda: False)():
+                        out = SIN_JINX_COMPLETA
+                        break
+                    raise LiteError("el modelo escribió una herramienta como respuesta")
                 out = clean_reply(m.get("content"))
                 break
             msgs.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
@@ -360,9 +468,13 @@ class Lite:
                 except ValueError:
                     args = {}
                 result = self._tool(fn.get("name"), args if isinstance(args, dict) else {})
+                if fn.get("name") == "ha_accion" and ("NO digas que" in result or result.startswith("error") or "no sé si hizo efecto" in result):
+                    failed.append(result)
                 msgs.append({"role": "tool", "tool_call_id": c.get("id", ""), "content": result[:TOOL_RESULT_MAX]})
         if not out:
             raise LiteError("el modelo no llegó a una respuesta")
+        if failed and _EXITO.search(out) and not _NEGACION.search(out):
+            out = NO_CONFIRMADA                      # el modelo (sobre todo el local) decía "listo" aunque la orden no surtió efecto
         self.history = (self.history + [{"role": "user", "content": text}, {"role": "assistant", "content": out}]
                         )[-HISTORY_TURNS:]
         return out

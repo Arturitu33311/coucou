@@ -30,7 +30,9 @@ class FakeHA:
         return [{"entity_id": "light.salon", "name": "Luz salón", "state": "off"}]
 
     def state(self, e):
-        return {"entity_id": e, "state": "off"}
+        # Como un aparato de verdad: tras turn_on está encendido (si no, la verificación dice "sigue off" y Lite no deja decir "listo").
+        on = any(d[1] == "turn_on" and d[2] == e for d in self.done) and not any(d[1] == "turn_off" and d[2] == e for d in self.done)
+        return {"entity_id": e, "state": "on" if on else "off"}
 
     def call(self, d, s, e, data=None):
         ok, clean = L.check_call(d, s, e, data)
