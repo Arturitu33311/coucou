@@ -51,6 +51,8 @@ data class PresenceMsg(
     val ref: String? = null,
     /** The action another device already pressed, if any: the buttons are then not shown. */
     val acted: String? = null,
+    /** The notice as Jinx wrote it for her voice, with ElevenLabs's audio tags; null when it had none. */
+    val speech: String? = null,
 )
 
 /** Moods the server may send. Anything else falls back to Listening. */
@@ -359,6 +361,8 @@ object MochiPresence {
         // Old messages are shown too, with how old they are. They used to be acked unseen after an hour, so a
         // briefing that arrived while the phone was off was marked read the moment the screen came on, and lost.
         shownIds = IslandJinx.publish(app, fresh.map { withAge(it, nowS) }, autoExpandAlert = true)
+        // Only if Alan asked for it (off by default): the newest notice is read aloud, within the quiet hours and budget.
+        com.agupta07505.smartisland.coucou.assist.ReadAloud.consider(app, fresh, nowS)
     }
 
     /** A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure. */
@@ -404,6 +408,7 @@ object MochiPresence {
                 actions = NoticeActions.parse(o.optJSONArray("actions")),
                 ref = o.optString("ref", "").takeIf { it.isNotEmpty() },
                 acted = o.optJSONObject("acted")?.optString("action", "")?.takeIf { it.isNotEmpty() },
+                speech = o.optString("speech", "").trim().takeIf { it.isNotEmpty() && it != "null" }?.take(700),
             )
         }
         return out

@@ -82,6 +82,11 @@ data class AssistUi(
     val approvals: List<JinxApproval> = emptyList(),
     /** The key of the approval whose answer is on its way. */
     val answering: String? = null,
+    /** The app whose screen Jinx can see right now (she was invoked over it), else null. */
+    val screenApp: String? = null,
+    /** Her latest answer (or what an order did) for the compact panel; [replySeq] changes with each one. */
+    val reply: String? = null,
+    val replySeq: Int = 0,
 )
 
 class AssistModel(app: Application) : AndroidViewModel(app) {
@@ -122,7 +127,18 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(AssistUi(lines = store.all(), model = modelStore.state()))
     val ui: StateFlow<AssistUi> = _ui.asStateFlow()
 
+    /** What was said about the screen: memory only, never in the shared thread (see [ChatRepository.answerAboutScreen]). */
+    @Volatile private var aboutScreen: List<ChatLine> = emptyList()
+
     init {
+        // The chip follows the screen Jinx was invoked over, whenever it is read (before or after the panel opens).
+        viewModelScope.launch {
+            ScreenHolder.flow.collect { snap ->
+                val fresh = snap?.takeIf { it.isFresh() }
+                if (fresh != null) aboutScreen = emptyList()
+                _ui.update { it.copy(screenApp = fresh?.appLabel, lines = allLines()) }
+            }
+        }
         viewModelScope.launch {
             ModelDownloads.percent.collect { p ->
                 _ui.update { it.copy(modelBusy = p >= 0, modelPercent = p) }
@@ -142,8 +158,10 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** The tab is on screen (or not): its questions are looked for only then, and while a message waits. */
-    fun setShown(visible: Boolean) {
+    fun setShown(visible: Boolean, forgetScreen: Boolean = true) {
         shown.value = visible
+        // The screen belongs to this visit: leaving the panel forgets it and what was said about it.
+        if (!visible && forgetScreen) { ScreenHolder.clear(); aboutScreen = emptyList() }
         com.agupta07505.smartisland.coucou.presence.JinxChatScreen.visible = visible
     }
 
@@ -177,7 +195,7 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
 
     /** Every write goes through [update], so two coroutines can never overwrite each other's field. */
     private fun refresh(change: (AssistUi) -> AssistUi = { it }) {
-        _ui.update { change(it).copy(lines = store.all(), model = modelStore.state()) }
+        _ui.update { change(it).copy(lines = allLines(), model = modelStore.state()) }
     }
 
     /**
@@ -201,21 +219,57 @@ class AssistModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun allLines(): List<ChatLine> = (store.all() + aboutScreen).sortedBy { it.ts }
+
+    /** A new invocation: the answer of the last one is not shown again. */
+    fun clearReply() { _ui.update { it.copy(reply = null, notice = "") } }
+
+    /** Forget the screen and what was said about it: the chip is dismissed. */
+    fun dropScreen() {
+        ScreenHolder.clear()
+        aboutScreen = emptyList()
+        refresh { it.copy(screenApp = null) }
+    }
+
     fun send(text: String) {
         val t = text.trim()
         if (t.isEmpty() || _ui.value.busy) return
-        _ui.update { it.copy(busy = true, notice = "") }
+        // An order for the phone (open an app, a setting, a search…) is done here, with no model and no network.
+        LocalActions.parse(t)?.let { action ->
+            val done = LocalActionRunner(appContext).run(action)
+            if (done.handled) {
+                _ui.update { it.copy(notice = "", reply = done.message, replySeq = it.replySeq + 1) }
+                return
+            }
+        }
+        val screen = if (_ui.value.screenApp != null) ScreenHolder.take() else null
+        _ui.update { it.copy(busy = true, notice = "", reply = null) }
+        val t0 = android.os.SystemClock.elapsedRealtime()
         viewModelScope.launch(Dispatchers.IO) {
-            // What the user typed shows up at once; the answer arrives when some brain has it.
-            val line = repo.enqueue(t)
-            refresh()
-            val r = repo.answer(line)
+            val r = if (screen != null) {
+                // About the screen: question and answer stay in memory (see aboutScreen), nothing is stored or synced.
+                val ask = ChatLine("screen:${System.nanoTime()}", System.currentTimeMillis() / 1000.0, deviceId, t, null, true)
+                val earlier = aboutScreen
+                aboutScreen = earlier + ask
+                refresh()
+                repo.answerAboutScreen(ask, screen, earlier).also { res ->
+                    if (res is SendResult.Answered) aboutScreen = aboutScreen + res.line
+                }
+            } else {
+                // What the user typed shows up at once; the answer arrives when some brain has it.
+                val line = repo.enqueue(t)
+                refresh()
+                repo.answer(line)
+            }
+            android.util.Log.i("JinxLatency", "answer ${if (r is SendResult.Answered) r.via.name else "pending"} in ${android.os.SystemClock.elapsedRealtime() - t0} ms")
             // Not looking at her chat any more: her reply is on the island (the gateway sent it there), now.
             if (!shown.value) com.agupta07505.smartisland.coucou.presence.MochiPresence.pokeNow(appContext)
             refresh { ui ->
                 when (r) {
                     is SendResult.Answered -> ui.copy(
                         busy = false,
+                        reply = r.line.text,
+                        replySeq = ui.replySeq + 1,
                         badge = when (r.via) {
                             Via.Laptop -> "laptop"
                             Via.Cloud -> "este teléfono · nube"
@@ -354,6 +408,7 @@ internal fun AssistScreen(model: AssistModel, modifier: Modifier = Modifier) {
         onDownloadModel = { model.downloadModel() },
         onTestModel = { model.testLocalModel() },
         onApproval = { a, choice -> model.answerApproval(a, choice) },
+        onDropScreen = { model.dropScreen() },
         modifier = modifier,
     )
 }

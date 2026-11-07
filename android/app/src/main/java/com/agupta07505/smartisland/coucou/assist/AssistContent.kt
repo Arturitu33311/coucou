@@ -6,6 +6,11 @@ package com.agupta07505.smartisland.coucou.assist
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -82,6 +87,7 @@ internal fun AssistContent(
     onTestModel: () -> Unit,
     modifier: Modifier = Modifier,
     onApproval: (JinxApproval, String) -> Unit = { _, _ -> },
+    onDropScreen: () -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
@@ -115,6 +121,15 @@ internal fun AssistContent(
                         Icon(Icons.Rounded.MoreVert, "Más", tint = CoucouColors.TextSecondary)
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        val ctx = androidx.compose.ui.platform.LocalContext.current
+                        var readAloud by remember { mutableStateOf(com.agupta07505.smartisland.coucou.phone.PhoneSettings.readAloud(ctx)) }
+                        DropdownMenuItem(
+                            text = { Text(if (readAloud) "Leer los avisos de Jinx en voz alta: sí" else "Leer los avisos de Jinx en voz alta: no") },
+                            onClick = {
+                                readAloud = !readAloud
+                                com.agupta07505.smartisland.coucou.phone.PhoneSettings.setReadAloud(ctx, readAloud)
+                            },
+                        )
                         DropdownMenuItem(text = { Text("Sincronizar con la laptop") }, onClick = { menu = false; onSync() })
                         DropdownMenuItem(text = { Text("Provisionar (1.ª vez)") }, onClick = { menu = false; onProvision() })
                         DropdownMenuItem(
@@ -174,9 +189,33 @@ internal fun AssistContent(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
                 ) {
-                    items(ui.lines, key = { it.id }) { l -> Bubble(l) }
+                    items(ui.lines, key = { it.id }) { l -> Bubble(l, announce = l.fromJinx && l.id == ui.lines.last().id) }
                     if (ui.busy) item(key = "typing") { Typing() }
                 }
+            }
+        }
+
+        ui.screenApp?.let { app ->
+            // Jinx was invoked over this app: she can read its screen for the next question (only on this phone's brains).
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Chip("Viendo: $app", dot = CoucouColors.Accent)
+                for (q in listOf("¿Qué hay aquí?", "Resume esto", "Traduce esto", "¿Qué me recomiendas hacer?")) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(50)).background(CoucouColors.SurfaceHigh)
+                            .clickable(role = androidx.compose.ui.semantics.Role.Button) { onSend(q) }
+                            .heightIn(min = 48.dp).padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text(q, color = CoucouColors.Text, fontSize = 13.sp) }
+                }
+                Box(
+                    Modifier.clip(RoundedCornerShape(50)).clickable(role = androidx.compose.ui.semantics.Role.Button) { onDropScreen() }
+                        .heightIn(min = 48.dp).padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) { Text("Quitar pantalla", color = CoucouColors.TextTertiary, fontSize = 13.sp) }
             }
         }
 
@@ -248,11 +287,23 @@ private fun ModelStrip(ui: AssistUi) {
 private val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 @Composable
-private fun Bubble(l: ChatLine) {
+private fun Bubble(l: ChatLine, announce: Boolean = false) {
     val mine = !l.fromJinx
+    val ctx = androidx.compose.ui.platform.LocalContext.current
     val shape = if (mine) RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp) else RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
+    val meta = listOfNotNull(
+        l.sourceLabel,
+        l.ts.takeIf { it > 0 }?.let { timeFormat.format(Date((it * 1000).toLong())) },
+    ).joinToString(" · ")
     Column(
-        Modifier.fillMaxWidth(),
+        // One thing for TalkBack: who said it, what, and when; the newest of Jinx's is read out when it arrives.
+        Modifier.fillMaxWidth().then(
+            // A tap on one of Jinx's lines reads it aloud, with her voice.
+            if (mine) Modifier else Modifier.clickable(onClickLabel = "Escucharlo") { JinxSpeech.say(ctx, l.text) },
+        ).semantics(mergeDescendants = true) {
+            contentDescription = (if (mine) "Tú" else "Jinx") + (if (meta.isNotEmpty()) ", $meta" else "") + ": " + l.text
+            if (announce) liveRegion = LiveRegionMode.Polite
+        },
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
     ) {
         Column(
@@ -264,12 +315,8 @@ private fun Bubble(l: ChatLine) {
         ) {
             Text(l.text, color = CoucouColors.Text, fontSize = 15.sp, lineHeight = 21.sp)
         }
-        val meta = listOfNotNull(
-            l.sourceLabel,
-            l.ts.takeIf { it > 0 }?.let { timeFormat.format(Date((it * 1000).toLong())) },
-        ).joinToString(" · ")
         if (meta.isNotEmpty()) {
-            Text(meta, color = CoucouColors.TextTertiary, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+            Text(meta, color = CoucouColors.TextTertiary, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
         }
     }
 }
@@ -278,7 +325,7 @@ private fun Bubble(l: ChatLine) {
 @Composable
 private fun Typing() {
     Row(
-        Modifier.clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)).background(CoucouColors.SurfaceHigh)
+        Modifier.semantics { contentDescription = "Jinx está escribiendo"; liveRegion = LiveRegionMode.Polite }.clip(RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)).background(CoucouColors.SurfaceHigh)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {

@@ -6,6 +6,8 @@
         mode "lite" (por defecto): Jinx rápida, modelo pequeño + Home Assistant (g2_lite.py); "full": la Jinx de Hermes
   GET  /api/g2/answer?id=&wait=        -> lo mismo, para una pregunta que quedó pendiente
   POST /api/g2/voice[?mode=] PCM crudo -> {heard, id, status, ...}  (16 kHz mono s16le, g2_stt)
+  POST /api/g2/speak    {text, kind?} -> audio/mpeg   (la voz de Jinx, ElevenLabs; la llave se queda en la bóveda)
+  POST /api/g2/speak/stream {text, kind?} -> audio/pcm 24 kHz mono 16-bit, a medida que ElevenLabs lo genera
   GET  /api/g2/notices?since=&wait=    -> {notices: [{id,text,kind,source,ts}]}  (los avisos del servidor de presencia)
   POST /v1/chat/completions, GET /v1/models   compatible con OpenAI, para "Agent Configuration" de Even AI
 
@@ -32,6 +34,7 @@ from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import g2_lite  # noqa: E402
+import g2_speak  # noqa: E402
 import g2_stt  # noqa: E402
 
 HOME = os.path.expanduser("~")
@@ -293,11 +296,15 @@ def clean_text(value):
 
 
 class App:
-    def __init__(self, jobs, key, stt=g2_stt.transcribe, notices=notices_since):
+    def __init__(self, jobs, key, stt=g2_stt.transcribe, notices=notices_since, speak=g2_speak.speak, budget=None,
+                 speak_stream=g2_speak.stream):
         self.jobs = jobs
         self.key = key
         self.stt = stt
         self.notices = notices
+        self.speak = speak
+        self.speak_stream = speak_stream
+        self.budget = budget or g2_speak.Budget()
 
 
 def make_handler(app):
@@ -391,6 +398,51 @@ def make_handler(app):
                 if not text:
                     return self._send(400, {"error": "falta text"})
                 return self._send(200, self._ask_reply(text, d.get("cid"), ASK_WAIT, mode=d.get("mode")))
+            if u.path == "/api/g2/speak/stream":
+                d = self._json()
+                text = clean_text((d or {}).get("text"))
+                if not text:
+                    return self._send(400, {"error": "falta text"})
+                if not app.budget.take():
+                    return self._send(429, {"error": "demasiadas voces esta hora"})
+                chunks = app.speak_stream(text, (d or {}).get("kind") or "info")
+                try:
+                    first = next(chunks)  # nothing is sent before there is audio: a failure is still a proper error
+                except StopIteration:
+                    return self._send(502, {"error": "sin audio"})
+                except g2_speak.SpeakError as e:
+                    return self._send(502, {"error": str(e)})
+                # The body ends when the connection closes (HTTP/1.0 style): no length is known while it is made.
+                self.close_connection = True
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/pcm")
+                self.send_header("X-Audio-Rate", str(g2_speak.PCM_RATE))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                try:
+                    self.wfile.write(first)
+                    self.wfile.flush()
+                    for c in chunks:
+                        self.wfile.write(c)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, g2_speak.SpeakError):
+                    pass  # the phone left, or the stream broke after it began: nothing more to say
+                finally:
+                    chunks.close()
+                return
+            if u.path == "/api/g2/speak":
+                d = self._json()
+                text = clean_text((d or {}).get("text"))
+                if not text:
+                    return self._send(400, {"error": "falta text"})
+                if not app.budget.take():
+                    return self._send(429, {"error": "demasiadas voces esta hora"})
+                try:
+                    mp3 = app.speak(text, (d or {}).get("kind") or "info")
+                except g2_speak.SpeakError as e:
+                    return self._send(502, {"error": str(e)})
+                return self._send(200, mp3, "audio/mpeg")
             if u.path == "/api/g2/voice":
                 pcm = self._body(g2_stt.MAX_BYTES + 1024)
                 if pcm is None:
