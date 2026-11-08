@@ -1,0 +1,24 @@
+{
+  "href": "https://api.spotify.com/v1/me/player/recently-played?limit=20",
+  "limit": 20,
+  "items": [
+    {
+      "played_at": "2026-11-08T15:04:05.123Z",
+      "context": { "type": "album", "uri": "spotify:album:6dVIqQ8qmQ5GBnJ9shOYGE" },
+      "track": {
+        "id": "4Dvkj6JhhA12EX05fT7y2e", "name": "Karma Police", "uri": "spotify:track:4Dvkj6JhhA12EX05fT7y2e",
+        "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+        "album": { "id": "6dVIqQ8qmQ5GBnJ9shOYGE", "name": "OK Computer", "images": [ { "height": 64, "url": "https://i.scdn.co/image/ab67616d00004851c8b4-64", "width": 64 } ] }
+      }
+    },
+    {
+      "played_at": "2026-11-08T14:00:00Z",
+      "context": null,
+      "track": {
+        "id": "0Db8wvjrbGbWdYDhyH4GBD", "name": "Everything In Its Right Place", "uri": "spotify:track:0Db8wvjrbGbWdYDhyH4GBD",
+        "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+        "album": { "id": "6ZG5lRT77aJ3btmArcykra", "name": "Kid A", "images": [] }
+      }
+    }
+  ]
+}
