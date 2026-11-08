@@ -106,10 +106,9 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   // to the shared image.
   recap: { height: 184, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   wardrobe: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "none" },
-  // The tallest view (the panel is 320): Mochi sits small at the left of the
-  // now-playing row (42 header + 6 inset + half of its 44 px), the search and the
-  // results take the whole width under it.
-  player: { height: 300, botX: 34, botY: 70, botDiameter: 30, agentMode: "none" },
+  // The whole panel's height, and no Mochi: the now-playing row, the search and
+  // the results take the full width.
+  player: { height: 320, botX: 0, botY: null, botDiameter: 0, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually

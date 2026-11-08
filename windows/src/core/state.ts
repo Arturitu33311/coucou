@@ -497,6 +497,8 @@ class AppState {
   hubEngaged = false;
   /** The view the glass player was opened from: Esc goes back to "music", anything else folds the island. */
   playerFrom: IslandViewName | null = null;
+  /** The pointer is over the island, by the island's own reckoning (Rust's cursor poll or the page's events). */
+  pointerInIsland = false;
   /** The Hub's sub-tab in front (remembered). */
   hubTab: string = (() => {
     try {

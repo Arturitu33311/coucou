@@ -21,8 +21,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  /* Mochi sits to the left of this row. */
-  padding: 0 2px 0 46px;
+  padding: 0 2px 0 3px;
 }
 
 .pl-cover {
@@ -384,8 +383,4 @@
 
 .pl.tinted .pl-msg.err {
   color: #ffd2d6;
-}
-
-html[data-dir="rtl"] .pl-now {
-  padding: 0 46px 0 2px;
 }

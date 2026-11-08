@@ -30,6 +30,8 @@ export interface PlayerHost extends ViewHost {
   tick(nowMs: number): void;
   /** Opens an artist's page (the next stage fills it with songs and albums). */
   openArtist(item: PlayerItem): void;
+  /** The island's pointer state changed (island.ts, next to `wasInIsland`). */
+  pointer(inside: boolean): void;
   /** Esc: back from an artist, else back to Music when opened from it, else fold the island. */
   escape(): void;
 }
@@ -250,7 +252,9 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   function checkIdle() {
     idleTimer = null;
     if (!visible()) {
-      shown = false; // nothing to watch until the view is opened again
+      // Nothing to watch until the view is opened again, and the pointer it last saw is stale.
+      shown = false;
+      pointerIn = false;
       return;
     }
     const left = PLAYER_IDLE_MS - (Date.now() - lastUse);
@@ -266,14 +270,12 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     if (idleTimer == null) idleTimer = window.setTimeout(checkIdle, PLAYER_IDLE_MS);
   }
 
-  root.addEventListener("mouseenter", () => {
-    pointerIn = true;
+  /** The view came on screen: the pointer is wherever the island last saw it. */
+  function onShow() {
+    shown = true;
+    pointerIn = State.pointerInIsland;
     used();
-  });
-  root.addEventListener("mouseleave", () => {
-    pointerIn = false;
-    used();
-  });
+  }
   for (const type of ["mousedown", "wheel", "keydown"]) root.addEventListener(type, () => used());
 
   // ── Rendering ──
@@ -540,22 +542,25 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   const host: PlayerHost = {
     el: root,
     sync() {
-      if (visible() && !shown) {
-        shown = true;
-        used();
-      }
+      if (visible() && !shown) onShow();
       paintNow();
       paintSources();
       paintBody();
     },
     focus() {
-      used();
+      // The island calls this on every entry into the view, also when it came back
+      // before the idle timer noticed it had gone.
+      onShow();
       input.focus();
       input.select();
     },
     tick(nowMs: number) {
       const m = State.music;
       bars.draw(nowMs, m?.status === "Playing" && !State.paused, State.settings.musicVisualizer);
+    },
+    pointer(inside: boolean) {
+      pointerIn = inside;
+      if (shown) used(); // leaving starts the 30 s from now
     },
     openArtist(item: PlayerItem) {
       used();

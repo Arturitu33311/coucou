@@ -101,11 +101,11 @@ test("idleCollapsesAfter30s", () => {
     host.el.querySelector(".pl-input").fire("input");
     mock.timers.tick(PLAYER_IDLE_MS - 1000);
     assert.equal(log.filter(([n]) => n === "collapse").length, 0);
-    // The pointer resting on it keeps it open too.
-    host.el.fire("mouseenter");
+    // The pointer resting on it (the island's own pointer state) keeps it open too.
+    host.pointer(true);
     mock.timers.tick(PLAYER_IDLE_MS * 2);
     assert.equal(log.filter(([n]) => n === "collapse").length, 0);
-    host.el.fire("mouseleave");
+    host.pointer(false);
     mock.timers.tick(PLAYER_IDLE_MS - 1);
     assert.equal(log.filter(([n]) => n === "collapse").length, 0);
     mock.timers.tick(2);
@@ -113,6 +113,50 @@ test("idleCollapsesAfter30s", () => {
   } finally {
     mock.timers.reset();
     State.view = "overview";
+  }
+});
+
+test("idleStillCollapsesAfterClosingWithThePointerInside", () => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 2_000_000 });
+  const collapses = (log) => log.filter(([n]) => n === "collapse").length;
+  try {
+    const { actions, log } = fakeActions();
+    const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+    State.mode = "expanded";
+    State.view = "player";
+    State.pointerInIsland = true;
+    host.sync();
+    host.focus();
+    host.pointer(true);
+    // Closed with the pointer still on it: no "pointer left" ever reaches the page.
+    State.mode = "hidden";
+    mock.timers.tick(PLAYER_IDLE_MS + 10);
+    assert.equal(collapses(log), 0);
+    // Reopened from the keyboard, the pointer elsewhere.
+    State.pointerInIsland = false;
+    State.mode = "expanded";
+    host.sync();
+    host.focus();
+    mock.timers.tick(PLAYER_IDLE_MS + 10);
+    assert.equal(collapses(log), 1);
+
+    // Same, but reopened before the idle timer noticed it was gone.
+    State.pointerInIsland = true;
+    host.pointer(true);
+    host.focus();
+    State.mode = "hidden";
+    mock.timers.tick(1000);
+    State.pointerInIsland = false;
+    State.mode = "expanded";
+    host.sync();
+    host.focus();
+    mock.timers.tick(PLAYER_IDLE_MS + 10);
+    assert.equal(collapses(log), 2);
+  } finally {
+    mock.timers.reset();
+    State.view = "overview";
+    State.mode = "hidden";
+    State.pointerInIsland = false;
   }
 });
 

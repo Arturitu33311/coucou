@@ -1282,6 +1282,10 @@ export class Island {
     // the pointer as still outside.
     const wasIn = this.wasInIsland;
     this.wasInIsland = inIsland;
+    // The player's idle fold reads this, not the page's mouse events: once the pointer is off
+    // the island the window ignores the cursor and no mouseleave may ever come.
+    State.pointerInIsland = inIsland;
+    if (inIsland !== wasIn) (this.views.get("player") as PlayerHost | undefined)?.pointer(inIsland);
     if (inIsland && !wasIn) {
       if (this.fsm.state === "coucou") this.greeting.hover();
       this.applyLeaveDelay();
