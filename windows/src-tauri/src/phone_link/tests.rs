@@ -1707,8 +1707,8 @@ fn every_secret_the_phone_link_stores_is_in_the_keystores_key_list() {
     ] {
         assert!(crate::secrets::INTERNAL_KEYS.contains(&key), "{key} is not in secrets::INTERNAL_KEYS");
     }
-    // And nothing in the list is a stray: each one is used by the phone link.
-    assert_eq!(crate::secrets::INTERNAL_KEYS.len(), 6);
+    // And nothing in the list is a stray: each one is used by the phone link (or the glass player's Spotify login).
+    assert_eq!(crate::secrets::INTERNAL_KEYS.len(), 7);
 }
 
 #[test]

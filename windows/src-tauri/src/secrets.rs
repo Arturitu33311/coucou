@@ -80,6 +80,7 @@ pub const INTERNAL_KEYS: &[&str] = &[
     "phone-relay-room",
     "phone-relay-key",
     "phone-relay-access",
+    "spotify-refresh-token",
 ];
 
 /// Whether the keystore would accept this key through `get_internal` / `set_internal`.

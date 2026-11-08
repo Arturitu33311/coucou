@@ -232,6 +232,8 @@ export interface Settings {
   jinxIsland: boolean;
   /** The apps Jinx may ask to close, by name, separated by commas. */
   jinxCloseApps: string;
+  /** The user's own Spotify app Client ID, for the glass player's login. */
+  spotifyClientId: string;
   /** The sound for "an agent finished": a built-in name, "none", or "file" (finishSoundFile). */
   finishSound: string;
   finishSoundFile: string;
@@ -343,6 +345,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keepAwake: false,
   jinxIsland: true,
   jinxCloseApps: "Spotify, VLC, Rhythmbox, Celluloid, Totem, Document Viewer, Image Viewer, Calculator, Files, Text Editor",
+  spotifyClientId: "",
   finishSound: "finish",
   finishSoundFile: "",
   serverHost: "server",

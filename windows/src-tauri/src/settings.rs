@@ -67,6 +67,9 @@ pub struct Settings {
     /// The apps Jinx may ask to close, by name, separated by commas. Closing is never open-ended: any other app is refused.
     #[serde(default = "default_jinx_close_apps")]
     pub jinx_close_apps: String,
+    /// The user's own Spotify app Client ID (PKCE needs no secret), for the glass player's login.
+    #[serde(default)]
+    pub spotify_client_id: String,
     /// The sound for "an agent finished": one of the built-in names, "none", or "file".
     #[serde(default = "default_finish_sound")]
     pub finish_sound: String,
@@ -318,6 +321,7 @@ impl Default for Settings {
             keep_awake: false,
             jinx_island: true,
             jinx_close_apps: default_jinx_close_apps(),
+            spotify_client_id: String::new(),
             finish_sound: default_finish_sound(),
             finish_sound_file: String::new(),
             server_host: default_server_host(),
@@ -637,6 +641,7 @@ mod tests {
   "keepAwake": false,
   "jinxIsland": false,
   "jinxCloseApps": "Spotify, Notes",
+  "spotifyClientId": "0123456789abcdef",
   "finishSound": "file",
   "finishSoundFile": "/home/me/done.ogg",
   "serverHost": "jinx",
@@ -1176,6 +1181,7 @@ mod tests {
                 "keepAwake",
                 "jinxIsland",
                 "jinxCloseApps",
+                "spotifyClientId",
                 "finishSound",
                 "finishSoundFile",
                 "serverHost",
