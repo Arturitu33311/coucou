@@ -8,6 +8,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { AgentSession, LyricLine, MusicTrack, Peripheral, Settings } from "./state";
 import type { RecapHistory, RecapPrefs } from "../recap/summary";
 import type { SpotifyState } from "./spotify";
+import type { ArtistPage, PlayerItem, PlayerSource, PlayResult, SearchResult } from "./player";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -330,6 +331,34 @@ export const Bridge = {
    * running: false when it is not installed.
    */
   musicBars: (on: boolean) => call<boolean>("music_bars", { on }),
+
+  // ── Glass player (src-tauri/src/player) ───────────────────────────────────
+  // Each resolves to null outside the app or when the command failed.
+  /** Searches one source or both; `seq` comes back in the answer so a stale one can be dropped. */
+  playerSearch: (source: PlayerSource, query: string, offset: number, seq: number) =>
+    call<SearchResult>("player_search", { source, query, offset, seq }),
+  /** An artist's songs and albums (`name` feeds Spotify's `artist:"…"` search). */
+  playerArtist: (source: PlayerSource, id: string, name: string) =>
+    call<ArtistPage>("player_artist", { source, id, name }),
+  /** An album's songs. */
+  playerAlbum: (source: PlayerSource, id: string) => call<PlayerItem[]>("player_album", { source, id }),
+  /** Plays a song, an album or a list where the user listens (the other source is paused first). */
+  playerPlay: (item: PlayerItem) => call<PlayResult>("player_play", { item }),
+  /** What was played lately, newest first. */
+  playerRecents: () => call<PlayerItem[]>("player_recents"),
+  /** Starts Spotify's DJ. */
+  playerDj: () => call<PlayResult>("player_dj"),
+  /** Opens Spotify's sign-in in the browser and waits for it. Resolves to an error message, or null when it worked. */
+  playerSpotifyLogin: async (): Promise<string | null> => {
+    if (!IS_TAURI) return "not running in the app";
+    try {
+      await invoke("player_spotify_login");
+      return null;
+    } catch (err) {
+      return String(err);
+    }
+  },
+  playerSpotifyConnected: () => call<boolean>("player_spotify_connected"),
 
   // ── Phone link (Coucou for Android) ───────────────────────────────────────
   phoneLinkStatus: () => call<PhoneLinkStatus>("phone_link_status"),

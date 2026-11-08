@@ -25,7 +25,8 @@ import { USC, UploadSeq } from "../upload/sequence";
 import { closePlanCard, openPlanColor, planCardOpen } from "../views/usage";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { buildMusicStrip, type MusicHost } from "../views/music";
-import { setBarsWanted } from "./music";
+import { barsWantedFor, setBarsWanted } from "./music";
+import type { PlayerHost } from "../views/player";
 import { h, svg } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
@@ -49,6 +50,12 @@ import { pomodoroPill } from "../hub/pomodoro";
 const MUSIC_LEAVE_S = 0.3;
 /** How long a note (see above) stays up with the pointer elsewhere. */
 const NOTE_LINGER_S = 6;
+/**
+ * The player is typed into with the pointer anywhere, so the "pointer left" countdown
+ * must not fold it mid-search: it waits an hour, and the player folds itself after
+ * PLAYER_IDLE_MS without use (views/player.ts).
+ */
+const PLAYER_HOLD_S = 3600;
 /** With "open on hover": how long the pointer rests on the minimised island before it opens. */
 const HOVER_OPEN_S = 0.9;
 /** Frame interval while only the minimised Music pill animates (≈ 12 fps)… */
@@ -532,9 +539,25 @@ export class Island {
     if (UploadSeq.isActive && !UPLOAD_VIEWS.has(view)) UploadSeq.deactivate();
   }
 
+  /**
+   * Entering the player remembers where from (Esc goes back to Music only from
+   * there), and entering or leaving it changes how long the island waits once the
+   * pointer has left: the player keeps itself open while it is used (views/player.ts).
+   */
+  private notePlayer(view: IslandViewName) {
+    const entering = view === "player" && State.view !== "player";
+    const leaving = view !== "player" && State.view === "player";
+    if (entering) State.playerFrom = State.mode === "expanded" ? State.view : null;
+    if (entering || leaving) {
+      State.view = view;
+      this.applyLeaveDelay();
+    }
+  }
+
   expand(view: IslandViewName) {
     this.stopSequenceIfLeaving(view);
     if (view !== "overview") closePlanCard();
+    this.notePlayer(view);
     State.view = view;
     if (State.mode !== "expanded") this.setMode("expanded");
     else this.animateGeometry(false);
@@ -547,12 +570,14 @@ export class Island {
     if (view !== "overview") closePlanCard();
     if (State.mode !== "expanded") {
       this.fsm.forceHome();
+      this.notePlayer(view);
       State.view = view;
       this.animateGeometry(false);
       State.notify();
       return;
     }
     const grew = VIEW_LAYOUTS[view].height >= VIEW_LAYOUTS[State.view].height;
+    this.notePlayer(view);
     State.view = view;
     State.lastActivity = performance.now();
     this.animateGeometry(!grew);
@@ -599,7 +624,7 @@ export class Island {
     // timer with the glance delay (0.3 s, from openOnHover / the Music pill), which is meant
     // for a quick look at a track: a finished task or an error opened and shut in a blink.
     if (!this.wasInIsland && !State.isPinned) {
-      const linger = view === "note" ? NOTE_LINGER_S : State.settings.autoCloseInterval;
+      const linger = view === "player" ? PLAYER_HOLD_S : view === "note" ? NOTE_LINGER_S : State.settings.autoCloseInterval;
       this.fsm.homeToPetitDelay = linger;
       this.fsm.mouseLeft();
     }
@@ -1147,6 +1172,8 @@ export class Island {
     window.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && State.mode === "expanded") {
         if (State.pendingApproval) this.foldApproval();
+        // The player decides: back from an artist, back to Music, or fold.
+        else if (State.view === "player") (this.views.get("player") as PlayerHost | undefined)?.escape();
         else if (!State.isPinned) this.collapse();
       } else if (hubKey(e)) e.preventDefault();
       State.lastActivity = performance.now();
@@ -1185,7 +1212,11 @@ export class Island {
     const hover = State.settings.openOnHover;
     const glance = hover || (State.musicStrip() && (State.view === "music" || State.view === "overview"));
     // A short message (a notification, the end of a Pomodoro period) needs time to be read.
-    this.fsm.homeToPetitDelay = State.view === "note" ? NOTE_LINGER_S : glance ? MUSIC_LEAVE_S : State.settings.autoCloseInterval;
+    this.fsm.homeToPetitDelay =
+      State.view === "player" ? PLAYER_HOLD_S
+      : State.view === "note" ? NOTE_LINGER_S
+      : glance ? MUSIC_LEAVE_S
+      : State.settings.autoCloseInterval;
     this.fsm.hoverOpenDelay = hover ? State.settings.hoverOpenDelay || HOVER_OPEN_S : null;
   }
 
@@ -1623,7 +1654,8 @@ export class Island {
     // island is allowed to take keyboard focus.
     // The chat, and a Hub tool with a text field (Notes), are the only times it is.
     if (State.view !== "tool" || State.mode !== "expanded") State.hubEngaged = false;
-    const wantsKeys = State.view === "prompt" || (State.view === "tool" && (hubTyping() || State.hubEngaged));
+    const wantsKeys =
+      State.view === "prompt" || State.view === "player" || (State.view === "tool" && (hubTyping() || State.hubEngaged));
     if (this.lastSyncedView !== State.view || this.lastWantsKeys !== wantsKeys) {
       const hadKeys = this.lastWantsKeys;
       this.lastSyncedView = State.view;
@@ -1640,11 +1672,7 @@ export class Island {
     syncHubRuntime();
 
     // cava (the real-time bars) runs only while they can be seen and music plays.
-    const musicOnScreen =
-      (State.mode === "compact" && State.musicStrip() && State.pillKind() === null) ||
-      (State.mode === "expanded" &&
-        (State.view === "music" ||
-          (State.view === "overview" && (State.focusId === "integration_music" || (State.focusId === JINX_ID && State.musicHome())))));
+    const musicOnScreen = barsWantedFor(State.view, State.mode);
     setBarsWanted(
       State.settings.musicVisualizer === "realtime" &&
         State.music?.status === "Playing" &&

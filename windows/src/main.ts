@@ -2,6 +2,7 @@
 
 import "./style.css";
 import "./music.css";
+import "./player.css";
 import "./pill.css";
 import "./jinx.css";
 import "./hub/hub-island.css";
