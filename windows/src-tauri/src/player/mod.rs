@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 pub mod history;
+#[cfg(target_os = "linux")]
+pub mod mpv;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
