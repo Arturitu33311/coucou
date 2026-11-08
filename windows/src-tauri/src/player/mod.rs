@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod history;
 #[cfg(target_os = "linux")]
+pub mod mpv;
+#[cfg(target_os = "linux")]
 pub mod ytmusic;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
