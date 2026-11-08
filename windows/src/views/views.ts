@@ -13,6 +13,7 @@ import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { buildMusicCompact, buildMusicView } from "./music";
+import { buildPlayerView } from "./player";
 import { buildJinxCard, buildJinxMusicFace } from "./jinx";
 import { buildHub } from "../hub/hub";
 import { musicTint } from "../island/music";
@@ -951,6 +952,7 @@ export function buildViews(
   map.set("approval", buildApproval(actions));
   map.set("question", buildQuestion(actions));
   map.set("music", buildMusicView(actions));
+  map.set("player", buildPlayerView(actions));
   map.set("tool", buildHub(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));

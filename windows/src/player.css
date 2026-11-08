@@ -1,0 +1,386 @@
+/* ── The glass player (src/views/player.ts) ─────────────────────────────────
+   The Music view's vocabulary — the cover's colour as the fill, white on it,
+   the round controls (.m-ctl from music.css) — with frosted rows on top. */
+
+.pl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 6px;
+  /* Without a cover colour: the island's card with a breath of the accent. */
+  background:
+    radial-gradient(420px 220px at 0% 0%, color-mix(in srgb, var(--acc, #fa2d48) 22%, transparent), transparent 70%),
+    var(--card);
+}
+
+/* ── Now playing ── */
+
+.pl-now {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 2px 0 3px;
+}
+
+.pl-cover {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--acc, #fa2d48);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+.pl-cover img,
+.pl-thumb img,
+.pl-artist-face img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pl-now-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pl-title,
+.pl-artist,
+.pl-row-title,
+.pl-row-sub,
+.pl-artist-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pl-title {
+  font: 600 12.5px var(--font);
+  color: var(--ink);
+}
+
+.pl-artist {
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.pl-bars {
+  flex: 0 0 54px;
+  width: 54px;
+  height: 18px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.pl-ctls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pl-ctls.off {
+  visibility: hidden;
+}
+
+.pl-ctls .m-ctl {
+  flex-basis: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+/* ── Search ── */
+
+.pl-search {
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  color: var(--dim-2);
+  cursor: text;
+}
+
+.pl-search:focus-within {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.pl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 13px var(--font);
+  outline: none;
+  cursor: text;
+  user-select: text;
+}
+
+.pl-input::placeholder {
+  color: var(--dim-3);
+}
+
+.pl-seg {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.pl-src {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim-2);
+  font: 600 10.5px var(--font);
+  cursor: default;
+}
+
+.pl-src:hover {
+  color: var(--ink);
+}
+
+.pl-src.on,
+.pl-seg.single .pl-src {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--ink);
+}
+
+.pl-src-dot {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+/* ── Results ── */
+
+.pl-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pl-list,
+.pl-idle,
+.pl-artist-pane {
+  position: absolute;
+  inset: 0;
+}
+
+.pl-list {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.pl-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* The next stage fills this; until then a quiet hint. */
+.pl-idle:empty::before {
+  content: attr(data-hint);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font: 400 12px var(--font);
+  color: var(--dim-3);
+}
+
+.pl-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  padding: 0 10px 0 5px;
+  border-radius: 10px;
+  cursor: default;
+}
+
+.pl-row.sel {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.pl-thumb {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim-2);
+}
+
+.pl-thumb.round {
+  border-radius: 50%;
+}
+
+.pl-row-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pl-row-title {
+  font: 500 12px var(--font);
+  color: var(--ink);
+}
+
+.pl-row-sub {
+  font: 400 10.5px var(--font);
+  color: var(--dim-2);
+}
+
+.pl-kind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font: 600 9.5px var(--font);
+  color: var(--dim-2);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.pl-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font: 400 12px var(--font);
+  color: var(--dim-3);
+}
+
+/* ── An artist (filled by the next stage) ── */
+
+.pl-artist-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 0;
+}
+
+.pl-artist-face {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.pl-artist-name {
+  font: 700 16px var(--font);
+  color: var(--ink);
+}
+
+/* ── The quiet line ── */
+
+.pl-foot {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 6px;
+  font: 400 10.5px var(--font);
+  color: var(--dim-2);
+}
+
+.pl-foot.on {
+  display: flex;
+}
+
+.pl-msg {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pl-msg.err {
+  color: var(--red-text);
+}
+
+.pl-login {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 10px;
+  background: #1ed760;
+  color: #0b0c0e;
+  font: 600 10.5px var(--font);
+  cursor: default;
+}
+
+/* On the cover's colour: white text, frosted surfaces. */
+.pl.tinted .pl-artist,
+.pl.tinted .pl-row-sub,
+.pl.tinted .pl-foot,
+.pl.tinted .pl-src,
+.pl.tinted .pl-kind {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.pl.tinted .pl-search,
+.pl.tinted .pl-idle:empty::before,
+.pl.tinted .pl-empty,
+.pl.tinted .pl-input::placeholder {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.pl.tinted .pl-search {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.pl.tinted .pl-search:focus-within {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pl.tinted .pl-src.on,
+.pl.tinted .pl-seg.single .pl-src {
+  background: rgba(255, 255, 255, 0.24);
+  color: #fff;
+}
+
+.pl.tinted .pl-row.sel {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pl.tinted .pl-thumb,
+.pl.tinted .pl-cover,
+.pl.tinted .pl-artist-face {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+.pl.tinted .pl-msg.err {
+  color: #ffd2d6;
+}

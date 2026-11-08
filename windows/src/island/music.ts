@@ -10,6 +10,7 @@ import { JINX_ID, MUSIC_ID, State, type MusicInfo, type MusicTrack } from "../co
 import { pillColor } from "../core/pill-colors";
 import { pillDefinition } from "../core/pills";
 import type { Island } from "./island";
+import type { IslandMode, IslandViewName } from "../core/layout";
 
 export const MUSIC_RED = "#FA2D48";
 
@@ -49,6 +50,22 @@ export function setBarsWanted(wanted: boolean) {
   void Bridge.musicBars(wanted).then((running) => {
     if (wanted && running === false) cavaMissing = true;
   });
+}
+
+/**
+ * Whether bars are on screen for this view and mode: the minimised strip, the
+ * Music view, the overview while the Music pill (or Jinx carrying the music) is in
+ * focus, and the glass player. Whether cava runs also needs a track playing and
+ * the real-time visualizer chosen (island.ts).
+ */
+export function barsWantedFor(view: IslandViewName, mode: IslandMode | string): boolean {
+  if (mode === "compact") return State.musicStrip() && State.pillKind() === null;
+  if (mode !== "expanded") return false;
+  return (
+    view === "music" ||
+    view === "player" ||
+    (view === "overview" && (State.focusId === MUSIC_ID || (State.focusId === JINX_ID && State.musicHome())))
+  );
 }
 
 /** The minimised island carries the pill while a track is known: tell it. */

@@ -302,6 +302,8 @@ export interface Settings {
    * else English), or one of src/i18n's ten codes ("fr", "pt-BR", "zh-Hans"…).
    */
   language: string;
+  /** What the glass player searches (the last choice is kept). Windows has no YT Music: it searches Spotify. */
+  playerSource: "spotify" | "ytmusic" | "both";
   /**
    * The phone link for Coucou for Android is on. Rust owns it (only the switch in
    * Settings → Android phone turns it on): whatever the page sends back is ignored.
@@ -379,6 +381,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mochiOutfit: DEFAULT_OUTFIT,
   pillColors: {},
   language: "",
+  playerSource: "both",
 };
 
 type Listener = () => void;
@@ -495,6 +498,10 @@ class AppState {
    * the pointer leaves, the view changes or the island closes. Never taken on hover.
    */
   hubEngaged = false;
+  /** The view the glass player was opened from: Esc goes back to "music", anything else folds the island. */
+  playerFrom: IslandViewName | null = null;
+  /** The pointer is over the island, by the island's own reckoning (Rust's cursor poll or the page's events). */
+  pointerInIsland = false;
   /** The Hub's sub-tab in front (remembered). */
   hubTab: string = (() => {
     try {

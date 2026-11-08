@@ -4449,6 +4449,149 @@
    "pt-BR": "Planejando",
    "ru": "Планирование",
    "id": "Merencanakan"
+  },
+  "Search songs and artists": {
+   "zh-Hans": "搜索歌曲和艺人",
+   "hi": "गाने और कलाकार खोजें",
+   "es": "Busca canciones y artistas",
+   "ar": "ابحث عن أغانٍ وفنانين",
+   "fr": "Chercher des titres et des artistes",
+   "bn": "গান ও শিল্পী খুঁজুন",
+   "pt-BR": "Buscar músicas e artistas",
+   "ru": "Искать песни и исполнителей",
+   "id": "Cari lagu dan artis"
+  },
+  "Both": {
+   "zh-Hans": "两者",
+   "hi": "दोनों",
+   "es": "Ambas",
+   "ar": "كلاهما",
+   "fr": "Les deux",
+   "bn": "দুটোই",
+   "pt-BR": "Ambos",
+   "ru": "Оба",
+   "id": "Keduanya"
+  },
+  "Type a song or an artist": {
+   "zh-Hans": "输入歌曲或艺人",
+   "hi": "कोई गाना या कलाकार लिखें",
+   "es": "Escribe una canción o un artista",
+   "ar": "اكتب أغنية أو فنانًا",
+   "fr": "Tapez un titre ou un artiste",
+   "bn": "একটি গান বা শিল্পীর নাম লিখুন",
+   "pt-BR": "Digite uma música ou um artista",
+   "ru": "Введите песню или исполнителя",
+   "id": "Ketik lagu atau artis"
+  },
+  "Connect Spotify": {
+   "zh-Hans": "连接 Spotify",
+   "hi": "Spotify कनेक्ट करें",
+   "es": "Conectar Spotify",
+   "ar": "ربط Spotify",
+   "fr": "Connecter Spotify",
+   "bn": "Spotify সংযুক্ত করুন",
+   "pt-BR": "Conectar Spotify",
+   "ru": "Подключить Spotify",
+   "id": "Hubungkan Spotify"
+  },
+  "Artist": {
+   "zh-Hans": "艺人",
+   "hi": "कलाकार",
+   "es": "Artista",
+   "ar": "فنان",
+   "fr": "Artiste",
+   "bn": "শিল্পী",
+   "pt-BR": "Artista",
+   "ru": "Исполнитель",
+   "id": "Artis"
+  },
+  "Album": {
+   "zh-Hans": "专辑",
+   "hi": "एल्बम",
+   "es": "Álbum",
+   "ar": "ألبوم",
+   "fr": "Album",
+   "bn": "অ্যালবাম",
+   "pt-BR": "Álbum",
+   "ru": "Альбом",
+   "id": "Album"
+  },
+  "List": {
+   "zh-Hans": "列表",
+   "hi": "सूची",
+   "es": "Lista",
+   "ar": "قائمة",
+   "fr": "Liste",
+   "bn": "তালিকা",
+   "pt-BR": "Lista",
+   "ru": "Список",
+   "id": "Daftar"
+  },
+  "Search isn't available right now": {
+   "zh-Hans": "暂时无法搜索",
+   "hi": "अभी खोज उपलब्ध नहीं है",
+   "es": "La búsqueda no está disponible ahora",
+   "ar": "البحث غير متاح الآن",
+   "fr": "La recherche n'est pas disponible pour l'instant",
+   "bn": "এখন খোঁজা যাচ্ছে না",
+   "pt-BR": "A busca não está disponível agora",
+   "ru": "Поиск сейчас недоступен",
+   "id": "Pencarian tidak tersedia saat ini"
+  },
+  "No results": {
+   "zh-Hans": "没有结果",
+   "hi": "कोई परिणाम नहीं",
+   "es": "Sin resultados",
+   "ar": "لا نتائج",
+   "fr": "Aucun résultat",
+   "bn": "কোনো ফলাফল নেই",
+   "pt-BR": "Nenhum resultado",
+   "ru": "Ничего не найдено",
+   "id": "Tidak ada hasil"
+  },
+  "Searching…": {
+   "zh-Hans": "正在搜索…",
+   "hi": "खोज रहे हैं…",
+   "es": "Buscando…",
+   "ar": "جارٍ البحث…",
+   "fr": "Recherche…",
+   "bn": "খোঁজা হচ্ছে…",
+   "pt-BR": "Buscando…",
+   "ru": "Поиск…",
+   "id": "Mencari…"
+  },
+  "Couldn't play this": {
+   "zh-Hans": "无法播放",
+   "hi": "इसे चलाया नहीं जा सका",
+   "es": "No se pudo reproducir",
+   "ar": "تعذّر تشغيل هذا",
+   "fr": "Impossible de lire ceci",
+   "bn": "এটি চালানো গেল না",
+   "pt-BR": "Não foi possível tocar isto",
+   "ru": "Не удалось воспроизвести",
+   "id": "Tidak dapat memutar ini"
+  },
+  "Played through the Spotify app": {
+   "zh-Hans": "已通过 Spotify 应用播放",
+   "hi": "Spotify ऐप से चलाया गया",
+   "es": "Se puso con la app de Spotify",
+   "ar": "شُغّل عبر تطبيق Spotify",
+   "fr": "Lu avec l'app Spotify",
+   "bn": "Spotify অ্যাপ দিয়ে চালানো হয়েছে",
+   "pt-BR": "Tocado pelo app do Spotify",
+   "ru": "Включено через приложение Spotify",
+   "id": "Diputar lewat aplikasi Spotify"
+  },
+  "Nothing is playing": {
+   "zh-Hans": "没有正在播放的内容",
+   "hi": "कुछ नहीं चल रहा",
+   "es": "No suena nada",
+   "ar": "لا شيء قيد التشغيل",
+   "fr": "Rien en lecture",
+   "bn": "কিছুই চলছে না",
+   "pt-BR": "Nada tocando",
+   "ru": "Ничего не играет",
+   "id": "Tidak ada yang diputar"
   }
  }
 }

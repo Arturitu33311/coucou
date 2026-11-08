@@ -205,6 +205,8 @@ pub struct Settings {
     pub phone_relay: bool,
     /// The relay's address (`wss://…`), empty until the user enters it. Not a secret. Owned by Rust.
     pub phone_relay_url: String,
+    /// What the glass player searches: "spotify", "ytmusic" or "both" (the last choice in its selector).
+    pub player_source: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -366,6 +368,7 @@ impl Default for Settings {
             phone_services: Vec::new(),
             phone_relay: false,
             phone_relay_url: String::new(),
+            player_source: "both".into(),
         }
     }
 }
@@ -685,7 +688,8 @@ mod tests {
   "phoneUsage": true,
   "phoneServices": ["integration_stripe"],
   "phoneRelay": true,
-  "phoneRelayUrl": "wss://relay.example.workers.dev"
+  "phoneRelayUrl": "wss://relay.example.workers.dev",
+  "playerSource": "ytmusic"
 }"##;
 
     fn custom() -> Value {
@@ -1226,6 +1230,7 @@ mod tests {
                 "phoneServices",
                 "phoneRelay",
                 "phoneRelayUrl",
+                "playerSource",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

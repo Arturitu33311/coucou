@@ -26,7 +26,9 @@ export type IslandViewName =
   | "settings"
   | "greeting"
   | "recap"
-  | "wardrobe";
+  | "wardrobe"
+  // The glass player: what plays, a search across Spotify and YT Music, the results.
+  | "player";
 
 export type BotStateName =
   | "idle"
@@ -104,6 +106,9 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   // to the shared image.
   recap: { height: 184, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   wardrobe: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "none" },
+  // The whole panel's height, and no Mochi: the now-playing row, the search and
+  // the results take the full width.
+  player: { height: 320, botX: 0, botY: null, botDiameter: 0, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually
