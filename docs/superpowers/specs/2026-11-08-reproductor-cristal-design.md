@@ -32,8 +32,11 @@ Una vista nueva de la isla, **"player"** (nombre interno; texto visible "Buscar"
 la isla normal, que sale del notch.
 
 ### Cómo se abre y se cierra
-- **Atajo de teclado propio** (distinto de `--toggle`): p. ej. `coucou --player`, que el instalador enlaza como
-  atajo de GNOME igual que `--toggle`. Abre la isla directo en "player" con el cursor en la búsqueda.
+- **Atajo de teclado propio:** una acción nueva (p. ej. `openPlayer`) en el sistema de atajos de Coucou
+  (`src-tauri/src/shortcuts.rs`, con su ajuste y manejo de choques), **activada por defecto** para esta acción.
+  Respaldo si `platform::global_shortcuts_blocked()` (GNOME): bandera `coucou --player` y una línea en el
+  README/instalador para enlazarla como atajo personalizado de GNOME (decisión de Claude). Abre la isla directo
+  en "player" con el cursor en la búsqueda.
 - **Desde el notch:** un botón de búsqueda (lupa) en la vista "music" lleva a "player". La pastilla compacta sigue
   haciendo lo que hace hoy (abre "music").
 - Se cierra con **Esc**, clic fuera o tras un rato sin uso, como los demás estados de la isla.
@@ -59,11 +62,19 @@ la isla normal, que sale del notch.
 - YT Music: la página de artista de YT Music (canciones y álbumes).
 
 ### Cómo suena cada fuente
-- **Spotify (Premium):** Web API de Spotify con OAuth **PKCE** (sin client secret). Suena en la **app oficial de
-  Spotify** ya instalada (`com.spotify.Client`), que puede estar minimizada. Si no está abierta, lanzarla en
-  segundo plano y esperar a que aparezca en `GET /me/player/devices`; reproducir con
-  `PUT /me/player/play?device_id=…`. Scopes mínimos: `user-read-playback-state`,
-  `user-modify-playback-state`, `user-read-currently-playing`, `user-read-recently-played`.
+- **Spotify (Premium):** Web API de Spotify con OAuth **PKCE** (sin client secret). Scopes mínimos:
+  `user-read-playback-state`, `user-modify-playback-state`, `user-read-currently-playing`,
+  `user-read-recently-played`. Se reproduce con `PUT /me/player/play?device_id=…` en uno de dos dispositivos
+  (decisión de Alan: **B principal, A de respaldo**):
+  - **B — Spotify sin ventana (principal):** un dispositivo Spotify Connect local sin interfaz (spotifyd o
+    librespot), como servicio de usuario que Coucou arranca solo cuando hace falta, con nombre fijo (p. ej.
+    "Coucou") para encontrarlo en `GET /me/player/devices`. Debe publicarse por MPRIS (o la isla debe seguirlo
+    por la Web API) para que pastilla, letra, visualizador y fondo funcionen igual. Su inicio de sesión va por
+    OAuth y sus credenciales al llavero/caché propia, nunca al repo.
+  - **A — app oficial minimizada (respaldo):** si B no arranca, no aparece en dispositivos o falla al reproducir,
+    usar la app oficial `com.spotify.Client`. Si está cerrada, lanzarla y **minimizar su ventana en cuanto
+    aparezca** (desde el gestor de ventanas; se acepta un parpadeo breve solo en el arranque en frío), esperar
+    a que salga en dispositivos y reproducir. Avisar en el panel, discreto, que se usó el respaldo.
 - **YT Music:** búsqueda y páginas de artista sin iniciar sesión. Audio con **mpv** (`--no-video`) + **yt-dlp**,
   una sola instancia de mpv controlada por su socket IPC. mpv debe publicarse por MPRIS (complemento
   `mpv-mpris`) para que la isla, la pastilla, la letra, el visualizador y el fondo lo vean como cualquier
@@ -89,7 +100,7 @@ de Sonora (acento + visualizador); permitir desinstalar Sonora.
   Lo único que se agrega a "music" es el botón de búsqueda.
 - CPU cuando la isla está oculta (regla: 0 %). Nada de sondeo en bucle; mpv y cava solo cuando hacen falta.
 - Tokens o claves en disco o en git: van al llavero.
-- Que la ventana de Spotify se abra al frente cada vez que se pone una canción.
+- Que una ventana de Spotify aparezca al poner una canción (solo se tolera un parpadeo en el arranque en frío del respaldo A).
 
 ## Restricciones
 
@@ -107,6 +118,7 @@ de Sonora (acento + visualizador); permitir desinstalar Sonora.
 - **App de Spotify en developer.spotify.com**: la crea Claude en el navegador de Alan con su cuenta (Alan lo pidió).
   Datos: nombre "Coucou", API "Web API", redirect URI **`http://127.0.0.1:43821/callback`** (decisión de Claude; el código debe usar exactamente esta). El Client
   ID va a la config de Coucou (no es secreto con PKCE); los tokens, al llavero.
+- Instalar el Spotify sin ventana (spotifyd o librespot) e iniciar su sesión una vez.
 - Actualizar **yt-dlp** (el instalado es 2024.04.09, demasiado viejo para YouTube) a una versión que se pueda
   actualizar sola (binario en `~/.local/bin` o pipx), instalar **mpv-mpris** y lo que use la capa de YT Music.
 - Cuando Alan confirme que todo funciona: `flatpak uninstall --user io.github.nolight132.sonora` (antes, copia de
@@ -124,7 +136,8 @@ de Sonora (acento + visualizador); permitir desinstalar Sonora.
 
 ## Lo que queda a criterio de quien construye
 
-- Si la capa de YT Music va en Rust directo o como ayudante Python (hay precedente: `activities.py`).
+- Si la capa de YT Music va en Rust directo o como ayudante Python **local** (subproceso en la laptop; nada de
+  esto corre en el servidor, a diferencia de `activities.py` — decisión de Claude).
 - Tamaño exacto del panel, animación de apertura desde el notch y diseño fino del cover flow, dentro del estilo
   existente de la isla (`design/prototype/notch-buddy.html` como referencia).
 - Formato del historial, tiempos de cierre automático y de debounce.
