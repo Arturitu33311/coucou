@@ -97,14 +97,14 @@ pub fn challenge(verifier: &str) -> String {
 
 const PKCE_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
 
-fn random_string(len: usize) -> String {
+fn random_string(len: usize) -> Result<String, String> {
     let mut bytes = vec![0u8; len];
-    SystemRandom::new().fill(&mut bytes).expect("system randomness");
-    bytes.iter().map(|b| PKCE_ALPHABET[(*b as usize) % PKCE_ALPHABET.len()] as char).collect()
+    SystemRandom::new().fill(&mut bytes).map_err(|_| "no system randomness".to_string())?;
+    Ok(bytes.iter().map(|b| PKCE_ALPHABET[(*b as usize) % PKCE_ALPHABET.len()] as char).collect())
 }
 
 /// A fresh 64-character PKCE verifier (the modulo bias over 66 symbols is negligible for this use).
-pub fn new_verifier() -> String {
+pub fn new_verifier() -> Result<String, String> {
     random_string(64)
 }
 
@@ -155,8 +155,21 @@ fn http() -> Result<reqwest::Client, String> {
 const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Coucou</title>\
 <body style=\"font-family:sans-serif;text-align:center;margin-top:20vh\"><h2>Listo, ya puedes cerrar esta pesta\u{f1}a</h2></body>";
 
-/// Wait for the browser to hit `/callback` and return its request line. Other paths (favicon...) get a 404.
-async fn wait_for_callback(listener: TcpListener) -> Result<String, String> {
+const FAIL_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Coucou</title>\
+<body style=\"font-family:sans-serif;text-align:center;margin-top:20vh\"><h2>No se pudo iniciar sesi\u{f3}n con Spotify</h2></body>";
+const NEUTRAL_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Coucou</title><body></body>";
+
+fn html_reply(status: &str, body: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// Serve the loopback port until a `/callback` request carrying the right `state` arrives; return the code, or
+/// the error Spotify reported. Other paths (favicon...) get a 404 and a wrong-state request a neutral page, and
+/// both keep waiting, so a stray request cannot end the login.
+async fn wait_for_callback(listener: TcpListener, state: &str) -> Result<String, String> {
     loop {
         let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 8192];
@@ -165,20 +178,28 @@ async fn wait_for_callback(listener: TcpListener) -> Result<String, String> {
             _ => continue,
         };
         let text = String::from_utf8_lossy(&buf[..n]);
-        let line = text.lines().next().unwrap_or("").to_string();
+        let line = text.lines().next().unwrap_or("");
         let is_callback = line.split_whitespace().nth(1).is_some_and(|t| t.split('?').next() == Some("/callback"));
-        let reply = if is_callback {
-            let body = DONE_PAGE.as_bytes().len();
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {body}\r\nConnection: close\r\n\r\n{DONE_PAGE}"
-            )
-        } else {
+        let mut outcome = None;
+        let reply = if !is_callback {
             "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+        } else {
+            match parse_callback(line, state) {
+                Ok(code) => {
+                    outcome = Some(Ok(code));
+                    html_reply("200 OK", DONE_PAGE)
+                }
+                Err(e) if e.contains("state mismatch") => html_reply("400 Bad Request", NEUTRAL_PAGE),
+                Err(e) => {
+                    outcome = Some(Err(e));
+                    html_reply("200 OK", FAIL_PAGE)
+                }
+            }
         };
         let _ = sock.write_all(reply.as_bytes()).await;
         let _ = sock.shutdown().await;
-        if is_callback {
-            return Ok(line);
+        if let Some(done) = outcome {
+            return done;
         }
     }
 }
@@ -188,17 +209,16 @@ pub async fn login(_app: &AppHandle) -> Result<(), String> {
     if client_id.is_empty() {
         return Err("Set your Spotify Client ID (spotifyClientId) first.".into());
     }
-    let verifier = new_verifier();
-    let state = random_string(24);
+    let verifier = new_verifier()?;
+    let state = random_string(24)?;
     // Bind before the browser opens, so the redirect always finds a listener.
     let listener = TcpListener::bind(LISTEN_ADDR)
         .await
         .map_err(|e| format!("Spotify login: port 43821 is busy ({e})"))?;
     crate::platform::open_url(&authorize_url(&client_id, &challenge(&verifier), &state));
-    let line = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener))
+    let code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, &state))
         .await
         .map_err(|_| "Spotify login timed out".to_string())??;
-    let code = parse_callback(&line, &state)?;
     let reply = token_request(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -259,15 +279,34 @@ async fn token_request(form: &[(&str, &str)]) -> Result<TokenReply, AuthError> {
     })
 }
 
-/// A valid access token: the cached one, or a fresh one from the stored refresh token.
-pub async fn access_token() -> Result<String, AuthError> {
-    if let Ok(c) = CACHE.lock() {
-        if let Some((token, until)) = c.as_ref() {
-            if Instant::now() < *until {
-                return Ok(token.clone());
-            }
-        }
+static REFRESH_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+fn cached() -> Option<String> {
+    let c = CACHE.lock().ok()?;
+    let (token, until) = c.as_ref()?;
+    (Instant::now() < *until).then(|| token.clone())
+}
+
+/// The cached token, or the one `refresh` fetches. Single-flight: concurrent callers wait on one refresh and
+/// then find its result in the cache.
+async fn token_or_refresh<F, Fut>(refresh: F) -> Result<String, AuthError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(String, u64), AuthError>>,
+{
+    if let Some(t) = cached() {
+        return Ok(t);
     }
+    let _flight = REFRESH_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await;
+    if let Some(t) = cached() {
+        return Ok(t);
+    }
+    let (token, expires_in) = refresh().await?;
+    store_access(&token, expires_in);
+    Ok(token)
+}
+
+async fn refresh_from_keystore() -> Result<(String, u64), AuthError> {
     let refresh = crate::secrets::get_internal(REFRESH_KEY)
         .filter(|r| !r.is_empty())
         .ok_or(AuthError::LoginNeeded)?;
@@ -282,10 +321,17 @@ pub async fn access_token() -> Result<String, AuthError> {
     ])
     .await?;
     if let Some(new) = reply.refresh_token.as_deref().filter(|n| *n != refresh) {
-        let _ = crate::secrets::set_internal(REFRESH_KEY, new);
+        if let Err(e) = crate::secrets::set_internal(REFRESH_KEY, new) {
+            // Never the token itself. The access token still works; the next login may be needed sooner.
+            eprintln!("spotify: could not store the rotated refresh token: {e}");
+        }
     }
-    store_access(&reply.access_token, reply.expires_in);
-    Ok(reply.access_token)
+    Ok((reply.access_token, reply.expires_in))
+}
+
+/// A valid access token: the cached one, or a fresh one from the stored refresh token.
+pub async fn access_token() -> Result<String, AuthError> {
+    token_or_refresh(refresh_from_keystore).await
 }
 
 #[cfg(test)]
@@ -302,10 +348,10 @@ mod tests {
 
     #[test]
     fn verifier_is_64_unreserved_chars() {
-        let v = new_verifier();
+        let v = new_verifier().unwrap();
         assert_eq!(v.len(), 64);
         assert!(v.chars().all(|c| c.is_ascii_alphanumeric() || "-._~".contains(c)));
-        assert_ne!(v, new_verifier());
+        assert_ne!(v, new_verifier().unwrap());
     }
 
     #[test]
@@ -341,6 +387,60 @@ mod tests {
     fn parse_callback_reports_access_denied() {
         let e = parse_callback("GET /callback?error=access_denied&state=xyz HTTP/1.1", "xyz").unwrap_err();
         assert!(e.contains("access_denied"), "{e}");
+    }
+
+    async fn get(addr: std::net::SocketAddr, path: &str) -> String {
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).await.unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).await.unwrap();
+        out
+    }
+
+    #[tokio::test]
+    async fn a_wrong_state_request_does_not_end_the_login() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let waiter = tokio::spawn(async move { wait_for_callback(listener, "good").await });
+        assert!(get(addr, "/favicon.ico").await.contains("404"));
+        let bad = get(addr, "/callback?code=evil&state=bad").await;
+        assert!(!bad.contains("Listo"), "{bad}");
+        assert!(!waiter.is_finished());
+        let ok = get(addr, "/callback?code=real&state=good").await;
+        assert!(ok.contains("Listo, ya puedes cerrar esta pesta"), "{ok}");
+        assert_eq!(waiter.await.unwrap().unwrap(), "real");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_gets_the_failure_page_not_the_success_one() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let waiter = tokio::spawn(async move { wait_for_callback(listener, "good").await });
+        let page = get(addr, "/callback?error=access_denied&state=good").await;
+        assert!(!page.contains("Listo"), "{page}");
+        assert!(waiter.await.unwrap().unwrap_err().contains("access_denied"));
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_share_one_refresh() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        *CACHE.lock().unwrap() = None;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let calls = calls.clone();
+            tasks.push(tokio::spawn(token_or_refresh(move || async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                Ok(("tok".to_string(), 3600))
+            })));
+        }
+        for t in tasks {
+            assert_eq!(t.await.unwrap().unwrap(), "tok");
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        *CACHE.lock().unwrap() = None;
     }
 
     #[test]
