@@ -46,6 +46,7 @@ mod jinx_gateway;
 mod local_chat;
 mod log;
 mod music;
+mod player;
 mod net;
 mod hub_notes;
 mod island_cmd;
