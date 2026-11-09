@@ -325,6 +325,8 @@ pub async fn artist_tracks(name: &str) -> Result<Vec<Item>, ApiError> {
     Ok(search(&q, 0).await?.into_iter().filter(|i| i.kind == Kind::Track).collect())
 }
 
+// No command needs the artist's own record yet: player_artist gets the name from the clicked item.
+#[allow(dead_code)]
 pub async fn artist(id: &str) -> Result<Item, ApiError> {
     let path = format!("/artists/{}", pct_encode(id));
     let json = call(API_BASE, &live_token, reqwest::Method::GET, &path, None).await?;

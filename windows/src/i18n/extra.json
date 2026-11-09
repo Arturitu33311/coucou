@@ -4603,6 +4603,50 @@
    "pt-BR": "Nada tocando",
    "ru": "Ничего не играет",
    "id": "Tidak ada yang diputar"
+  },
+  "Spotify login needed": {
+   "zh-Hans": "需要登录 Spotify",
+   "hi": "Spotify में साइन इन करना होगा",
+   "es": "Hay que iniciar sesión en Spotify",
+   "ar": "يلزم تسجيل الدخول إلى Spotify",
+   "fr": "Connexion à Spotify requise",
+   "bn": "Spotify-তে সাইন ইন করতে হবে",
+   "pt-BR": "É preciso entrar no Spotify",
+   "ru": "Нужно войти в Spotify",
+   "id": "Perlu masuk ke Spotify"
+  },
+  "Spotify is busy, try again in {seconds} s": {
+   "zh-Hans": "Spotify 繁忙，请在 {seconds} 秒后重试",
+   "hi": "Spotify व्यस्त है, {seconds} सेकंड बाद फिर कोशिश करें",
+   "es": "Spotify está ocupado, prueba en {seconds} s",
+   "ar": "Spotify مشغول، أعد المحاولة بعد {seconds} ث",
+   "fr": "Spotify est occupé, réessayez dans {seconds} s",
+   "bn": "Spotify ব্যস্ত, {seconds} সেকেন্ড পরে আবার চেষ্টা করুন",
+   "pt-BR": "O Spotify está ocupado, tente em {seconds} s",
+   "ru": "Spotify занят, повторите через {seconds} с",
+   "id": "Spotify sedang sibuk, coba lagi dalam {seconds} dtk"
+  },
+  "No Spotify device": {
+   "zh-Hans": "没有 Spotify 设备",
+   "hi": "कोई Spotify डिवाइस नहीं",
+   "es": "No hay dispositivo de Spotify",
+   "ar": "لا يوجد جهاز Spotify",
+   "fr": "Aucun appareil Spotify",
+   "bn": "কোনো Spotify ডিভাইস নেই",
+   "pt-BR": "Nenhum dispositivo do Spotify",
+   "ru": "Нет устройства Spotify",
+   "id": "Tidak ada perangkat Spotify"
+  },
+  "YT Music only works on Linux": {
+   "zh-Hans": "YT Music 仅支持 Linux",
+   "hi": "YT Music केवल Linux पर चलता है",
+   "es": "YT Music solo en Linux",
+   "ar": "YT Music يعمل على Linux فقط",
+   "fr": "YT Music ne marche que sous Linux",
+   "bn": "YT Music শুধু Linux-এ চলে",
+   "pt-BR": "YT Music só funciona no Linux",
+   "ru": "YT Music работает только в Linux",
+   "id": "YT Music hanya jalan di Linux"
   }
  }
 }
