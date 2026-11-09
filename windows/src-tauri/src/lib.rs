@@ -1487,6 +1487,7 @@ pub fn run() {
             audiolink::audiolink_swap,
             audiolink::audiolink_own_sound,
             music::music_art,
+            music::player_art,
             music::music_lyrics,
             bars::music_bars,
             player::player_search,

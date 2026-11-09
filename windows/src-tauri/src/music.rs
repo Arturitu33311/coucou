@@ -13,6 +13,9 @@
 // art from an http(s) URL the player gave us — happens only after the user turns
 // on "Fetch lyrics and album art online" in Settings (CLAUDE.md: network calls
 // only to services the user configured). Art that is a local file is always read.
+// The glass player's covers (`player_art`) are the exception: they come only from
+// the image servers of the services the user searches with the player (Spotify,
+// YouTube), never from any other host.
 //
 // Linux only: other platforms have no MPRIS, and get an empty pill.
 
@@ -388,7 +391,54 @@ fn http() -> Result<reqwest::Client, String> {
 }
 
 async fn fetch_capped(url: &str) -> Result<Vec<u8>, String> {
-    let response = http()?.get(url).send().await.map_err(|e| e.to_string())?;
+    fetch_capped_with(http()?, url).await
+}
+
+/// Spotify's and YouTube Music's image servers: the only hosts the glass player's covers come from.
+const PLAYER_ART_HOSTS: [&str; 2] = ["i.scdn.co", "i.ytimg.com"];
+const PLAYER_ART_DOMAINS: [&str; 2] = [".googleusercontent.com", ".ggpht.com"];
+
+/// Whether `url` is a cover on one of the player's image servers (http(s), default port).
+pub fn player_art_allowed(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    if !matches!(u.scheme(), "https" | "http") || u.port().is_some() {
+        return false;
+    }
+    let Some(host) = u.host_str() else { return false };
+    let host = host.to_ascii_lowercase();
+    PLAYER_ART_HOSTS.contains(&host.as_str()) || PLAYER_ART_DOMAINS.iter().any(|d| host.ends_with(d))
+}
+
+/// A glass player cover as a `data:` URL. Unlike `music_art` it needs no "online" setting, but it
+/// fetches only from the player's services' image servers, redirects included.
+#[tauri::command]
+pub async fn player_art(url: String) -> Result<String, String> {
+    // Tray → Pause still means no network calls at all.
+    if PAUSED.load(Ordering::Relaxed) {
+        return Err("paused".into());
+    }
+    if !player_art_allowed(&url) {
+        return Err("not a player cover".into());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::custom(|a| {
+            if a.previous().len() < 5 && player_art_allowed(a.url().as_str()) {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        }))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = fetch_capped_with(client, &url).await?;
+    let mime = sniff_image(&bytes).ok_or("not an image")?;
+    Ok(format!("data:{mime};base64,{}", crate::claude::base64_for(&bytes)))
+}
+
+async fn fetch_capped_with(client: reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("art: HTTP {}", response.status().as_u16()));
     }
@@ -909,6 +959,34 @@ pub async fn music_control(action: String, value_ms: Option<i64>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_art_only_from_the_players_image_servers() {
+        for ok in [
+            "https://i.scdn.co/image/ab67616d00001e02",
+            "https://lh3.googleusercontent.com/abc=w120-h120",
+            "https://yt3.ggpht.com/xyz=s120",
+            "https://i.ytimg.com/vi/abc/hqdefault.jpg",
+            "http://i.ytimg.com/vi/abc/default.jpg",
+            "https://I.SCDN.CO/image/x",
+        ] {
+            assert!(player_art_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "https://example.com/a.jpg",
+            "https://i.scdn.co.evil.com/a.jpg",
+            "https://evilgoogleusercontent.com/a.jpg",
+            "https://googleusercontent.com.evil.net/a.jpg",
+            "https://i.scdn.co@evil.com/a.jpg",
+            "https://i.scdn.co:8443/a.jpg",
+            "ftp://i.scdn.co/a.jpg",
+            "file:///home/me/cover.jpg",
+            "i.scdn.co/a.jpg",
+            "",
+        ] {
+            assert!(!player_art_allowed(bad), "{bad}");
+        }
+    }
 
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
