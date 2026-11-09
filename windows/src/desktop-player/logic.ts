@@ -12,27 +12,43 @@ function sameTitle(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-/**
- * The song the player itself started, when it is the one playing: the newest
- * track in the history (`player_recents`, newest first) with the same title.
- * Its cover and its source stand in for what MPRIS lacks (mpv has neither).
- */
-export function playedMatch(title: string | null | undefined, recents: PlayerItem[]): PlayerItem | null {
-  if (!title || !title.trim()) return null;
-  return recents.find((r) => r.kind === "track" && sameTitle(r.title, title)) ?? null;
+/** The MPRIS bus name's first part, lower case ("spotifyd.instance42" → "spotifyd"). */
+function busOf(player: string): string {
+  return player.trim().toLowerCase().split(".")[0];
+}
+
+/** The source a known MPRIS player plays from: Spotify's app or spotifyd, and mpv (YT Music). */
+export function playerSource(player: string): PlayerSourceName | null {
+  const bus = busOf(player);
+  if (bus === "spotify" || bus === "spotifyd") return "spotify";
+  if (bus === "mpv") return "ytmusic";
+  return null;
 }
 
 /**
- * The source shown beside the artist: the matched song's ("YT Music" / "Spotify"),
- * else a friendly name for a known MPRIS player: Spotify's app or spotifyd →
- * "Spotify"; mpv → "YT Music" when the player's last play was on YT Music (that
- * mpv is the player's own); anything else as MPRIS names it ("" → "Coucou").
+ * The song the player itself started, when it is the one playing: the newest
+ * track in the history (`player_recents`, newest first) with the same title and
+ * a source that fits the player (mpv ↔ YT Music, Spotify ↔ Spotify), so a song
+ * played on the other service before never lends its cover. Its cover and its
+ * source stand in for what MPRIS lacks (mpv has neither).
+ */
+export function playedMatch(player: string, title: string | null | undefined, recents: PlayerItem[]): PlayerItem | null {
+  const source = playerSource(player);
+  if (!source || !title || !title.trim()) return null;
+  return recents.find((r) => r.kind === "track" && r.source === source && sameTitle(r.title, title)) ?? null;
+}
+
+/**
+ * The source shown beside the artist. Spotify's app or spotifyd → "Spotify";
+ * mpv → "YT Music" when it plays a song the player started (`match`) or the
+ * player's last play was on YT Music (that mpv is the player's own); anything
+ * else as MPRIS names it ("" → "Coucou").
  */
 export function sourceLabel(player: string, match: PlayerItem | null, recents: PlayerItem[]): string {
-  if (match) return sourceName(match.source);
-  const bus = player.trim().toLowerCase().split(".")[0];
+  const bus = busOf(player);
   if (bus === "spotify" || bus === "spotifyd") return "Spotify";
   if (bus === "mpv") {
+    if (match) return sourceName(match.source);
     const last = recents.find((r) => r.kind === "track" || r.kind === "album");
     if (last?.source === "ytmusic") return "YT Music";
   }

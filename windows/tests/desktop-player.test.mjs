@@ -422,22 +422,28 @@ test("ytArtist: the exact name first, else the first YT Music artist; Spotify ar
   assert.equal(ytArtist(list.slice(0, 1), "Daft Punk"), null);
 });
 
-const { playedMatch, sourceLabel, sourceName, rereadWanted } = await import("../src/desktop-player/logic.ts");
+const { playedMatch, playerSource, sourceLabel, sourceName, rereadWanted } = await import("../src/desktop-player/logic.ts");
 
-test("playedMatch: the newest track of the history with the same title (trimmed, any case)", () => {
+test("playedMatch: the newest track of the history with the same title (trimmed, any case) from the player's source", () => {
   const yt = item({ source: "ytmusic", id: "v1", title: "Instant Crush (feat. Julian Casablancas)", artUrl: "https://i.ytimg.com/a.jpg" });
-  const older = item({ source: "spotify", id: "s1", title: "Instant Crush (feat. Julian Casablancas)" });
-  const recents = [item({ kind: "album", title: "instant crush (feat. julian casablancas)" }), yt, older];
-  assert.equal(playedMatch(" instant crush (feat. Julian Casablancas) ", recents), yt);
-  assert.equal(playedMatch("Get Lucky", recents), null);
-  assert.equal(playedMatch("", recents), null);
-  assert.equal(playedMatch(null, recents), null);
+  const sp = item({ source: "spotify", id: "s1", title: "Instant Crush (feat. Julian Casablancas)", artUrl: "https://i.scdn.co/a.jpg" });
+  const recents = [item({ source: "ytmusic", kind: "album", title: "instant crush (feat. julian casablancas)" }), sp, yt];
+  assert.equal(playedMatch("mpv", " instant crush (feat. Julian Casablancas) ", recents), yt, "mpv takes the YT Music play, not the newer Spotify one");
+  assert.equal(playedMatch("spotify", "Instant Crush (feat. Julian Casablancas)", recents), sp);
+  assert.equal(playedMatch("mpv", "Instant Crush (feat. Julian Casablancas)", [sp]), null, "a Spotify play never lends mpv its cover");
+  assert.equal(playedMatch("firefox.instance_1", "Instant Crush (feat. Julian Casablancas)", recents), null, "an unknown player");
+  assert.equal(playedMatch("mpv", "Get Lucky", recents), null);
+  assert.equal(playedMatch("mpv", "", recents), null);
+  assert.equal(playedMatch("mpv", null, recents), null);
+  assert.equal(playerSource("spotifyd.instance42"), "spotify");
+  assert.equal(playerSource("mpv"), "ytmusic");
+  assert.equal(playerSource("vlc"), null);
 });
 
-test("sourceLabel: the matched song's source, else friendly names for known players", () => {
+test("sourceLabel: Spotify's players are Spotify; mpv is YT Music when the player started it; else the raw name", () => {
   const ytPlay = item({ source: "ytmusic", title: "Instant Crush" });
   assert.equal(sourceLabel("mpv", ytPlay, [ytPlay]), "YT Music");
-  assert.equal(sourceLabel("mpv", item({ source: "spotify" }), []), "Spotify");
+  assert.equal(sourceLabel("spotify", ytPlay, [ytPlay]), "Spotify", "the Spotify app playing a song first heard on YT Music");
   assert.equal(sourceLabel("spotify", null, []), "Spotify");
   assert.equal(sourceLabel("spotifyd", null, []), "Spotify");
   assert.equal(sourceLabel("spotifyd.instance42", null, []), "Spotify");

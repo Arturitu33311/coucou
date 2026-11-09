@@ -26,7 +26,7 @@ import { AlbumSource, buildFlow, fetchArtistAlbums, flowArtist, type FlowView } 
 import { buildSearch, QueryGate, type SearchView } from "./search";
 import { buildPlayerBar, type PlayerBarView } from "./bar";
 import { Feedback } from "./feedback";
-import { lyricShown, playedMatch, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
+import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
 import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
 
@@ -174,10 +174,11 @@ async function refreshLists() {
   void flowView?.update(flowArtist(track?.artists[0] ?? null, rec));
   const t = track;
   if (!t) return;
-  played = playedMatch(t.title, rec);
+  played = playedMatch(t.player, t.title, rec);
   if (!t.artUrl && played?.artUrl && artSrc !== played.artUrl) showWantedArt(trackKey);
   updatePanels();
-  if (rereadWanted(played, rereadKey === trackKey, !t.artUrl)) {
+  // only mpv's songs wait for their history entry (an mpv the player did not start reads once more, that is all)
+  if (rereadWanted(played, rereadKey === trackKey, !t.artUrl && playerSource(t.player) === "ytmusic")) {
     rereadKey = trackKey;
     const key = trackKey;
     window.setTimeout(() => {
@@ -224,7 +225,7 @@ function applyTrack(t: MusicTrack | null) {
     trackKey = key;
     lyrics = null;
     // from the last read; the next one (once per song) may find it
-    played = playedMatch(t.title, recents);
+    played = playedMatch(t.player, t.title, recents);
     void loadLyrics(key);
   }
   if (newSong || t.artUrl !== artUrl) {
