@@ -1,12 +1,6 @@
-// The desktop player: one desktop-level window on the primary monitor that shows
-// the glass player over the wallpaper while the desktop is in view.
-//
-// This module only owns the window (create once, show, hide, raise, keyboard,
-// geometry). When it is shown is decided elsewhere (the desktop-in-view watcher).
-// Linux on X11 only; everywhere else `ensure` returns None and nothing happens.
-
 use serde::Serialize;
 
+pub mod visibility;
 pub mod window;
 
 #[allow(unused_imports)] // The window API for the watcher (plan Task 3) and the shortcut.
@@ -142,3 +136,4 @@ mod tests {
         assert_eq!(g.scale, 1.0);
     }
 }
+

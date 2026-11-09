@@ -1484,6 +1484,7 @@ pub fn run() {
             approval_decline,
             question_answer,
             music::music_state,
+            desktop_player::visibility::desktop_is_visible,
             music::music_control,
             audiolink::audiolink_swap,
             audiolink::audiolink_own_sound,
@@ -1708,6 +1709,7 @@ pub fn run() {
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
             // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
             presence::start(&handle);
+            desktop_player::visibility::start(handle.clone());
             // A Bluetooth block left from a run that died before lifting it.
             handoff::recover();
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.
