@@ -6,7 +6,7 @@ import "./player.css";
 import "./pill.css";
 import "./jinx.css";
 import "./hub/hub-island.css";
-import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
+import { Bridge, emitToWindow, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
@@ -155,8 +155,11 @@ async function main() {
         break;
       case "player":
         setPaused(false);
-        if (State.mode === "expanded" && State.view === "player") island.fsm.forcePetit();
-        else {
+        if (State.desktopVisible) {
+          void emitToWindow("desktop-player", "desktop-player-search");
+        } else if (State.mode === "expanded" && State.view === "player") {
+          island.fsm.forcePetit();
+        } else {
           island.alert("player");
           island.takeKeyboard();
         }

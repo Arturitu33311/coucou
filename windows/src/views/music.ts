@@ -13,7 +13,7 @@
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import type { ViewActions, ViewHost } from "./views";
-import { Bridge } from "../core/bridge";
+import { Bridge, emitToWindow } from "../core/bridge";
 import { State, type MusicInfo, type Settings } from "../core/state";
 import { liveBars, lyricIndex, musicPosition, musicTint, MUSIC_RED } from "../island/music";
 import { t } from "../i18n/i18n";
@@ -286,7 +286,13 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   const row = h("div", { class: "m-row" }, prev, play, next, bar.el, time);
   // The way into the player (the full view only; the compact card stays as it is).
   if (full) {
-    const search = control(MAGNIFIER, 13, t("Search songs and artists"), () => actions.setView("player"), 2);
+    const search = control(MAGNIFIER, 13, t("Search songs and artists"), () => {
+      if (State.desktopVisible) {
+        void emitToWindow("desktop-player", "desktop-player-search");
+      } else {
+        actions.setView("player");
+      }
+    }, 2);
     row.append(search);
   }
 

@@ -7,7 +7,7 @@
 // island has the keyboard: it takes it for the chat, and when a global
 // shortcut opens it.
 
-import { Bridge, onEvent } from "../core/bridge";
+import { Bridge, emitToWindow, onEvent } from "../core/bridge";
 import type { BotEmoteName, IslandViewName } from "../core/layout";
 import { cyclePill, islandKeyAction, navigate, pillByNumber, type IslandKeyAction } from "../core/shortcuts";
 import { Sound } from "../core/sound";
@@ -61,7 +61,9 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
       break;
 
     case "openPlayer":
-      if (State.mode === "expanded" && State.view === "player") {
+      if (State.desktopVisible) {
+        void emitToWindow("desktop-player", "desktop-player-search");
+      } else if (State.mode === "expanded" && State.view === "player") {
         host.collapse();
       } else {
         resume();

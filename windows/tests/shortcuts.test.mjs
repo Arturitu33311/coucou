@@ -312,6 +312,7 @@ beforeEach(() => {
   State.mochiOnDesktop = false;
   State.cardSelection = null;
   State.cardItemCount = 0;
+  State.desktopVisible = false;
   desktopSupported = true;
   State.loadIntegrationTasks();
 });
@@ -322,8 +323,23 @@ test("the wardrobe shortcut's own event opens the wardrobe", () => {
 });
 
 test("openPlayer opens the player and takes the keyboard (not the keyboard-open timer)", () => {
+  State.desktopVisible = false;
   emit("shortcut", "openPlayer");
   assert.deepEqual(did, ["resume", "alert:player", "keyboard"]);
+});
+
+test("openPlayerUsesNotchOtherwise", () => {
+  State.desktopVisible = false;
+  emit("shortcut", "openPlayer");
+  assert.deepEqual(did, ["resume", "alert:player", "keyboard"]);
+});
+
+test("openPlayerUsesDesktopWhenVisible", () => {
+  State.desktopVisible = true;
+  emit("shortcut", "openPlayer");
+  assert.deepEqual(did, []);
+  const emitCalls = calls.filter(([cmd, args]) => cmd === "plugin:event|emit_to" && args.event === "desktop-player-search");
+  assert.equal(emitCalls.length, 1);
 });
 
 test("openPlayer closes the island when the player is already showing", () => {
