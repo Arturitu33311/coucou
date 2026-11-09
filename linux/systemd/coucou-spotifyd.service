@@ -1,0 +1,9 @@
+[Unit]
+Description=Coucou headless Spotify Connect device (spotifyd)
+
+[Service]
+ExecStart=%h/.local/bin/spotifyd --no-daemon --device-name Coucou --backend pulseaudio --use-mpris true
+Restart=on-failure
+
+# No [Install] section on purpose: Coucou starts this unit on demand
+# (systemctl --user start coucou-spotifyd.service), it is not enabled at login.

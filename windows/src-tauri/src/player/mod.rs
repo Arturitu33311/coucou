@@ -8,6 +8,7 @@ pub mod history;
 pub mod mpv;
 pub mod spotify_api;
 pub mod spotify_auth;
+pub mod spotify_device;
 #[cfg(target_os = "linux")]
 pub mod ytmusic;
 
