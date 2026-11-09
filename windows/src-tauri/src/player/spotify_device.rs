@@ -67,6 +67,10 @@ pub(crate) async fn ensure_device_with<E: Effects>(e: &mut E) -> Result<(String,
     if let Some(found) = poll(e, SERVICE_WAIT, true).await? {
         return Ok(found);
     }
+    // The app may already be running: reuse it, never relaunch (that would raise its window).
+    if let Choice::App(id) = choose(&e.devices().await?) {
+        return Ok((id, true));
+    }
     e.launch_app();
     e.minimize();
     match poll(e, APP_WAIT, false).await? {
@@ -220,11 +224,19 @@ mod tests {
     #[tokio::test]
     async fn uses_app_after_service_timeout() {
         // Coucou never shows up; the app appears only after it is launched.
-        let mut script = vec![vec![]; 14];
+        let mut script = vec![vec![]; 15];
         script.push(vec![dev("a", "alan-lap", "Computer")]);
         let mut f = Fake::new(script);
         assert_eq!(ensure_device_with(&mut f).await, Ok(("a".into(), true)));
         assert!(f.service_started && f.app_launched && f.minimized);
+        assert!(f.slept >= SERVICE_WAIT);
+    }
+
+    #[tokio::test]
+    async fn uses_running_app_without_launching() {
+        let mut f = Fake::new(vec![vec![dev("a", "alan-lap", "Computer")]]);
+        assert_eq!(ensure_device_with(&mut f).await, Ok(("a".into(), true)));
+        assert!(f.service_started && !f.app_launched && !f.minimized);
         assert!(f.slept >= SERVICE_WAIT);
     }
 
