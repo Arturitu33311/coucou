@@ -144,6 +144,13 @@ fn ytdl_opt(home: Option<&Path>) -> Option<String> {
     ytdlp.is_file().then(|| format!("--script-opts=ytdl_hook-ytdl_path={}", ytdlp.display()))
 }
 
+/// yt-dlp options for Coucou only (written by scripts/setup-player.sh: IPv4 first, a JavaScript
+/// runtime for YouTube), passed through mpv's ytdl hook when the file is there.
+fn ytdl_config_opt(home: Option<&Path>) -> Option<String> {
+    let conf = home?.join(".config/coucou/yt-dlp.conf");
+    conf.is_file().then(|| format!("--ytdl-raw-options=config-locations={}", conf.display()))
+}
+
 fn launch_mpv(sock: &Path) -> io::Result<()> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut cmd = Command::new("mpv");
@@ -152,6 +159,9 @@ fn launch_mpv(sock: &Path) -> io::Result<()> {
         .arg(format!("--input-ipc-server={}", sock.display()))
         .arg("--ytdl-format=bestaudio");
     if let Some(opt) = ytdl_opt(home.as_deref()) {
+        cmd.arg(opt);
+    }
+    if let Some(opt) = ytdl_config_opt(home.as_deref()) {
         cmd.arg(opt);
     }
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -234,6 +244,24 @@ mod tests {
         assert_eq!(
             ytdl_opt(Some(&home)),
             Some(format!("--script-opts=ytdl_hook-ytdl_path={}", home.join(".local/bin/yt-dlp").display()))
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn ytdl_config_only_when_it_is_there() {
+        let home = std::env::temp_dir().join(format!("coucou-mpv-conf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(ytdl_config_opt(Some(&home)), None, "no config: yt-dlp's defaults");
+        assert_eq!(ytdl_config_opt(None), None);
+        std::fs::create_dir_all(home.join(".config/coucou")).unwrap();
+        std::fs::write(home.join(".config/coucou/yt-dlp.conf"), "--force-ipv4\n").unwrap();
+        assert_eq!(
+            ytdl_config_opt(Some(&home)),
+            Some(format!(
+                "--ytdl-raw-options=config-locations={}",
+                home.join(".config/coucou/yt-dlp.conf").display()
+            ))
         );
         let _ = std::fs::remove_dir_all(&home);
     }

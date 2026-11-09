@@ -1,5 +1,16 @@
 # Glass player helper: `python3 -I - <op> <arg>`. Prints a JSON list of items, or {"error": "..."}.
-import json, sys
+import json, socket, sys
+
+# Try IPv4 addresses first: on a network whose IPv6 route is broken, requests would otherwise wait for
+# the IPv6 connection to time out (~25 s) on every call. IPv6 stays as the fallback.
+_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_first(*args, **kwargs):
+    return sorted(_getaddrinfo(*args, **kwargs), key=lambda info: info[0] != socket.AF_INET)
+
+
+socket.getaddrinfo = _ipv4_first
 
 
 def art(thumbs):
