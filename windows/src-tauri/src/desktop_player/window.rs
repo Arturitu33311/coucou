@@ -129,10 +129,14 @@ mod linux {
         }
         if !platform::desktop_player_supported() {
             UNAVAILABLE.store(true, Ordering::Relaxed);
-            crate::log::line("desktop player: not on X11, off");
+            crate::log::line("desktop player: not an X11 session, off");
             return None;
         }
-        let geo = primary_geometry(app)?;
+        let Some(geo) = primary_geometry(app) else {
+            // Not cached: the monitors may simply not be known yet.
+            crate::log::line("desktop player: no monitor geometry yet, window not made");
+            return None;
+        };
         let built = WebviewWindowBuilder::new(app, LABEL, page_url(app))
             .additional_browser_args(crate::BROWSER_ARGS)
             .title("Coucou desktop")

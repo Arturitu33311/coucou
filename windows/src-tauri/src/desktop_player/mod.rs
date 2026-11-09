@@ -58,6 +58,15 @@ pub fn geometry_scales_to_logical(m: &MonitorInfo) -> Geometry {
     }
 }
 
+/// Whether this session gets a desktop player: an X11 display, and not a
+/// Wayland session (where GTK may still run through XWayland, as on GNOME —
+/// the same Wayland test as `platform::global_shortcuts_blocked`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn desktop_player_allowed(session_type: &str, wayland_display: &str, gdk_is_x11: bool) -> bool {
+    let wayland = !wayland_display.is_empty() || session_type.eq_ignore_ascii_case("wayland");
+    gdk_is_x11 && !wayland
+}
+
 /// The primary monitor's geometry, in logical pixels.
 #[tauri::command]
 pub fn desktop_player_geometry(app: tauri::AppHandle) -> Option<Geometry> {
@@ -112,6 +121,18 @@ mod tests {
     fn geometry_scales_to_logical_keeps_scale_one() {
         let g = super::geometry_scales_to_logical(&mon(0, 0, 1920, 1080, 1.0, true));
         assert_eq!(g, Geometry { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0, scale: 1.0 });
+    }
+
+    #[test]
+    fn desktop_player_allowed_only_in_an_x11_session() {
+        assert!(desktop_player_allowed("x11", "", true));
+        assert!(desktop_player_allowed("", "", true));
+        // GNOME Wayland with GDK_BACKEND=x11: GDK is X11, the session is not.
+        assert!(!desktop_player_allowed("wayland", "wayland-0", true));
+        assert!(!desktop_player_allowed("Wayland", "", true));
+        assert!(!desktop_player_allowed("x11", "wayland-0", true));
+        assert!(!desktop_player_allowed("wayland", "wayland-0", false));
+        assert!(!desktop_player_allowed("x11", "", false));
     }
 
     #[test]

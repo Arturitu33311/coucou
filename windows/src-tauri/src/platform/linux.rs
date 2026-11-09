@@ -1439,12 +1439,19 @@ fn apply_rects(gw: &impl IsA<gtk::Widget>, rects: &[(f64, f64, f64, f64)]) {
 // wallpaper and still below everything else (docs/superpowers/specs/
 // 2026-11-09-escritorio-ensayo.md).
 
-/// True on an X11 display, the only place the desktop player exists. Main thread.
+/// True in an X11 session on an X11 display, the only place the desktop player
+/// exists. A Wayland session is out even when GTK runs through XWayland
+/// (prefer_x11_on_gnome forces that on GNOME). Main thread.
 pub fn desktop_player_supported() -> bool {
     use gtk::glib::prelude::ObjectExt;
-    gtk::gdk::Display::default()
+    let gdk_is_x11 = gtk::gdk::Display::default()
         .map(|d| d.type_().name().contains("X11"))
-        .unwrap_or(false)
+        .unwrap_or(false);
+    crate::desktop_player::desktop_player_allowed(
+        &std::env::var("XDG_SESSION_TYPE").unwrap_or_default(),
+        &std::env::var("WAYLAND_DISPLAY").unwrap_or_default(),
+        gdk_is_x11,
+    )
 }
 
 /// Sets the desktop player's window up before it is ever shown. Main thread.
