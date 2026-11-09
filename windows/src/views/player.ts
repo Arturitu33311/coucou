@@ -89,6 +89,52 @@ export function effectiveSource(choice: Settings["playerSource"], userAgent: str
   return isWindows(userAgent) ? "spotify" : choice;
 }
 
+export const SOURCE_NAME: Record<PlayerSourceName, string> = { spotify: "Spotify", ytmusic: "YT Music" };
+
+/** A line the foot shows for a while: "Starting…", or why something failed. */
+export interface PlayerNotice {
+  text: string;
+  tone: "" | "err";
+  until: number;
+}
+
+/**
+ * What the foot says (shared with the desktop player, src/desktop-player/feedback.ts):
+ * the current notice, else each source's search error ("Spotify: …") or "Loading…",
+ * and whether to offer "Connect Spotify".
+ */
+export function footContent(s: {
+  notice: PlayerNotice | null;
+  now: number;
+  query: string;
+  errors: SourceError[];
+  loadingMore: boolean;
+  loginNeeded: boolean;
+  spotifyOff: boolean;
+  source: PlayerSource;
+}): { lines: { text: string; err: boolean }[]; offerLogin: boolean } {
+  const lines: { text: string; err: boolean }[] = [];
+  if (s.notice && s.notice.until > s.now) {
+    lines.push({ text: s.notice.text, err: s.notice.tone === "err" });
+  } else if (s.query) {
+    for (const e of s.errors) lines.push({ text: `${SOURCE_NAME[e.source] ?? e.source}: ${e.message}`, err: true });
+    if (lines.length === 0 && s.loadingMore) lines.push({ text: t("Loading…"), err: false });
+  }
+  // From any action that needed it, or up front when Spotify is chosen and has no session.
+  const offerLogin =
+    s.loginNeeded || (s.query !== "" && s.errors.some((e) => e.loginNeeded)) || (s.spotifyOff && s.source !== "ytmusic");
+  return { lines, offerLogin };
+}
+
+/** What a play or the DJ came to: why it failed (and whether for want of a sign-in), or what to say if it worked. */
+export function playReport(
+  res: PlayerOutcome<PlayResult>,
+  failText: string,
+): { ok: false; text: string; loginNeeded: boolean } | { ok: true; text: string | null } {
+  if (!res.ok) return { ok: false, text: res.error.message || failText, loginNeeded: res.error.loginNeeded };
+  return { ok: true, text: res.value.fallbackUsed ? t("Played through the Spotify app") : null };
+}
+
 // ── Small pieces ──────────────────────────────────────────────────────────────
 
 const MAGNIFIER = "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM15.4 15.4L20 20";
@@ -96,7 +142,6 @@ const PERSON = "M12 12.2a4 4 0 1 0 0-8a4 4 0 1 0 0 8zM4.8 20c.8-3.4 3.7-5.6 7.2-
 /** The DJ's mark: two sparks. */
 const SPARK = "M11 2.5l1.9 5.6 5.6 1.9-5.6 1.9L11 17.5l-1.9-5.6L3.5 10l5.6-1.9L11 2.5zM18.5 14.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z";
 const SOURCE_COLOR: Record<PlayerSourceName, string> = { spotify: "#1ED760", ytmusic: "#FF3344" };
-const SOURCE_NAME: Record<PlayerSourceName, string> = { spotify: "Spotify", ytmusic: "YT Music" };
 
 function control(path: string, size: number, label: string, onClick: () => void): HTMLButtonElement {
   const btn = h("button", { class: "m-ctl", title: label, "aria-label": label }, svg(path, size));
@@ -329,7 +374,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   let loading = false;
   let loadingMore = false;
   let failed = false;
-  let notice: { text: string; tone: "" | "err"; until: number } | null = null;
+  let notice: PlayerNotice | null = null;
   /** A play or the DJ is on its way: further presses wait for it. */
   let starting = false;
   /** Something the user did failed for want of a Spotify sign-in. */
@@ -452,15 +497,16 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     notice = { text: t("Starting…"), tone: "", until: Infinity };
     paintFoot();
     try {
-      const res = await run();
+      const res = playReport(await run(), failText);
       notice = null;
       if (!res.ok) {
-        report(res.error, failText);
+        if (res.loginNeeded) loginNeeded = true;
+        say(res.text, "err");
         return;
       }
       loginNeeded = false;
       if (source === "spotify") spotifyOff = false;
-      if (res.value.fallbackUsed) say(t("Played through the Spotify app"));
+      if (res.text) say(res.text);
       else paintFoot();
     } finally {
       starting = false;
@@ -483,19 +529,9 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
 
   function paintFoot() {
     clear(foot);
-    const parts: Node[] = [];
-    if (notice && notice.until > Date.now()) {
-      parts.push(h("span", { class: notice.tone === "err" ? "pl-msg err" : "pl-msg", text: notice.text }));
-    } else if (query) {
-      for (const e of errors) {
-        parts.push(h("span", { class: "pl-msg err", text: `${SOURCE_NAME[e.source] ?? e.source}: ${e.message}` }));
-      }
-      if (parts.length === 0 && loadingMore) parts.push(h("span", { class: "pl-msg", text: t("Loading…") }));
-    }
-    // From any action that needed it, or up front when Spotify is chosen and has no session.
-    const offerLogin =
-      loginNeeded || (query !== "" && errors.some((e) => e.loginNeeded)) || (spotifyOff && source() !== "ytmusic");
-    if (offerLogin) {
+    const said = footContent({ notice, now: Date.now(), query, errors, loadingMore, loginNeeded, spotifyOff, source: source() });
+    const parts: Node[] = said.lines.map((l) => h("span", { class: l.err ? "pl-msg err" : "pl-msg", text: l.text }));
+    if (said.offerLogin) {
       const b = h("button", { class: "pl-login", text: t("Connect Spotify") });
       b.addEventListener("click", (e) => {
         e.stopPropagation();
