@@ -61,7 +61,7 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
       break;
 
     case "openPlayer":
-      if (State.desktopVisible) {
+      if (State.desktopPlayerShown) {
         void emitToWindow("desktop-player", "desktop-player-search");
       } else if (State.mode === "expanded" && State.view === "player") {
         host.collapse();

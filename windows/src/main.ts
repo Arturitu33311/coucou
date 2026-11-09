@@ -155,7 +155,7 @@ async function main() {
         break;
       case "player":
         setPaused(false);
-        if (State.desktopVisible) {
+        if (State.desktopPlayerShown) {
           void emitToWindow("desktop-player", "desktop-player-search");
         } else if (State.mode === "expanded" && State.view === "player") {
           island.fsm.forcePetit();

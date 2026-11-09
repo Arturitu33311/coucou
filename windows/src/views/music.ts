@@ -287,7 +287,7 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   // The way into the player (the full view only; the compact card stays as it is).
   if (full) {
     const search = control(MAGNIFIER, 13, t("Search songs and artists"), () => {
-      if (State.desktopVisible) {
+      if (State.desktopPlayerShown) {
         void emitToWindow("desktop-player", "desktop-player-search");
       } else {
         actions.setView("player");

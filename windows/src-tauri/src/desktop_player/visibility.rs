@@ -4,8 +4,14 @@
 // X11 only, event-driven (EWMH): one blocking thread selects PropertyChange on
 // the root and on each client, rereads _NET_CLIENT_LIST_STACKING,
 // _NET_CURRENT_DESKTOP and each client's state when something changes, and
-// emits `desktop-visible` only when the answer flips. No polling. This module
-// only computes and announces; showing or hiding windows is somebody else's job.
+// shows or hides the player's window (window.rs) only when the answer flips.
+// No polling. It also puts the player back over a wallpaper app's desktop
+// window that comes up above it (the spike: Hidamari restarting).
+//
+// What the island routes on is not this answer but whether the window really is
+// on screen (window.rs, `desktop-player-shown`): the window may not exist
+// (Wayland under XWayland, no GTK window, no monitor yet) while this says true.
+// Nothing is emitted from here: Desktop Mochi's window owns `desktop-visible`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,6 +27,8 @@ pub struct Win {
     pub normal: bool,
     /// Belongs to this process (island, Mochi, the player itself).
     pub ours: bool,
+    /// `_NET_WM_WINDOW_TYPE_DESKTOP`: a desktop-level window (the player, a wallpaper app's).
+    pub desktop_type: bool,
 }
 
 const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
@@ -32,9 +40,24 @@ pub fn desktop_visible(wins: &[Win], current: u32) -> bool {
     })
 }
 
+/// True when someone else's desktop-type window sits above ours in `stacking`
+/// (bottom to top, as `_NET_CLIENT_LIST_STACKING`). False while ours is not there.
+pub fn foreign_desktop_above(stacking: &[Win]) -> bool {
+    let Some(mine) = stacking.iter().rposition(|w| w.ours && w.desktop_type) else { return false };
+    stacking[mine + 1..].iter().any(|w| w.desktop_type && !w.ours)
+}
+
+/// Raise only when a foreign desktop window has just come above ours: once per
+/// time it happens, so a wallpaper app that raises itself back cannot make a loop,
+/// and a raise that does nothing (no xdotool) is not retried on every event.
+pub fn should_raise(was_above: bool, is_above: bool) -> bool {
+    is_above && !was_above
+}
+
 static VISIBLE: AtomicBool = AtomicBool::new(false);
 
 /// The last answer the watcher computed (false until it has run, or off X11).
+/// Not whether the window is on screen: see `window::is_shown`.
 pub fn current() -> bool {
     VISIBLE.load(Ordering::Relaxed)
 }
@@ -66,8 +89,8 @@ pub fn start(app: tauri::AppHandle) {
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    use crate::desktop_player::window;
     use std::collections::HashSet;
-    use tauri::Emitter;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, ConnectionExt, EventMask, Window};
     use x11rb::protocol::Event;
@@ -84,6 +107,7 @@ mod linux {
         wtype: u32,
         t_normal: u32,
         t_dialog: u32,
+        t_desktop: u32,
         pid: u32,
     }
 
@@ -101,6 +125,7 @@ mod linux {
             wtype: atom(c, "_NET_WM_WINDOW_TYPE")?,
             t_normal: atom(c, "_NET_WM_WINDOW_TYPE_NORMAL")?,
             t_dialog: atom(c, "_NET_WM_WINDOW_TYPE_DIALOG")?,
+            t_desktop: atom(c, "_NET_WM_WINDOW_TYPE_DESKTOP")?,
             pid: atom(c, "_NET_WM_PID")?,
         })
     }
@@ -119,10 +144,12 @@ mod linux {
         let types = cards(c, id, a.wtype, AtomEnum::ATOM, 16);
         let normal = types.is_empty() || types.iter().any(|t| *t == a.t_normal || *t == a.t_dialog);
         let ours = cards(c, id, a.pid, AtomEnum::CARDINAL, 1).first() == Some(&me);
-        Win { id, desktop, hidden, normal, ours }
+        let desktop_type = types.contains(&a.t_desktop);
+        Win { id, desktop, hidden, normal, ours, desktop_type }
     }
 
-    fn compute(c: &RustConnection, a: &Atoms, root: Window, watched: &mut HashSet<Window>) -> bool {
+    /// (desktop in view, a foreign desktop window above ours)
+    fn compute(c: &RustConnection, a: &Atoms, root: Window, watched: &mut HashSet<Window>) -> (bool, bool) {
         let current = cards(c, root, a.current_desktop, AtomEnum::CARDINAL, 1).first().copied().unwrap_or(0);
         let me = std::process::id();
         let mut wins = Vec::new();
@@ -133,7 +160,7 @@ mod linux {
             }
             wins.push(read_win(c, a, id, me));
         }
-        desktop_visible(&wins, current)
+        (desktop_visible(&wins, current), foreign_desktop_above(&wins))
     }
 
     pub fn run(app: &tauri::AppHandle) -> R<()> {
@@ -144,7 +171,7 @@ mod linux {
         c.flush()?;
 
         let mut watched = HashSet::new();
-        let mut last = compute(&c, &a, root, &mut watched);
+        let (mut last, mut above) = compute(&c, &a, root, &mut watched);
         publish(app, last);
         loop {
             let mut relevant = false;
@@ -166,17 +193,25 @@ mod linux {
             // Forget windows that left the list so the set doesn't grow forever.
             let live: HashSet<Window> = cards(&c, root, a.stacking, AtomEnum::WINDOW, 4096).into_iter().collect();
             watched.retain(|w| live.contains(w));
-            let now = compute(&c, &a, root, &mut watched);
+            let (now, now_above) = compute(&c, &a, root, &mut watched);
             if now != last {
                 last = now;
                 publish(app, now);
+            } else if now && should_raise(above, now_above) {
+                window::raise(app);
             }
+            above = now_above;
         }
     }
 
+    /// Records the answer and shows or hides the window to match (a show raises it too).
     fn publish(app: &tauri::AppHandle, v: bool) {
         VISIBLE.store(v, Ordering::Relaxed);
-        let _ = app.emit("desktop-visible", v);
+        if v {
+            window::show(app);
+        } else {
+            window::hide(app);
+        }
     }
 
     #[cfg(test)]
@@ -189,7 +224,7 @@ mod linux {
             let root = c.setup().roots[screen].root;
             let a = super::atoms(&c).unwrap();
             let mut w = std::collections::HashSet::new();
-            println!("desktop_visible = {}", super::compute(&c, &a, root, &mut w));
+            println!("(desktop_visible, foreign_desktop_above) = {:?}", super::compute(&c, &a, root, &mut w));
         }
         use x11rb::connection::Connection;
     }
@@ -200,7 +235,11 @@ mod tests {
     use super::*;
 
     fn w(id: u32, desktop: Option<u32>) -> Win {
-        Win { id, desktop, hidden: false, normal: true, ours: false }
+        Win { id, desktop, hidden: false, normal: true, ours: false, desktop_type: false }
+    }
+
+    fn desk(id: u32, ours: bool) -> Win {
+        Win { id, desktop: Some(ALL_DESKTOPS), hidden: false, normal: false, ours, desktop_type: true }
     }
 
     #[test]
@@ -233,5 +272,34 @@ mod tests {
         let mut plank = w(2, Some(0xFFFF_FFFF));
         plank.normal = false;
         assert!(desktop_visible(&[island, plank], 0));
+    }
+
+    #[test]
+    fn a_wallpaper_window_above_ours_is_seen() {
+        // bottom to top: our player, then Hidamari's window mapped again on top
+        assert!(foreign_desktop_above(&[desk(1, true), desk(2, false)]));
+        // raised back: ours on top
+        assert!(!foreign_desktop_above(&[desk(2, false), desk(1, true)]));
+    }
+
+    #[test]
+    fn nothing_to_raise_without_our_window_or_for_normal_windows() {
+        assert!(!foreign_desktop_above(&[desk(2, false)]));
+        assert!(!foreign_desktop_above(&[]));
+        // a normal window above ours is meant to be there
+        assert!(!foreign_desktop_above(&[desk(1, true), w(3, Some(0))]));
+        // our other windows (island, Mochi) are not desktop windows of someone else
+        let mut island = w(4, Some(0));
+        island.ours = true;
+        assert!(!foreign_desktop_above(&[desk(1, true), island]));
+    }
+
+    #[test]
+    fn raise_only_when_a_wallpaper_window_has_just_come_above() {
+        assert!(should_raise(false, true));
+        // still above after our raise (it raised itself back, or no xdotool): no loop
+        assert!(!should_raise(true, true));
+        assert!(!should_raise(true, false));
+        assert!(!should_raise(false, false));
     }
 }

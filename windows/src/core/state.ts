@@ -550,8 +550,8 @@ class AppState {
    * there — so the island's own Mochi is hidden (AppState.mochiOnDesktop).
    */
   mochiOnDesktop = false;
-  /** The current workspace has no visible normal window (X11 watcher, desktop_player/visibility.rs). */
-  desktopVisible = false;
+  /** The desktop player's window is on screen (desktop_player/window.rs): the player shortcut, the magnifier and --player go to it. */
+  desktopPlayerShown = false;
 
   /** Outfit shown on Mochi while the pointer rests on a wardrobe button. */
   wardrobePreview: Outfit | null = null;

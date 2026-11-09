@@ -317,7 +317,7 @@ export const Bridge = {
   // ── Music (MPRIS) ─────────────────────────────────────────────────────────
   /** What the last `music` event said, for a page that has just loaded. */
   musicState: () => call<MusicTrack | null>("music_state"),
-  desktopVisible: () => call<boolean | null>("desktop_is_visible").then((v) => v === true),
+  desktopPlayerShown: () => call<boolean | null>("desktop_player_shown").then((v) => v === true),
   desktopPlayerFocus: (focused: boolean) => call<void>("desktop_player_focus", { focused }),
   /** playpause / next / previous, or seek to `valueMs` from the start of the track. */
   musicControl: (action: "playpause" | "next" | "previous" | "seek" | "raise" | "volume", valueMs?: number) =>

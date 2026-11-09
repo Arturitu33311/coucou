@@ -1,10 +1,33 @@
 // The desktop player's window: created once, hidden, then only shown and hidden.
 
-use tauri::{AppHandle, Manager, WebviewWindow};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use super::{geometry_scales_to_logical, primary_monitor_rect, Geometry, MonitorInfo};
 
 pub const LABEL: &str = "desktop-player";
+
+/// Event the island follows: whether the player's window really is on screen
+/// (made and mapped), so the player shortcut, the magnifier and `--player` go to
+/// it only then, and to the notch otherwise. A name of its own: Desktop Mochi's
+/// window has its own `desktop-visible`, which the island also hears.
+pub const SHOWN_EVENT: &str = "desktop-player-shown";
+
+static SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// Whether the window is on screen now (always false where there is none).
+pub fn is_shown() -> bool {
+    SHOWN.load(Ordering::Relaxed)
+}
+
+/// Records what is on screen and tells the island when that changed.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn announce(app: &AppHandle, shown: bool) {
+    if SHOWN.swap(shown, Ordering::Relaxed) != shown {
+        let _ = app.emit(SHOWN_EVENT, shown);
+    }
+}
 
 pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(LABEL)
@@ -35,23 +58,8 @@ pub fn primary_geometry(app: &AppHandle) -> Option<Geometry> {
     primary_monitor_rect(&monitors(app)).map(|m| geometry_scales_to_logical(&m))
 }
 
-/// The window, created hidden the first time. None where there is no desktop
-/// player (Windows, Wayland) or it could not be made. Main thread.
-#[allow(dead_code)] // For callers that need the window itself (plan Task 3); show() makes it on demand.
-pub fn ensure(app: &AppHandle) -> Option<WebviewWindow> {
-    #[cfg(target_os = "linux")]
-    {
-        linux::ensure(app)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = app;
-        None
-    }
-}
-
-/// Shows the window on the primary monitor, over the wallpaper. Any thread.
-#[allow(dead_code)] // Called by the desktop-in-view watcher (plan Task 3).
+/// Shows the window on the primary monitor, over the wallpaper; it is made
+/// (hidden) the first time. Where it cannot be made it stays off. Any thread.
 pub fn show(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
@@ -63,7 +71,6 @@ pub fn show(app: &AppHandle) {
 }
 
 /// Hides the window and lets go of the keyboard. Any thread.
-#[allow(dead_code)] // Called by the desktop-in-view watcher (plan Task 3).
 pub fn hide(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
@@ -76,7 +83,6 @@ pub fn hide(app: &AppHandle) {
 
 /// Puts the window back over the other desktop-level windows, for when a
 /// wallpaper app maps its own desktop window on top of it. Any thread.
-#[allow(dead_code)] // Called by the desktop-in-view watcher (plan Task 3).
 pub fn raise(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
@@ -101,14 +107,18 @@ pub fn set_focused(app: &AppHandle, focused: bool) {
 #[cfg(target_os = "linux")]
 mod linux {
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
 
     use tauri::{AppHandle, LogicalPosition, LogicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-    use super::{primary_geometry, window, LABEL};
+    use super::{announce, primary_geometry, window, LABEL};
     use crate::platform;
 
     /// Set once making the window failed or the display is not X11: never tried again.
     static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+    /// The single later try, for a first show made before the monitors were known.
+    static RETRIED: AtomicBool = AtomicBool::new(false);
+    const RETRY_AFTER: Duration = Duration::from_secs(2);
 
     fn page_url(app: &AppHandle) -> WebviewUrl {
         #[cfg(dev)]
@@ -179,18 +189,35 @@ mod linux {
     }
 
     pub fn show(app: &AppHandle) {
-        let Some(win) = ensure(app) else { return };
+        let Some(win) = ensure(app) else {
+            announce(app, false);
+            // No monitor geometry yet (the session is still starting): one more try a little later.
+            if !UNAVAILABLE.load(Ordering::Relaxed) && !RETRIED.swap(true, Ordering::Relaxed) {
+                let app = app.clone();
+                gtk::glib::timeout_add_local_once(RETRY_AFTER, move || {
+                    if crate::desktop_player::visibility::current() {
+                        show(&app);
+                    }
+                });
+            }
+            return;
+        };
         // The primary monitor may have changed since the window was made.
         if let Some(geo) = primary_geometry(app) {
             let _ = win.set_position(LogicalPosition::new(geo.x, geo.y));
             let _ = win.set_size(LogicalSize::new(geo.w, geo.h));
         }
-        let _ = win.show();
+        if win.show().is_err() {
+            announce(app, false);
+            return;
+        }
         // Mapping raises it (prepare_desktop_player); shown already, this does.
         platform::raise_desktop_player(&win);
+        announce(app, true);
     }
 
     pub fn hide(app: &AppHandle) {
+        announce(app, false);
         let Some(win) = window(app) else { return };
         platform::set_desktop_player_keyboard(&win, false);
         let _ = win.hide();

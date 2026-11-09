@@ -3,9 +3,6 @@ use serde::Serialize;
 pub mod visibility;
 pub mod window;
 
-#[allow(unused_imports)] // The window API for the watcher (plan Task 3) and the shortcut.
-pub use window::{ensure, hide, raise, show, LABEL};
-
 /// A monitor as the OS reports it: physical pixels, its scale factor, and
 /// whether the system calls it the primary one.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -65,6 +62,13 @@ pub fn desktop_player_allowed(session_type: &str, wayland_display: &str, gdk_is_
 #[tauri::command]
 pub fn desktop_player_geometry(app: tauri::AppHandle) -> Option<Geometry> {
     window::primary_geometry(&app)
+}
+
+/// Whether the player's window is on screen now. The island pulls it at startup:
+/// the first `desktop-player-shown` may fire before it listens.
+#[tauri::command]
+pub fn desktop_player_shown() -> bool {
+    window::is_shown()
 }
 
 /// Gives the window the keyboard while the search is being typed in, and takes

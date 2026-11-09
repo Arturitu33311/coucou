@@ -1617,6 +1617,7 @@ pub fn run() {
             desktop::desktop_mochi_set_asleep,
             desktop_player::desktop_player_focus,
             desktop_player::desktop_player_geometry,
+            desktop_player::desktop_player_shown,
             sounds::custom_sounds,
             sounds::custom_sound,
             sounds::reveal_sounds_folder,

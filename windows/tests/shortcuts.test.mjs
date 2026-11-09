@@ -312,7 +312,7 @@ beforeEach(() => {
   State.mochiOnDesktop = false;
   State.cardSelection = null;
   State.cardItemCount = 0;
-  State.desktopVisible = false;
+  State.desktopPlayerShown = false;
   desktopSupported = true;
   State.loadIntegrationTasks();
 });
@@ -323,19 +323,23 @@ test("the wardrobe shortcut's own event opens the wardrobe", () => {
 });
 
 test("openPlayer opens the player and takes the keyboard (not the keyboard-open timer)", () => {
-  State.desktopVisible = false;
+  State.desktopPlayerShown = false;
   emit("shortcut", "openPlayer");
   assert.deepEqual(did, ["resume", "alert:player", "keyboard"]);
 });
 
-test("openPlayerUsesNotchOtherwise", () => {
-  State.desktopVisible = false;
+test("openPlayerUsesNotchOtherwise: desktop in view but its window not on screen (Wayland, not made)", () => {
+  // The routing follows desktop-player-shown (the window really mapped), never the
+  // watcher's "desktop in view" alone: here the window could not be shown.
+  State.desktopPlayerShown = false;
   emit("shortcut", "openPlayer");
   assert.deepEqual(did, ["resume", "alert:player", "keyboard"]);
+  const toDesktop = calls.filter(([cmd, args]) => cmd === "plugin:event|emit_to" && args.event === "desktop-player-search");
+  assert.equal(toDesktop.length, 0);
 });
 
 test("openPlayerUsesDesktopWhenVisible", () => {
-  State.desktopVisible = true;
+  State.desktopPlayerShown = true;
   emit("shortcut", "openPlayer");
   assert.deepEqual(did, []);
   const emitCalls = calls.filter(([cmd, args]) => cmd === "plugin:event|emit_to" && args.event === "desktop-player-search");
