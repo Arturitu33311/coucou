@@ -275,7 +275,7 @@ async function loadLyrics(key: string) {
 // ── Colour ────────────────────────────────────────────────────────────────────
 
 /** Mean colour of the picture, like the GNOME extension's `getAverageColor`. */
-async function averageColor(dataUrl: string): Promise<[number, number, number] | null> {
+export async function averageColor(dataUrl: string): Promise<[number, number, number] | null> {
   const img = new Image();
   img.src = dataUrl;
   try {
