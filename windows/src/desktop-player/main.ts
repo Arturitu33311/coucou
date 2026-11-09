@@ -21,6 +21,10 @@ import { language, onLanguageChange, resolveLanguage, setLanguage, systemLanguag
 import { Clock, clockText, msToNextMinute } from "./clock";
 import { buildGauge } from "./gauge";
 import { css, hourOf, mix, sceneColors, type RGB, type SceneColors } from "./scene";
+import { buildRecents, type RecentsView } from "./recents";
+import { buildFlow, type FlowView } from "./flow";
+import { buildSearch, type SearchView } from "./search";
+import { buildPlayerBar, type PlayerBarView } from "./bar";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -66,6 +70,17 @@ lyric.setAttribute("aria-live", "off");
 // the slots the next panels fill, at the mockup's places
 const slots = ["dp-recents", "dp-flow", "dp-search", "dp-bar"].map((id) => div("", id));
 
+const recentsView: RecentsView = buildRecents(slots[0]);
+let searchView!: SearchView;
+const flowView: FlowView = buildFlow(slots[1], (album) => {
+  if (searchView) {
+    searchView.setSearch(album.title);
+    searchView.focusSearch();
+  }
+});
+searchView = buildSearch(slots[2]);
+const barView: PlayerBarView = buildPlayerBar(slots[3]);
+
 stage.append(halo, time, gauge.root, ...slots, lyric);
 root.append(scene, art, wash, floor, stage, edge);
 
@@ -94,6 +109,17 @@ function keyOf(t: MusicTrack): string {
   return [t.player, t.title, t.artists.join(","), t.lengthMs].join("\u001f");
 }
 
+function updatePanels(currentArtData: string | null = null) {
+  barView.setTrack(track, currentArtData);
+  recentsView.setTrack(track, currentArtData);
+  const artist = track?.artists.join(", ") || null;
+  void Bridge.playerRecents().then((rec) => {
+    void flowView.update(artist, rec || []);
+  }).catch(() => {
+    void flowView.update(artist, []);
+  });
+}
+
 function applyTrack(t: MusicTrack | null) {
   // a player with no title is idle: the hour's scene again
   if (!t || !t.title) {
@@ -105,6 +131,7 @@ function applyTrack(t: MusicTrack | null) {
     showArt(null);
     paintScene();
     paintLyric();
+    updatePanels(null);
     return;
   }
   const key = keyOf(t);
@@ -121,6 +148,7 @@ function applyTrack(t: MusicTrack | null) {
     void loadArt(key, t.artUrl);
   }
   paintLyric();
+  updatePanels(null);
 }
 
 /** Only ever lands on the song and the cover it was started for. */
@@ -130,6 +158,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = null;
     showArt(null);
     paintScene();
+    updatePanels(null);
     return;
   }
   try {
@@ -140,6 +169,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = avg;
     showArt(data);
     paintScene();
+    updatePanels(data);
   } catch {
     if (!current()) return;
     // a cover that has only just been written may not be readable yet
@@ -150,6 +180,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = null;
     showArt(null);
     paintScene();
+    updatePanels(null);
   }
 }
 
@@ -266,23 +297,35 @@ function applySys(s: SysInfo | null) {
 
 // ── Life cycle ────────────────────────────────────────────────────────────────
 
+let progressTimer: number | null = null;
+
 function wake() {
   if (document.hidden) {
     if (minuteTimer != null) window.clearTimeout(minuteTimer);
     if (lyricTimer != null) window.clearTimeout(lyricTimer);
+    if (progressTimer != null) window.clearInterval(progressTimer);
     minuteTimer = null;
     lyricTimer = null;
+    progressTimer = null;
     return;
   }
   paintScene();
   paintLyric();
   armMinute();
+  barView.tick();
+  if (progressTimer != null) window.clearInterval(progressTimer);
+  progressTimer = window.setInterval(() => {
+    if (!document.hidden && track?.status === "Playing") {
+      barView.tick();
+    }
+  }, 500);
 }
 
 async function main() {
   layout();
   paintScene();
   armMinute();
+  wake();
   window.addEventListener("resize", () => {
     layout();
     paintClock();
@@ -296,6 +339,10 @@ async function main() {
   void document.fonts?.ready.then(() => {
     clock.invalidate();
     paintClock();
+  });
+
+  void onEvent("desktop-player-search", () => {
+    searchView.focusSearch();
   });
 
   const boot = await Bridge.boot();

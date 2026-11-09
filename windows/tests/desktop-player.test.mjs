@@ -12,6 +12,10 @@ const { gaugeLabel, RING } = await import("../src/desktop-player/gauge.ts");
 const { sceneColors, hourTint, TINT_A, TINT_B } = await import("../src/desktop-player/scene.ts");
 const { readableAccent, musicTint } = await import("../src/island/music.ts");
 const { setLanguage } = await import("../src/i18n/i18n.ts");
+const { recentRowStyle } = await import("../src/desktop-player/recents.ts");
+const { flowArtist, flowTransform } = await import("../src/desktop-player/flow.ts");
+const { QueryGate, nextIndex } = await import("../src/desktop-player/search.ts");
+const { formatTime } = await import("../src/desktop-player/bar.ts");
 
 // ── Clock ─────────────────────────────────────────────────────────────────────
 
@@ -112,3 +116,46 @@ test("sceneColors with a cover uses its colour and ignores the hour", () => {
 test("sceneColors: the hour and the cover give different scenes", () => {
   assert.notDeepEqual(sceneColors(null, 13), sceneColors([200, 40, 60], 13));
 });
+
+// ── Interactive panels (Task 5) ───────────────────────────────────────────────
+
+test("recentRowsTiltWithoutDepth", () => {
+  for (let i = 0; i < 6; i++) {
+    const s = recentRowStyle(i);
+    assert.equal(s.transform, "rotateY(22deg)");
+    assert.ok(!s.transform.includes("translateZ"));
+    assert.ok(s.opacity <= 1 && s.opacity >= 0.3);
+  }
+});
+
+test("flowFallsBackToLastArtist", () => {
+  const recents = [
+    { source: "spotify", kind: "track", id: "1", title: "Instant Crush", subtitle: "Daft Punk", artUrl: "" },
+    { source: "ytmusic", kind: "track", id: "2", title: "Bohemian Rhapsody", subtitle: "Queen", artUrl: "" },
+  ];
+  assert.equal(flowArtist(null, recents), "Daft Punk");
+  assert.equal(flowArtist("", recents), "Daft Punk");
+  assert.equal(flowArtist("The Weeknd", recents), "The Weeknd");
+});
+
+test("flowHiddenWithoutHistory", () => {
+  assert.equal(flowArtist(null, []), null);
+  assert.equal(flowArtist("", []), null);
+  assert.equal(flowArtist("   ", []), null);
+});
+
+test("staleResultsAreDropped", () => {
+  const gate = new QueryGate();
+  const first = gate.next();
+  const second = gate.next();
+  assert.ok(second > first);
+  assert.equal(gate.isCurrent(first), false);
+  assert.equal(gate.isCurrent(second), true);
+});
+
+test("formatTime formats milliseconds as m:ss", () => {
+  assert.equal(formatTime(0), "0:00");
+  assert.equal(formatTime(65000), "1:05");
+  assert.equal(formatTime(337000), "5:37");
+});
+

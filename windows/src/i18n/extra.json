@@ -5021,6 +5021,28 @@
    "pt-BR": "Bateria {pct}%",
    "ru": "Батарея {pct}%",
    "id": "Baterai {pct}%"
+  },
+  "Continue listening": {
+   "zh-Hans": "继续收听",
+   "hi": "सुनना जारी रखें",
+   "es": "Continuar escuchando",
+   "ar": "متابعة الاستماع",
+   "fr": "Continuer l'écoute",
+   "bn": "শোনা চালিয়ে যান",
+   "pt-BR": "Continuar ouvindo",
+   "ru": "Продолжить прослушивание",
+   "id": "Lanjut mendengarkan"
+  },
+  "Lyrics": {
+   "zh-Hans": "歌词",
+   "hi": "बोल",
+   "es": "Letra",
+   "ar": "كلمات الأغنية",
+   "fr": "Paroles",
+   "bn": "গানের কথা",
+   "pt-BR": "Letra",
+   "ru": "Текст песни",
+   "id": "Lirik"
   }
  }
 }
