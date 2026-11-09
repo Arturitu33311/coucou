@@ -4944,6 +4944,83 @@
    "pt-BR": "Iniciando…",
    "ru": "Запуск…",
    "id": "Memulai…"
+  },
+  "Charging": {
+   "zh-Hans": "正在充电",
+   "hi": "चार्ज हो रहा है",
+   "es": "Cargando",
+   "ar": "جارٍ الشحن",
+   "fr": "En charge",
+   "bn": "চার্জ হচ্ছে",
+   "pt-BR": "Carregando",
+   "ru": "Заряжается",
+   "id": "Mengisi daya"
+  },
+  "Plugged in": {
+   "zh-Hans": "已接通电源",
+   "hi": "प्लग इन है",
+   "es": "Enchufado",
+   "ar": "موصول بالكهرباء",
+   "fr": "Branché",
+   "bn": "প্লাগ ইন করা",
+   "pt-BR": "Na tomada",
+   "ru": "От сети",
+   "id": "Tercolok"
+  },
+  "On battery": {
+   "zh-Hans": "使用电池",
+   "hi": "बैटरी पर",
+   "es": "Con batería",
+   "ar": "على البطارية",
+   "fr": "Sur batterie",
+   "bn": "ব্যাটারিতে চলছে",
+   "pt-BR": "Na bateria",
+   "ru": "От батареи",
+   "id": "Pakai baterai"
+  },
+  "Online": {
+   "zh-Hans": "在线",
+   "hi": "ऑनलाइन",
+   "es": "En línea",
+   "ar": "متصل",
+   "fr": "En ligne",
+   "bn": "অনলাইন",
+   "pt-BR": "On-line",
+   "ru": "В сети",
+   "id": "Daring"
+  },
+  "Offline": {
+   "zh-Hans": "离线",
+   "hi": "ऑफ़लाइन",
+   "es": "Sin conexión",
+   "ar": "غير متصل",
+   "fr": "Hors ligne",
+   "bn": "অফলাইন",
+   "pt-BR": "Off-line",
+   "ru": "Нет сети",
+   "id": "Luring"
+  },
+  "Back online": {
+   "zh-Hans": "已恢复联网",
+   "hi": "फिर से ऑनलाइन",
+   "es": "De nuevo en línea",
+   "ar": "عاد الاتصال",
+   "fr": "De nouveau en ligne",
+   "bn": "আবার অনলাইন",
+   "pt-BR": "On-line de novo",
+   "ru": "Снова в сети",
+   "id": "Daring kembali"
+  },
+  "Battery {pct}%": {
+   "zh-Hans": "电量 {pct}%",
+   "hi": "बैटरी {pct}%",
+   "es": "Batería {pct} %",
+   "ar": "البطارية {pct}%",
+   "fr": "Batterie {pct} %",
+   "bn": "ব্যাটারি {pct}%",
+   "pt-BR": "Bateria {pct}%",
+   "ru": "Батарея {pct}%",
+   "id": "Baterai {pct}%"
   }
  }
 }
