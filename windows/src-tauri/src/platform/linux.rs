@@ -915,16 +915,27 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
         // _NET_ACTIVE_WINDOW request sent as a pager does (xdotool windowactivate), as the
         // keyboard owner above is given back the same way.
         if activating {
-            if let Some(xid) = gw.window().and_then(|w| w.downcast::<gdkx11::X11Window>().ok()).map(|w| w.xid()) {
-                std::thread::spawn(move || {
-                    let _ = xdotool(&["windowactivate", &xid.to_string()]);
-                });
-            }
+            request_x11_keyboard(&gw);
         }
     }
     if LAYER_SURFACE.load(Ordering::Relaxed) {
         let mode = if activating { layer::KEYBOARD_ON_DEMAND } else { layer::KEYBOARD_NONE };
         unsafe { layer::gtk_layer_set_keyboard_mode(gtk_window_ptr(&gw), mode) };
+    }
+}
+
+/// The window's X11 id; None before it is realized or off X11.
+fn x11_id(gw: &impl IsA<gtk::Widget>) -> Option<u64> {
+    gw.window().and_then(|w| w.downcast::<gdkx11::X11Window>().ok()).map(|w| w.xid())
+}
+
+/// Asks the window manager for the keyboard as a pager would (xdotool windowactivate), which
+/// GNOME's focus-stealing prevention lets through. Off the main thread, so GTK never waits on it.
+fn request_x11_keyboard(gw: &impl IsA<gtk::Widget>) {
+    if let Some(xid) = x11_id(gw) {
+        std::thread::spawn(move || {
+            let _ = xdotool(&["windowactivate", &xid.to_string()]);
+        });
     }
 }
 
@@ -1417,4 +1428,69 @@ fn apply_rects(gw: &impl IsA<gtk::Widget>, rects: &[(f64, f64, f64, f64)]) {
         ));
     }
     gdk_window.input_shape_combine_region(&region, 0, 0);
+}
+
+// ── Desktop player ────────────────────────────────────────────────────────────
+//
+// One window at the desktop level (_NET_WM_WINDOW_TYPE_DESKTOP): GNOME keeps it
+// under every normal window, sticky on all workspaces, out of Alt+Tab and the
+// overview. Mapped, mutter puts it under an animated wallpaper's own desktop
+// window (Hidamari), so it is raised once mapped: it then sits above the
+// wallpaper and still below everything else (docs/superpowers/specs/
+// 2026-11-09-escritorio-ensayo.md).
+
+/// True on an X11 display, the only place the desktop player exists. Main thread.
+pub fn desktop_player_supported() -> bool {
+    use gtk::glib::prelude::ObjectExt;
+    gtk::gdk::Display::default()
+        .map(|d| d.type_().name().contains("X11"))
+        .unwrap_or(false)
+}
+
+/// Sets the desktop player's window up before it is ever shown. Main thread.
+pub fn prepare_desktop_player(win: &WebviewWindow) -> bool {
+    let Ok(gw) = win.gtk_window() else { return false };
+    gw.set_type_hint(gtk::gdk::WindowTypeHint::Desktop);
+    gw.set_skip_taskbar_hint(true);
+    gw.set_skip_pager_hint(true);
+    gw.set_keep_above(false);
+    // No keyboard until the search asks for it (set_desktop_player_keyboard).
+    gw.set_accept_focus(false);
+    // On every map (the first show and each one after a hide): over the wallpaper.
+    // Once right away, and once more after mutter has finished placing it.
+    gw.connect_map_event(|w, _| {
+        raise_x11(w);
+        let w = w.clone();
+        gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || raise_x11(&w));
+        gtk::glib::Propagation::Proceed
+    });
+    true
+}
+
+/// Raises the desktop player over the other desktop-level windows (a wallpaper
+/// app's); normal windows stay above it. Main thread.
+pub fn raise_desktop_player(win: &WebviewWindow) {
+    if let Ok(gw) = win.gtk_window() {
+        raise_x11(&gw);
+    }
+}
+
+fn raise_x11(gw: &impl IsA<gtk::Widget>) {
+    if let Some(xid) = x11_id(gw) {
+        std::thread::spawn(move || {
+            let _ = xdotool(&["windowraise", &xid.to_string()]);
+        });
+    }
+}
+
+/// Lets the desktop player take the keyboard (the search is being typed in) or
+/// not. The window keeps its desktop type: GNOME gives it the keyboard as it is
+/// once asked like a pager would (the island's fix in set_activating). Nothing
+/// to give back afterwards: the desktop is only shown when no window is. Main thread.
+pub fn set_desktop_player_keyboard(win: &WebviewWindow, on: bool) {
+    let Ok(gw) = win.gtk_window() else { return };
+    gw.set_accept_focus(on);
+    if on {
+        request_x11_keyboard(&gw);
+    }
 }

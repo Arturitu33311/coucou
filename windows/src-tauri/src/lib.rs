@@ -29,6 +29,7 @@ mod clipboard;
 mod codex_plan;
 mod config_file;
 mod desktop;
+mod desktop_player;
 #[cfg(target_os = "linux")]
 mod dictation;
 mod drive;
@@ -1613,6 +1614,8 @@ pub fn run() {
             desktop::desktop_mochi_fly_out,
             desktop::desktop_mochi_fly_home,
             desktop::desktop_mochi_set_asleep,
+            desktop_player::desktop_player_focus,
+            desktop_player::desktop_player_geometry,
             sounds::custom_sounds,
             sounds::custom_sound,
             sounds::reveal_sounds_folder,
