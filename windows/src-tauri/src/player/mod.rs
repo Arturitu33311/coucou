@@ -74,6 +74,27 @@ pub struct ArtistPage {
     pub albums: Vec<Item>,
 }
 
+/// Why a play, the DJ or an artist/album load failed, as the view shows it (`loginNeeded`: offer to sign in).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerError {
+    pub message: String,
+    pub login_needed: bool,
+}
+
+impl From<String> for PlayerError {
+    fn from(message: String) -> Self {
+        PlayerError { message, login_needed: false }
+    }
+}
+
+impl From<ApiError> for PlayerError {
+    fn from(e: ApiError) -> Self {
+        let SourceError { message, login_needed, .. } = api_error(&e);
+        PlayerError { message, login_needed }
+    }
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PlayResult {
@@ -111,10 +132,6 @@ fn api_error(e: &ApiError) -> SourceError {
 
 fn yt_error(message: String) -> SourceError {
     SourceError { source: Source::Ytmusic, message, login_needed: false }
-}
-
-fn spotify_message(e: ApiError) -> String {
-    api_error(&e).message
 }
 
 /// Newest first by `at_ms`, one entry per (source, id), at most `max`.
@@ -242,6 +259,14 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// One play (or DJ) at a time: a second press waits for the first to finish instead of racing it.
+static PLAY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn one_at_a_time<F: Future>(f: F) -> F::Output {
+    let _guard = PLAY_LOCK.lock().await;
+    f.await
+}
+
 /// Serialises load → push → save so two plays never lose each other's entry.
 static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -283,34 +308,38 @@ pub async fn player_search(source: String, query: String, offset: u32, seq: u32)
 }
 
 #[tauri::command]
-pub async fn player_artist(source: String, id: String, name: String) -> Result<ArtistPage, String> {
+pub async fn player_artist(source: String, id: String, name: String) -> Result<ArtistPage, PlayerError> {
     match wanted(&source)? {
         Wanted::Spotify => {
             let (tracks, albums) = tokio::join!(spotify_api::artist_tracks(&name), spotify_api::artist_albums(&id));
-            Ok(ArtistPage { tracks: tracks.map_err(spotify_message)?, albums: albums.map_err(spotify_message)? })
+            Ok(ArtistPage { tracks: tracks?, albums: albums? })
         }
         Wanted::Ytmusic => {
             let (tracks, albums) = yt_artist(&id).await?.into_iter().partition(|i| i.kind == Kind::Track);
             Ok(ArtistPage { tracks, albums })
         }
-        Wanted::Both => Err("an artist belongs to one source".into()),
+        Wanted::Both => Err(String::from("an artist belongs to one source").into()),
     }
 }
 
 #[tauri::command]
-pub async fn player_album(source: String, id: String) -> Result<Vec<Item>, String> {
+pub async fn player_album(source: String, id: String) -> Result<Vec<Item>, PlayerError> {
     match wanted(&source)? {
-        Wanted::Spotify => spotify_api::album_tracks(&id).await.map_err(spotify_message),
-        Wanted::Ytmusic => yt_album(&id).await,
-        Wanted::Both => Err("an album belongs to one source".into()),
+        Wanted::Spotify => Ok(spotify_api::album_tracks(&id).await?),
+        Wanted::Ytmusic => Ok(yt_album(&id).await?),
+        Wanted::Both => Err(String::from("an album belongs to one source").into()),
     }
 }
 
 /// Plays where the user listens, after pausing the other source; then records it in the history.
 #[tauri::command]
-pub async fn player_play(item: Item) -> Result<PlayResult, String> {
+pub async fn player_play(item: Item) -> Result<PlayResult, PlayerError> {
+    one_at_a_time(play_item(item)).await
+}
+
+async fn play_item(item: Item) -> Result<PlayResult, PlayerError> {
     if item.source == Source::Spotify && item.id == DJ_URI {
-        return player_dj().await; // replayed from the recents: keep the DJ's app fallback
+        return start_dj().await; // replayed from the recents: keep the DJ's app fallback
     }
     let fallback_used = match item.source {
         Source::Spotify => {
@@ -319,11 +348,11 @@ pub async fn player_play(item: Item) -> Result<PlayResult, String> {
                 Kind::Track => PlayTarget::Track(spotify_api::uri(Kind::Track, &item.id)),
                 kind => PlayTarget::Context(spotify_api::uri(kind, &item.id)),
             };
-            play_spotify(&target).await.map_err(spotify_message)?
+            play_spotify(&target).await?
         }
         Source::Ytmusic => {
-            pause_spotify().await;
-            // mpv plays one video id: an album starts at its first song.
+            // mpv plays one video id: an album starts at its first song. It is found before
+            // Spotify is paused, so a failed lookup leaves what plays alone.
             let video_id = match item.kind {
                 Kind::Track => item.id.clone(),
                 Kind::Album => yt_album(&item.id)
@@ -332,8 +361,9 @@ pub async fn player_play(item: Item) -> Result<PlayResult, String> {
                     .find(|i| i.kind == Kind::Track)
                     .map(|i| i.id)
                     .ok_or_else(|| crate::i18n::t("Couldn't play this"))?,
-                Kind::Artist | Kind::Context => return Err(crate::i18n::t("Couldn't play this")),
+                Kind::Artist | Kind::Context => return Err(crate::i18n::t("Couldn't play this").into()),
             };
+            pause_spotify().await;
             yt_play(&video_id).await?;
             false
         }
@@ -357,18 +387,42 @@ pub async fn player_recents() -> Vec<Item> {
 
 /// Starts Spotify's DJ; when the Web API refuses it, opens it in the Spotify app instead.
 #[tauri::command]
-pub async fn player_dj() -> Result<PlayResult, String> {
+pub async fn player_dj() -> Result<PlayResult, PlayerError> {
+    one_at_a_time(start_dj()).await
+}
+
+async fn start_dj() -> Result<PlayResult, PlayerError> {
     pause_ytmusic().await;
-    let fallback_used = match play_spotify(&PlayTarget::Context(DJ_URI.into())).await {
-        Ok(fallback) => fallback,
-        Err(e) => {
-            eprintln!("player: the DJ through the Web API failed ({e}); opening it in the Spotify app");
-            crate::platform::open_url(DJ_URI);
-            true
-        }
+    let open_app = || {
+        crate::platform::open_url(DJ_URI);
+        spotify_device::minimize_app();
     };
-    remember(dj_item());
-    Ok(PlayResult { fallback_used })
+    dj_with(play_spotify(&PlayTarget::Context(DJ_URI.into())), open_app, || remember(dj_item())).await
+}
+
+/// Only the API refusing the DJ itself sends it to the app; signing in, the rate limit and a
+/// missing device would fail there too, so they are told to the user instead.
+fn dj_opens_app(e: &ApiError) -> bool {
+    matches!(e, ApiError::Other(_))
+}
+
+/// The DJ's outcome: played through the API (recorded in the history), opened in the app, or failed.
+async fn dj_with<P>(play: P, open_app: impl FnOnce(), record: impl FnOnce()) -> Result<PlayResult, PlayerError>
+where
+    P: Future<Output = Result<bool, ApiError>>,
+{
+    match play.await {
+        Ok(fallback_used) => {
+            record();
+            Ok(PlayResult { fallback_used })
+        }
+        Err(e) if dj_opens_app(&e) => {
+            eprintln!("player: the DJ through the Web API failed ({e}); opening it in the Spotify app");
+            open_app();
+            Ok(PlayResult { fallback_used: true })
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Opens Spotify's sign-in in the browser and waits for it.
@@ -426,6 +480,65 @@ mod tests {
         assert_eq!(got[0].id, "r14");
         assert_eq!(got[19].id, "l10");
         assert!(merge_recents(vec![at(Source::Spotify, "a", 1)], vec![], 0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn dj_records_only_when_the_api_played() {
+        let (mut opened, mut recorded) = (false, false);
+        let r = dj_with(async { Ok(false) }, || opened = true, || recorded = true).await;
+        assert_eq!(r, Ok(PlayResult { fallback_used: false }));
+        assert!(recorded && !opened);
+
+        let (mut opened, mut recorded) = (false, false);
+        let refused = async { Err(ApiError::Other("Spotify: HTTP 403".into())) };
+        let r = dj_with(refused, || opened = true, || recorded = true).await;
+        assert_eq!(r, Ok(PlayResult { fallback_used: true }));
+        assert!(opened && !recorded, "the app opened; nothing is known to have played");
+    }
+
+    #[tokio::test]
+    async fn dj_surfaces_login_rate_limit_and_no_device() {
+        for e in [ApiError::LoginNeeded, ApiError::RateLimited { retry_after_s: 3 }, ApiError::NoDevice] {
+            let (mut opened, mut recorded) = (false, false);
+            let failing = async { Err(e.clone()) };
+            let err = dj_with(failing, || opened = true, || recorded = true).await.unwrap_err();
+            assert_eq!(err, PlayerError::from(e.clone()));
+            assert_eq!(err.login_needed, e == ApiError::LoginNeeded);
+            assert!(!opened && !recorded, "{e:?} must not open the app");
+        }
+    }
+
+    #[test]
+    fn player_error_serializes_message_and_login_flag() {
+        let v = serde_json::to_value(PlayerError::from(ApiError::LoginNeeded)).unwrap();
+        assert_eq!(v["loginNeeded"], true);
+        assert_eq!(v["message"], crate::i18n::t("Spotify login needed"));
+        let v = serde_json::to_value(PlayerError::from(String::from("boom"))).unwrap();
+        assert_eq!(v, serde_json::json!({ "message": "boom", "loginNeeded": false }));
+    }
+
+    #[tokio::test]
+    async fn plays_never_overlap() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let running = Arc::new(AtomicUsize::new(0));
+        let most = Arc::new(AtomicUsize::new(0));
+        let one = |running: Arc<AtomicUsize>, most: Arc<AtomicUsize>| async move {
+            let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+            most.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            running.fetch_sub(1, Ordering::SeqCst);
+        };
+        tokio::join!(
+            one_at_a_time(one(running.clone(), most.clone())),
+            one_at_a_time(one(running.clone(), most.clone())),
+            one_at_a_time(one(running.clone(), most.clone())),
+        );
+        assert_eq!(most.load(Ordering::SeqCst), 1);
+        // Without the lock the same three do overlap: the test sees it.
+        most.store(0, Ordering::SeqCst);
+        tokio::join!(one(running.clone(), most.clone()), one(running.clone(), most.clone()));
+        assert_eq!(most.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
