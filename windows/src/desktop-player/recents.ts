@@ -19,7 +19,8 @@ export function recentRowStyle(index: number): { transform: string; opacity: num
 
 export interface RecentsView {
   root: HTMLElement;
-  setTrack(track: MusicTrack | null, artData: string | null): void;
+  /** `source`: the friendly source name (logic.ts `sourceLabel`). */
+  setTrack(track: MusicTrack | null, artData: string | null, source?: string): void;
   /** What was played lately, newest first. */
   setItems(items: PlayerItem[]): void;
   relabel(): void;
@@ -52,6 +53,7 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
 
   let currentTrack: MusicTrack | null = null;
   let currentArt: string | null = null;
+  let currentSource: string | undefined;
   let items: PlayerItem[] = [];
 
   function renderNow() {
@@ -64,7 +66,7 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
     const isPlaying = currentTrack.status === "Playing";
     const artBg = currentArt ? `url('${currentArt}') center/cover` : "rgba(255, 255, 255, 0.12)";
     const artist = currentTrack.artists.join(", ") || t("Artist");
-    const src = currentTrack.player || "Coucou";
+    const src = currentSource || currentTrack.player || "Coucou";
 
     nowCard.innerHTML = `
       <div class="cover dp-now-cover" style="background: ${artBg};"></div>
@@ -134,9 +136,10 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
 
   return {
     root: container,
-    setTrack(t: MusicTrack | null, artData: string | null) {
+    setTrack(t: MusicTrack | null, artData: string | null, source?: string) {
       currentTrack = t;
       currentArt = artData;
+      currentSource = source;
       renderNow();
     },
     setItems(list: PlayerItem[]) {

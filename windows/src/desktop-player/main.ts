@@ -26,7 +26,8 @@ import { AlbumSource, buildFlow, fetchArtistAlbums, flowArtist, type FlowView } 
 import { buildSearch, QueryGate, type SearchView } from "./search";
 import { buildPlayerBar, type PlayerBarView } from "./bar";
 import { Feedback } from "./feedback";
-import { lyricShown, progressTimerWanted, SongLists } from "./logic";
+import { lyricShown, playedMatch, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
+import type { PlayerItem } from "../core/player";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -122,11 +123,24 @@ function layout() {
 let track: MusicTrack | null = null;
 let trackKey = "";
 let artUrl = "";
+/**
+ * The cover being shown or fetched: the player's own (MPRIS `artUrl`), else the
+ * one of the song the glass player started (`played`), which mpv does not report.
+ */
+let artSrc = "";
 let rgb: RGB | null = null;
 let lyrics: LyricLine[] | null = null;
 let musicOnline = false;
 /** The cover on screen, as a data: URL; the bar and the "now" card show it too. */
 let artData: string | null = null;
+/** What was played lately (newest first), as last read. */
+let recents: PlayerItem[] = [];
+/** The history's entry for the song playing, when the glass player started it. */
+let played: PlayerItem | null = null;
+/** The song the history was read a second time for (once per song). */
+let rereadKey = "";
+/** mpv writes the history once the song has started: read it again this much later. */
+const REREAD_MS = 4000;
 
 function keyOf(t: MusicTrack): string {
   return [t.player, t.title, t.artists.join(","), t.lengthMs].join("\u001f");
@@ -136,8 +150,9 @@ const songLists = new SongLists();
 const listsGate = new QueryGate();
 
 function updatePanels() {
-  barView?.setTrack(track, artData);
-  recentsView?.setTrack(track, artData);
+  const source = track ? sourceLabel(track.player, played, recents) : "";
+  barView?.setTrack(track, artData, source);
+  recentsView?.setTrack(track, artData, source);
   syncProgress();
   // the play state, a seek or the cover arriving: the lists stay as they are
   if (songLists.changed(trackKey)) void refreshLists();
@@ -148,8 +163,36 @@ async function refreshLists() {
   const seq = listsGate.next();
   const rec = (await Bridge.playerRecents()) ?? [];
   if (!listsGate.isCurrent(seq)) return;
+  recents = rec;
   recentsView?.setItems(rec);
   void flowView?.update(flowArtist(track?.artists[0] ?? null, rec));
+  const t = track;
+  if (!t) return;
+  played = playedMatch(t.title, rec);
+  if (!t.artUrl && played?.artUrl && artSrc !== played.artUrl) showWantedArt(trackKey);
+  updatePanels();
+  if (rereadWanted(played, rereadKey === trackKey, !t.artUrl)) {
+    rereadKey = trackKey;
+    const key = trackKey;
+    window.setTimeout(() => {
+      if (trackKey === key) void refreshLists();
+    }, REREAD_MS);
+  }
+}
+
+/** Fetches the cover the song should show (its own, else the played item's). */
+function showWantedArt(key: string) {
+  const t = track;
+  if (t?.artUrl) {
+    artSrc = t.artUrl;
+    void loadArt(key, artSrc, Bridge.musicArt);
+  } else if (played?.artUrl) {
+    artSrc = played.artUrl;
+    void loadArt(key, artSrc, Bridge.playerArt);
+  } else {
+    artSrc = "";
+    void loadArt(key, "", Bridge.musicArt);
+  }
 }
 
 function applyTrack(t: MusicTrack | null) {
@@ -158,6 +201,8 @@ function applyTrack(t: MusicTrack | null) {
     track = null;
     trackKey = "";
     artUrl = "";
+    artSrc = "";
+    played = null;
     rgb = null;
     lyrics = null;
     showArt(null);
@@ -172,20 +217,22 @@ function applyTrack(t: MusicTrack | null) {
   if (newSong) {
     trackKey = key;
     lyrics = null;
+    // from the last read; the next one (once per song) may find it
+    played = playedMatch(t.title, recents);
     void loadLyrics(key);
   }
   if (newSong || t.artUrl !== artUrl) {
     artUrl = t.artUrl;
     // the old cover stays until the new one is there
-    void loadArt(key, t.artUrl);
+    showWantedArt(key);
   }
   paintLyric();
   updatePanels();
 }
 
 /** Only ever lands on the song and the cover it was started for. */
-async function loadArt(key: string, url: string, retried = false) {
-  const current = () => trackKey === key && artUrl === url;
+async function loadArt(key: string, url: string, fetchArt: (url: string) => Promise<string>, retried = false) {
+  const current = () => trackKey === key && artSrc === url;
   if (!url) {
     rgb = null;
     showArt(null);
@@ -194,7 +241,7 @@ async function loadArt(key: string, url: string, retried = false) {
     return;
   }
   try {
-    const data = await Bridge.musicArt(url);
+    const data = await fetchArt(url);
     if (!current()) return;
     const avg = await averageColor(data);
     if (!current()) return;
@@ -206,7 +253,7 @@ async function loadArt(key: string, url: string, retried = false) {
     if (!current()) return;
     // a cover that has only just been written may not be readable yet
     if (!retried) {
-      window.setTimeout(() => void loadArt(key, url, true), 500);
+      window.setTimeout(() => void loadArt(key, url, fetchArt, true), 500);
       return;
     }
     rgb = null;

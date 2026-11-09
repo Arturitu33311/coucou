@@ -11,7 +11,8 @@ import type { Feedback } from "./feedback";
 
 export interface PlayerBarView {
   root: HTMLElement;
-  setTrack(track: MusicTrack | null, artData: string | null): void;
+  /** `source`: the friendly source name (main.ts `sourceLabel`); "" says nothing after the artist. */
+  setTrack(track: MusicTrack | null, artData: string | null, source?: string): void;
   tick(): void;
   /** Whether the line being sung is shown (the lyrics button's state). */
   setLyrics(on: boolean): void;
@@ -83,6 +84,7 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
 
   let currentTrack: MusicTrack | null = null;
   let currentArt: string | null = null;
+  let currentSource: string | undefined;
 
   prevBtn.addEventListener("click", () => void Bridge.musicControl("previous"));
   playBtn.addEventListener("click", () => void Bridge.musicControl("playpause"));
@@ -112,9 +114,10 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
     trackEl.setAttribute("aria-valuenow", String(Math.round(pct)));
   }
 
-  function setTrack(tInfo: MusicTrack | null, artData: string | null) {
+  function setTrack(tInfo: MusicTrack | null, artData: string | null, source?: string) {
     currentTrack = tInfo;
     currentArt = artData;
+    currentSource = source;
 
     const isPlaying = tInfo?.status === "Playing";
     playBtn.setAttribute("aria-label", isPlaying ? t("Pause") : t("Play"));
@@ -126,7 +129,8 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
       titleEl.textContent = tInfo.title;
       titleEl.title = tInfo.title;
       const artist = tInfo.artists.join(", ") || t("Artist");
-      const src = tInfo.player ? `${artist} · ${tInfo.player}` : artist;
+      const name = source ?? tInfo.player;
+      const src = name ? `${artist} · ${name}` : artist;
       subEl.textContent = src;
       subEl.title = src;
     } else {
@@ -151,7 +155,7 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
     lyricsBtn.setAttribute("aria-label", t("Lyrics"));
     lyricsBtn.title = t("Lyrics");
     djBtn.title = t("Music picked for you by Spotify's DJ");
-    setTrack(currentTrack, currentArt);
+    setTrack(currentTrack, currentArt, currentSource);
   }
   relabel();
 

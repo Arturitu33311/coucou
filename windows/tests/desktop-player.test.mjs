@@ -419,3 +419,39 @@ test("ytArtist: the exact name first, else the first YT Music artist; Spotify ar
   assert.equal(ytArtist(list.slice(0, 1), "Daft Punk"), null);
 });
 
+const { playedMatch, sourceLabel, sourceName, rereadWanted } = await import("../src/desktop-player/logic.ts");
+
+test("playedMatch: the newest track of the history with the same title (trimmed, any case)", () => {
+  const yt = item({ source: "ytmusic", id: "v1", title: "Instant Crush (feat. Julian Casablancas)", artUrl: "https://i.ytimg.com/a.jpg" });
+  const older = item({ source: "spotify", id: "s1", title: "Instant Crush (feat. Julian Casablancas)" });
+  const recents = [item({ kind: "album", title: "instant crush (feat. julian casablancas)" }), yt, older];
+  assert.equal(playedMatch(" instant crush (feat. Julian Casablancas) ", recents), yt);
+  assert.equal(playedMatch("Get Lucky", recents), null);
+  assert.equal(playedMatch("", recents), null);
+  assert.equal(playedMatch(null, recents), null);
+});
+
+test("sourceLabel: the matched song's source, else friendly names for known players", () => {
+  const ytPlay = item({ source: "ytmusic", title: "Instant Crush" });
+  assert.equal(sourceLabel("mpv", ytPlay, [ytPlay]), "YT Music");
+  assert.equal(sourceLabel("mpv", item({ source: "spotify" }), []), "Spotify");
+  assert.equal(sourceLabel("spotify", null, []), "Spotify");
+  assert.equal(sourceLabel("spotifyd", null, []), "Spotify");
+  assert.equal(sourceLabel("spotifyd.instance42", null, []), "Spotify");
+  // mpv is the player's own only when its last play was on YT Music
+  assert.equal(sourceLabel("mpv", null, [ytPlay]), "YT Music");
+  assert.equal(sourceLabel("mpv", null, [item({ source: "spotify" }), ytPlay]), "mpv");
+  assert.equal(sourceLabel("mpv", null, []), "mpv");
+  assert.equal(sourceLabel("firefox.instance_1_23", null, [ytPlay]), "firefox.instance_1_23");
+  assert.equal(sourceLabel("", null, []), "Coucou");
+  assert.equal(sourceName("spotify"), "Spotify");
+  assert.equal(sourceName("ytmusic"), "YT Music");
+});
+
+test("rereadWanted: once per song, only for an unmatched song with no cover of its own", () => {
+  assert.equal(rereadWanted(null, false, true), true);
+  assert.equal(rereadWanted(null, true, true), false, "already read again for this song");
+  assert.equal(rereadWanted(item({}), false, true), false, "matched");
+  assert.equal(rereadWanted(null, false, false), false, "a player with its own cover (Spotify's app)");
+});
+
