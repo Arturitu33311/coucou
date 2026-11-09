@@ -91,6 +91,7 @@ export function buildSearch(container: HTMLElement, feedback: Feedback): SearchV
     rerun: () => {
       if (query) void triggerSearch(query);
     },
+    open: () => open,
   };
 
   function relabel() {
@@ -195,11 +196,13 @@ export function buildSearch(container: HTMLElement, feedback: Feedback): SearchV
   function show() {
     open = true;
     resultsPanel.style.display = "block";
+    feedback.paint();
   }
 
   function hide() {
     open = false;
     resultsPanel.style.display = "none";
+    feedback.paint();
   }
 
   function select(index: number) {

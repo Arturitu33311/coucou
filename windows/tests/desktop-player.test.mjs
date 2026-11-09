@@ -284,6 +284,24 @@ test("Feedback: a failed play says why and offers to connect Spotify once", asyn
   assert.equal(buttons(fb).length, 1);
 });
 
+test("Feedback: with the search closed, errors and the sign-in offer leave the wallpaper; a live notice stays", () => {
+  const fb = new Feedback(() => 1000);
+  let open = true;
+  fb.spotifyOff = true;
+  fb.side = { query: () => "abba", errors: () => [{ source: "spotify", message: "Login", loginNeeded: true }], source: () => "both", rerun() {}, open: () => open };
+  fb.paint();
+  assert.deepEqual(lines(fb), ["Spotify: Login"]);
+  assert.equal(buttons(fb).length, 1);
+  open = false;
+  fb.paint();
+  assert.deepEqual(lines(fb), []);
+  assert.equal(buttons(fb).length, 0);
+  fb.notice = { text: "Played through the Spotify app", tone: "", until: 5000 };
+  fb.paint();
+  assert.deepEqual(lines(fb), ["Played through the Spotify app"]);
+  assert.equal(buttons(fb).length, 0);
+});
+
 test("Feedback: the DJ failing says so; a play through the Spotify app says that", async () => {
   const fb = new Feedback(() => 1000);
   await fb.start(() => failure("", false), "Couldn't start the DJ", "spotify");

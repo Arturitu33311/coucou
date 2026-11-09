@@ -23,6 +23,8 @@ export interface SearchSide {
   source(): PlayerSource;
   /** Signed in to Spotify: ask again. */
   rerun(): void;
+  /** The results are on screen. Closed, only a live notice stays on the wallpaper (none = open). */
+  open?(): boolean;
 }
 
 export class Feedback {
@@ -118,7 +120,11 @@ export class Feedback {
   }
 
   paint() {
-    const { lines, offerLogin } = this.content();
+    const closed = this.side?.open ? !this.side.open() : false;
+    const live = this.notice != null && this.notice.until > this.now();
+    const { lines, offerLogin } = closed
+      ? { lines: live && this.notice ? [{ text: this.notice.text, err: this.notice.tone === "err" }] : [], offerLogin: false }
+      : this.content();
     const el = this.el;
     el.replaceChildren();
     for (const l of lines) {

@@ -141,7 +141,8 @@ body {
 
 /* ── Gauge (top right), a glass pill ───────────────────────────────────────── */
 
-.dp-gauge {
+/* `.lg.` so the glass rule further down (position: relative) cannot pull it back to the top left. */
+.lg.dp-gauge {
   position: absolute;
   top: 28px;
   right: 36px;
