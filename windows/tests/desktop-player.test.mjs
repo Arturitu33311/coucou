@@ -120,12 +120,15 @@ test("sceneColors: the hour and the cover give different scenes", () => {
 // ── Interactive panels (Task 5) ───────────────────────────────────────────────
 
 test("recentRowsTiltWithoutDepth", () => {
-  for (let i = 0; i < 6; i++) {
-    const s = recentRowStyle(i);
-    assert.equal(s.transform, "rotateY(22deg)");
-    assert.ok(!s.transform.includes("translateZ"));
-    assert.ok(s.opacity <= 1 && s.opacity >= 0.3);
-  }
+  // 3D: rotateY(22deg) with the row's own perspective, never sunk; opaque (the column's masks fade it)
+  const s = recentRowStyle();
+  assert.equal(s.transform, "perspective(900px) rotateY(22deg)");
+  assert.ok(!s.transform.includes("translateZ"));
+  assert.equal(s.opacity, 1);
+  // no 3D: the 2D likeness, still no depth
+  const f = recentRowStyle(true);
+  assert.match(f.transform, /^scaleX\(0\.927\) skewY\(-3\.96deg\)$/);
+  assert.ok(!f.transform.includes("rotateY") && !f.transform.includes("translateZ"));
 });
 
 test("flowFallsBackToLastArtist", () => {
@@ -446,6 +449,42 @@ test("sourceLabel: the matched song's source, else friendly names for known play
   assert.equal(sourceLabel("", null, []), "Coucou");
   assert.equal(sourceName("spotify"), "Spotify");
   assert.equal(sourceName("ytmusic"), "YT Music");
+});
+
+const { has3d, flatTurn, turnTransform } = await import("../src/desktop-player/tilt.ts");
+const { dragTop, DRAG_SLOP } = await import("../src/desktop-player/recents.ts");
+
+test("has3d asks the engine; without compositing (no -webkit-transform-3d) it is false", () => {
+  assert.equal(has3d({ matchMedia: (q) => ({ matches: q === "(-webkit-transform-3d)" }) }), true);
+  assert.equal(has3d({ matchMedia: () => ({ matches: false }) }), false);
+  assert.equal(has3d({}), true, "no matchMedia (tests): assume 3D");
+});
+
+test("flatTurn: narrowed by the turn's cosine, slanted so the far edge rises; side covers mirror", () => {
+  const row = flatTurn(22);
+  assert.equal(row.scaleX, Math.round(Math.cos((22 * Math.PI) / 180) * 1000) / 1000);
+  assert.ok(row.skewY < 0, "a positive turn sends the right edge away: it rises");
+  const left = flatTurn(45);
+  const right = flatTurn(-45);
+  assert.equal(left.scaleX, right.scaleX);
+  assert.equal(left.skewY, -right.skewY);
+  assert.deepEqual(flatTurn(0), { scaleX: 1, skewY: 0 });
+});
+
+test("turnTransform: 3D keeps the cover flow's depth and turn; flat drops them for the likeness", () => {
+  assert.equal(turnTransform(45, false, { z: -180 }), "translateZ(-180px) rotateY(45deg)");
+  assert.equal(turnTransform(0, false, { z: 0 }), "rotateY(0deg)");
+  assert.equal(turnTransform(-45, true, { z: -180 }), "scaleX(0.707) skewY(8.1deg)");
+  assert.equal(turnTransform(0, true), "none", "the front cover stays square");
+});
+
+test("dragTop: a drag scrolls the other way, in stage px, never above the top", () => {
+  assert.equal(dragTop(100, -40, 1), 140, "dragging up scrolls down");
+  assert.equal(dragTop(100, 40, 1), 60);
+  assert.equal(dragTop(100, -40, 2), 120, "a stage drawn twice as large moves half as far");
+  assert.equal(dragTop(10, 200, 1), 0);
+  assert.equal(dragTop(0, -10, 0), 10, "an unknown scale counts as 1");
+  assert.ok(DRAG_SLOP > 0);
 });
 
 test("rereadWanted: once per song, only for an unmatched song with no cover of its own", () => {

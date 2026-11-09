@@ -28,6 +28,7 @@ import { buildPlayerBar, type PlayerBarView } from "./bar";
 import { Feedback } from "./feedback";
 import { lyricShown, playedMatch, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
 import type { PlayerItem } from "../core/player";
+import { has3d } from "./tilt";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -84,9 +85,14 @@ let lyricsOn = true;
 
 function buildPanels() {
   const feedback = new Feedback();
-  recentsView = buildRecents(slots[0], feedback);
+  // Without compositing (the launcher's WEBKIT_DISABLE_COMPOSITING_MODE=1) WebKitGTK
+  // flattens rotateY: the cards then take the 2D likeness (tilt.ts).
+  const flat = !has3d(window);
+  root.classList.toggle("flat3d", flat);
+  void Bridge.log(`desktop player: cards turned ${flat ? "in 2D (no 3D compositing)" : "in 3D"}`);
+  recentsView = buildRecents(slots[0], feedback, flat);
   // the front cover's album lists its songs in the results
-  flowView = buildFlow(slots[1], albumSource, (album) => searchView?.showAlbum(album));
+  flowView = buildFlow(slots[1], albumSource, (album) => searchView?.showAlbum(album), flat);
   searchView = buildSearch(slots[2], feedback);
   barView = buildPlayerBar(slots[3], feedback, () => {
     lyricsOn = !lyricsOn;

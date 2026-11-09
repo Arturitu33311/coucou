@@ -1,20 +1,38 @@
 // "Continue listening" panel on the left (#dp-recents).
 // Shows the currently playing track as a large glass card, followed by
-// recent tracks tilted with rotateY(22deg) and fading out. The list itself is
-// read by main.ts once per song (the same read feeds the cover flow).
+// recent tracks turned towards the centre (rotateY(22deg), or its 2D likeness
+// where the engine draws no 3D: tilt.ts). The list itself is read by main.ts
+// once per song (the same read feeds the cover flow).
+//
+// The column scrolls (wheel, or a drag with the mouse) and its cards can travel
+// up over the clock, as in the reference; the slot is a tall viewport whose top
+// and bottom fade (desktop.css), and the header rests where the mockup puts it.
 
 import { Bridge } from "../core/bridge";
 import type { PlayerItem } from "../core/player";
 import type { MusicTrack } from "../core/state";
 import { t } from "../i18n/i18n";
 import type { Feedback } from "./feedback";
+import { ROW_PERSPECTIVE, ROW_TURN, turnTransform } from "./tilt";
 
-/** Pure helper: calculates the tilt and opacity for recent item rows without depth (translateZ). */
-export function recentRowStyle(index: number): { transform: string; opacity: number } {
+/**
+ * A row's (and the "now" card's) style: turned towards the centre, never sunk
+ * (no translateZ). Every row is opaque: the column's masks fade it at its edges,
+ * wherever the scroll has taken it.
+ */
+export function recentRowStyle(flat = false): { transform: string; opacity: number } {
   return {
-    transform: "rotateY(22deg)",
-    opacity: Math.max(0.3, 1 - index * 0.13),
+    transform: turnTransform(ROW_TURN, flat, { perspective: ROW_PERSPECTIVE }),
+    opacity: 1,
   };
+}
+
+/** How far (screen px) the pointer must move before a press becomes a drag (and no click). */
+export const DRAG_SLOP = 6;
+
+/** The scroll position for a drag of `dy` screen px from `startTop`, on a stage scaled by `scale`. */
+export function dragTop(startTop: number, dy: number, scale: number): number {
+  return Math.max(0, startTop - dy / (scale > 0 ? scale : 1));
 }
 
 export interface RecentsView {
@@ -26,9 +44,14 @@ export interface RecentsView {
   relabel(): void;
 }
 
-export function buildRecents(container: HTMLElement, feedback: Feedback): RecentsView {
+export function buildRecents(scroller: HTMLElement, feedback: Feedback, flat = false): RecentsView {
+  scroller.className = "dp-recents-scroll";
+  scroller.innerHTML = "";
+  const container = document.createElement("div");
   container.className = "stack dp-recents-container";
-  container.innerHTML = "";
+  scroller.append(container);
+  dragToScroll(scroller);
+  const tilt = recentRowStyle(flat);
 
   const header = document.createElement("div");
   header.className = "lg dp-recents-header";
@@ -43,7 +66,7 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
 
   const nowCard = document.createElement("div");
   nowCard.className = "lg tilt dp-now-card";
-  nowCard.style.transform = "rotateY(22deg)";
+  nowCard.style.transform = tilt.transform;
   nowCard.style.display = "none";
 
   const rowsContainer = document.createElement("div");
@@ -91,13 +114,12 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
 
   function renderRows() {
     rowsContainer.innerHTML = "";
-    const list = items.slice(0, 6);
-    list.forEach((item, i) => {
+    // all of them (the history keeps 20): the older ones are a scroll away
+    items.forEach((item) => {
       const row = document.createElement("div");
       row.className = "lg tilt dp-recent-row";
-      const style = recentRowStyle(i);
-      row.style.transform = style.transform;
-      row.style.opacity = String(style.opacity);
+      row.style.transform = tilt.transform;
+      row.style.opacity = String(tilt.opacity);
 
       const badgeColor = item.source === "spotify" ? "#1ed760" : "#ff5c5c";
       const sourceName = item.source === "spotify" ? "Spotify" : "YT Music";
@@ -135,7 +157,7 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
   relabel();
 
   return {
-    root: container,
+    root: scroller,
     setTrack(t: MusicTrack | null, artData: string | null, source?: string) {
       currentTrack = t;
       currentArt = artData;
@@ -148,6 +170,57 @@ export function buildRecents(container: HTMLElement, feedback: Feedback): Recent
     },
     relabel,
   };
+}
+
+/**
+ * A press and a vertical drag scrolls the column (the wheel scrolls it natively).
+ * Past DRAG_SLOP it is a drag: the pointer is captured and the click that ends
+ * it is swallowed, so a drag never plays the row it started on.
+ */
+function dragToScroll(el: HTMLElement) {
+  let drag: { id: number; y: number; top: number; moved: boolean } | null = null;
+  let swallow = false;
+  /** Screen px per layout px (the stage is scaled to the screen). */
+  const scale = () => (el.offsetHeight > 0 ? el.getBoundingClientRect().height / el.offsetHeight : 1);
+
+  el.addEventListener("pointerdown", (e) => {
+    swallow = false;
+    if (e.button !== 0) return;
+    drag = { id: e.pointerId, y: e.clientY, top: el.scrollTop, moved: false };
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved) {
+      if (Math.abs(dy) < DRAG_SLOP) return;
+      drag.moved = true;
+      el.classList.add("dragging");
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // the pointer is gone already: the drag ends with it
+      }
+    }
+    el.scrollTop = dragTop(drag.top, dy, scale());
+  });
+  const end = (e: PointerEvent) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    swallow = drag.moved;
+    drag = null;
+    el.classList.remove("dragging");
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  el.addEventListener(
+    "click",
+    (e) => {
+      if (!swallow) return;
+      swallow = false;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    true,
+  );
 }
 
 function escapeHtml(s: string): string {

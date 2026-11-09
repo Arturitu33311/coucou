@@ -202,11 +202,30 @@ body {
 
 /* ── Slots the touchable panels fill (next task) ───────────────────────────── */
 
+/* "Continue listening" scrolls in a tall viewport that reaches up over the clock (the reference): above it in
+   z-order, the clock stays put underneath. The padding puts the header where the mockup does (150, 380) and
+   leaves room for the turned cards' edges and shadows; the masks fade the cards at the top and the bottom. */
 #dp-recents {
   position: absolute;
-  left: 150px;
-  top: 380px;
-  width: 330px;
+  left: 110px;
+  top: 20px;
+  width: 410px;
+  height: 1020px;
+  box-sizing: border-box;
+  padding: 360px 40px 180px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  z-index: 2;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 110px, #000 58%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 110px, #000 58%, rgba(0, 0, 0, 0) 100%);
+}
+#dp-recents::-webkit-scrollbar {
+  display: none;
+}
+#dp-recents.dragging {
+  cursor: grabbing;
 }
 #dp-flow {
   position: absolute;
@@ -299,14 +318,31 @@ body {
   pointer-events: none;
 }
 
-/* "Continue listening": rows turned towards the centre, never sunk (rotateY only, no translateZ) */
+/* "Continue listening": rows turned towards the centre, never sunk (rotateY only, no translateZ). Each row
+   carries its own perspective() (tilt.ts): the scroller's overflow and masks would flatten a shared one. */
 .stack {
   perspective: 900px;
   perspective-origin: 120% 30%;
 }
 .tilt {
-  transform-style: preserve-3d;
   transform-origin: left center;
+}
+/* Where the engine draws no 3D (#dp.flat3d, tilt.ts) the cards are slanted instead; the far edge is shaded
+   so the turn still reads, and the cover flow's side covers sit a little darker. */
+#dp.flat3d .lg.tilt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.18) 100%);
+  pointer-events: none;
+}
+/* the "now" card's far corner rises: a little more room under the header */
+#dp.flat3d .dp-recents-header {
+  margin-bottom: 8px;
+}
+#dp.flat3d .dp-flow-cover.side {
+  filter: brightness(0.8);
 }
 
 /* ── Panel Styles (Task 5) ─────────────────────────────────────────────────── */
@@ -441,9 +477,11 @@ body {
   height: 400px;
   perspective: 1400px;
 }
+/* the covers' parent carries the perspective (the container's would not reach them) */
 .dp-flow-stage {
   position: absolute;
   inset: 0;
+  perspective: 1400px;
 }
 .dp-flow-cover {
   cursor: pointer;

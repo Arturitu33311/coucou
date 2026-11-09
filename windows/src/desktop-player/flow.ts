@@ -12,6 +12,7 @@ import type { PlayerItem } from "../core/player";
 import { coverflowTransform } from "../views/coverflow";
 import { QueryGate } from "../views/player";
 import { t } from "../i18n/i18n";
+import { turnTransform } from "./tilt";
 
 /** The first of a subtitle's artists ("Daft Punk, Pharrell Williams" → "Daft Punk"). */
 export function firstArtist(subtitle: string): string {
@@ -125,7 +126,12 @@ export interface FlowView {
   relabel(): void;
 }
 
-export function buildFlow(container: HTMLElement, source: AlbumSource, onPickAlbum?: (album: PlayerItem) => void): FlowView {
+export function buildFlow(
+  container: HTMLElement,
+  source: AlbumSource,
+  onPickAlbum?: (album: PlayerItem) => void,
+  flat = false,
+): FlowView {
   container.className = "dp-flow-container";
   container.replaceChildren();
 
@@ -168,7 +174,9 @@ export function buildFlow(container: HTMLElement, source: AlbumSource, onPickAlb
       cover.style.top = `${tf.top}px`;
       cover.style.width = `${tf.size}px`;
       cover.style.height = `${tf.size}px`;
-      cover.style.transform = `translateZ(${tf.z}px) rotateY(${tf.rotateY}deg)`;
+      // 3D: the stage's perspective (desktop.css); flat: the 2D likeness (tilt.ts)
+      cover.style.transform = turnTransform(tf.rotateY, flat, { z: tf.z });
+      cover.classList.toggle("side", i !== centerIndex);
       cover.style.zIndex = String(tf.zIndex);
       cover.style.opacity = String(tf.opacity);
       cover.style.pointerEvents = tf.opacity > 0 ? "auto" : "none";
