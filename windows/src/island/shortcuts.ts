@@ -60,6 +60,17 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
       }
       break;
 
+    case "openPlayer":
+      if (State.mode === "expanded" && State.view === "player") {
+        host.collapse();
+      } else {
+        resume();
+        // Not openFromKeyboard: it would swap the player's hold for the normal auto-close time.
+        host.alert("player");
+        host.takeKeyboard();
+      }
+      break;
+
     case "openChat":
       resume();
       // Jinx is the assistant (as the phone's side key): the chat opens on her when her pill is here.
