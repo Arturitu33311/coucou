@@ -1,25 +1,37 @@
 // Glass player: YT Music search / artist / album through a local Python helper (ytmusicapi, no login).
 use super::Item;
+use crate::i18n::{t, tf};
 use std::path::Path;
 use std::time::Duration;
 
 const HELPER: &str = include_str!("ytmusic.py");
 const TIMEOUT: Duration = Duration::from_secs(8);
-const NOT_READY: &str = "YT Music no está preparado: corre scripts/setup-player.sh";
 
-/// The helper prints a JSON list of items, or `{"error": "..."}`.
+fn not_ready() -> String {
+    t("YT Music isn't set up: run scripts/setup-player.sh")
+}
+
+fn unexpected(e: impl std::fmt::Display) -> String {
+    tf("Unexpected answer from YT Music: {error}", &[("error", &e.to_string())])
+}
+
+fn cannot_start(e: impl std::fmt::Display) -> String {
+    tf("Couldn't start YT Music: {error}", &[("error", &e.to_string())])
+}
+
+/// The helper prints a JSON list of items, or `{"error": "..."}` (ytmusicapi's own message).
 pub fn parse_helper_output(stdout: &str) -> Result<Vec<Item>, String> {
-    let v: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| format!("respuesta no válida de YT Music: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(unexpected)?;
     if let Some(msg) = v.get("error") {
-        return Err(msg.as_str().unwrap_or("error de YT Music").to_string());
+        return Err(msg.as_str().map(str::to_string).unwrap_or_else(|| t("YT Music error")));
     }
-    serde_json::from_value(v).map_err(|e| format!("respuesta no válida de YT Music: {e}"))
+    serde_json::from_value(v).map_err(unexpected)
 }
 
 async fn run_helper_with(interpreter: &Path, op: &str, arg: &str, timeout: Duration) -> Result<Vec<Item>, String> {
     use tokio::io::AsyncWriteExt;
     if !interpreter.exists() {
-        return Err(NOT_READY.into());
+        return Err(not_ready());
     }
     let mut child = tokio::process::Command::new(interpreter)
         .args(["-I", "-", op, arg])
@@ -28,8 +40,8 @@ async fn run_helper_with(interpreter: &Path, op: &str, arg: &str, timeout: Durat
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("no se pudo lanzar YT Music: {e}"))?;
-    let mut stdin = child.stdin.take().ok_or("sin stdin")?;
+        .map_err(cannot_start)?;
+    let mut stdin = child.stdin.take().ok_or_else(|| cannot_start("stdin"))?;
     let run = async {
         // A helper that exits early closes the pipe; that is reported through its output, not here.
         let _ = stdin.write_all(HELPER.as_bytes()).await;
@@ -39,8 +51,8 @@ async fn run_helper_with(interpreter: &Path, op: &str, arg: &str, timeout: Durat
     // On timeout the future (and the child it owns) is dropped, and kill_on_drop ends the process.
     let out = tokio::time::timeout(timeout, run)
         .await
-        .map_err(|_| "YT Music tardó demasiado".to_string())?
-        .map_err(|e| format!("YT Music falló: {e}"))?;
+        .map_err(|_| t("YT Music took too long"))?
+        .map_err(|e| tf("YT Music failed: {error}", &[("error", &e.to_string())]))?;
     parse_helper_output(&String::from_utf8_lossy(&out.stdout))
 }
 

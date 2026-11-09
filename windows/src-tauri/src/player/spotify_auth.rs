@@ -11,6 +11,8 @@ use tauri::AppHandle;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+use crate::i18n::{t, tf};
+
 pub const REDIRECT: &str = "http://127.0.0.1:43821/callback";
 pub const SCOPES: &str =
     "user-read-playback-state user-modify-playback-state user-read-currently-playing user-read-recently-played";
@@ -137,9 +139,9 @@ pub fn parse_callback(request_line: &str, expected_state: &str) -> Result<String
         return Err("Spotify login: state mismatch".into());
     }
     if let Some(e) = error {
-        return Err(format!("Spotify login refused: {e}"));
+        return Err(tf("Spotify sign-in was refused: {error}", &[("error", &e)]));
     }
-    code.filter(|c| !c.is_empty()).ok_or_else(|| "Spotify login: no code in the answer".into())
+    code.filter(|c| !c.is_empty()).ok_or_else(|| t("Spotify sign-in gave no code"))
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -207,18 +209,19 @@ async fn wait_for_callback(listener: TcpListener, state: &str) -> Result<String,
 pub async fn login(_app: &AppHandle) -> Result<(), String> {
     let client_id = crate::settings::load().spotify_client_id.trim().to_string();
     if client_id.is_empty() {
-        return Err("Set your Spotify Client ID (spotifyClientId) first.".into());
+        return Err(t("Set your Spotify Client ID (spotifyClientId) first."));
     }
     let verifier = new_verifier()?;
     let state = random_string(24)?;
     // Bind before the browser opens, so the redirect always finds a listener.
-    let listener = TcpListener::bind(LISTEN_ADDR)
-        .await
-        .map_err(|e| format!("Spotify login: port 43821 is busy ({e})"))?;
+    let listener = TcpListener::bind(LISTEN_ADDR).await.map_err(|e| {
+        let port = LISTEN_ADDR.rsplit(':').next().unwrap_or(LISTEN_ADDR);
+        tf("Spotify sign-in: port {port} is busy ({error})", &[("port", port), ("error", &e.to_string())])
+    })?;
     crate::platform::open_url(&authorize_url(&client_id, &challenge(&verifier), &state));
     let code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, &state))
         .await
-        .map_err(|_| "Spotify login timed out".to_string())??;
+        .map_err(|_| t("Spotify sign-in timed out"))??;
     let reply = token_request(&[
         ("grant_type", "authorization_code"),
         ("code", &code),
@@ -228,7 +231,7 @@ pub async fn login(_app: &AppHandle) -> Result<(), String> {
     ])
     .await
     .map_err(|e| e.to_string())?;
-    let refresh = reply.refresh_token.ok_or("Spotify gave no refresh token")?;
+    let refresh = reply.refresh_token.ok_or_else(|| t("Spotify gave no refresh token"))?;
     crate::secrets::set_internal(REFRESH_KEY, &refresh)?;
     store_access(&reply.access_token, reply.expires_in);
     Ok(())

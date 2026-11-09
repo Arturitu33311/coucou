@@ -7,12 +7,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+
+use crate::i18n::{t, tf};
 
 const REPLY_TIMEOUT: Duration = Duration::from_millis(1500);
 const BOOT_POLL: Duration = Duration::from_millis(100);
 const BOOT_MAX: Duration = Duration::from_secs(3);
+/// After `loadfile`, how long to wait for the song to start (or fail) before calling it started.
+const SETTLE: Duration = Duration::from_secs(3);
 
 pub fn socket_path() -> PathBuf {
     let dir = std::env::var_os("XDG_RUNTIME_DIR")
@@ -26,32 +31,64 @@ pub fn command_json(args: &[&str]) -> String {
     format!("{}\n", serde_json::json!({ "command": args }))
 }
 
-/// Sends one command on an open connection and checks mpv's reply.
-async fn send(stream: UnixStream, args: &[&str]) -> Result<(), String> {
+/// One line from mpv: the reply to our command, the song starting, the song failing, or anything else.
+#[derive(Debug, PartialEq)]
+enum Line {
+    Reply(Result<(), String>),
+    Started,
+    Failed,
+    Other,
+}
+
+fn classify(v: &Value) -> Line {
+    if let Some(err) = v.get("error") {
+        return Line::Reply(match err.as_str() {
+            Some("success") => Ok(()),
+            other => Err(other.unwrap_or("unknown error").to_string()),
+        });
+    }
+    match v["event"].as_str() {
+        Some("playback-restart") => Line::Started,
+        Some("end-file") if v["reason"].as_str() == Some("error") => Line::Failed,
+        _ => Line::Other,
+    }
+}
+
+/// Sends one command on an open connection and checks mpv's reply. With `settle`, once mpv
+/// took it, waits up to that long on the same connection for the file to start playing
+/// (`playback-restart`) or fail (`end-file` with an error); silence means it is on its way.
+async fn send(stream: UnixStream, args: &[&str], settle: Option<Duration>) -> Result<(), String> {
     let (r, mut w) = stream.into_split();
     w.write_all(command_json(args).as_bytes())
         .await
-        .map_err(|e| format!("mpv write: {e}"))?;
+        .map_err(|e| tf("Couldn't talk to mpv: {error}", &[("error", &e.to_string())]))?;
     let mut lines = BufReader::new(r).lines();
-    // mpv may interleave events ({"event":...}) before the reply to our command.
-    let reply = tokio::time::timeout(REPLY_TIMEOUT, async {
-        while let Ok(Some(line)) = lines.next_line().await {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                if v.get("error").is_some() {
-                    return Some(v);
-                }
+    let reply_by = tokio::time::Instant::now() + REPLY_TIMEOUT;
+    // Set once mpv accepted the command and a start is waited for.
+    let mut started_by: Option<tokio::time::Instant> = None;
+    loop {
+        let deadline = started_by.unwrap_or(reply_by);
+        // mpv interleaves events ({"event":...}) with the reply to our command.
+        let line = match tokio::time::timeout_at(deadline, lines.next_line()).await {
+            Ok(Ok(Some(line))) => line,
+            Err(_) if started_by.is_some() => return Ok(()),
+            Err(_) => return Err(t("mpv didn't answer in time")),
+            Ok(_) if started_by.is_some() => return Ok(()),
+            Ok(_) => return Err(t("mpv closed the connection without answering")),
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        match classify(&v) {
+            Line::Reply(Ok(())) if started_by.is_none() => match settle {
+                None => return Ok(()),
+                Some(s) => started_by = Some(tokio::time::Instant::now() + s),
+            },
+            Line::Reply(Err(e)) if started_by.is_none() => {
+                return Err(tf("mpv refused the command: {error}", &[("error", &e)]))
             }
+            Line::Started if started_by.is_some() => return Ok(()),
+            Line::Failed if settle.is_some() => return Err(t("YT Music couldn't play this song")),
+            _ => {}
         }
-        None
-    })
-    .await;
-    match reply {
-        Ok(Some(v)) => match v["error"].as_str() {
-            Some("success") => Ok(()),
-            other => Err(format!("mpv: {}", other.unwrap_or("unknown error"))),
-        },
-        Ok(None) => Err("mpv closed the socket without replying".into()),
-        Err(_) => Err("mpv did not reply in time".into()),
     }
 }
 
@@ -59,12 +96,13 @@ async fn play_at(
     sock: &Path,
     launcher: impl Fn() -> io::Result<()>,
     video_id: &str,
+    settle: Duration,
 ) -> Result<(), String> {
     let stream = match UnixStream::connect(sock).await {
         Ok(s) => s,
         Err(_) => {
             let _ = std::fs::remove_file(sock);
-            launcher().map_err(|e| format!("could not start mpv: {e}"))?;
+            launcher().map_err(|e| tf("Couldn't start mpv: {error}", &[("error", &e.to_string())]))?;
             let mut waited = Duration::ZERO;
             loop {
                 tokio::time::sleep(BOOT_POLL).await;
@@ -73,18 +111,18 @@ async fn play_at(
                     break s;
                 }
                 if waited >= BOOT_MAX {
-                    return Err("mpv did not open its socket in time".into());
+                    return Err(t("mpv didn't start in time"));
                 }
             }
         }
     };
     let url = format!("https://music.youtube.com/watch?v={video_id}");
-    send(stream, &["loadfile", &url, "replace"]).await
+    send(stream, &["loadfile", &url, "replace"], Some(settle)).await
 }
 
 async fn pause_at(sock: &Path) -> Result<(), String> {
     match UnixStream::connect(sock).await {
-        Ok(s) => send(s, &["set_property", "pause", "yes"]).await,
+        Ok(s) => send(s, &["set_property", "pause", "yes"], None).await,
         Err(_) => Ok(()),
     }
 }
@@ -92,26 +130,31 @@ async fn pause_at(sock: &Path) -> Result<(), String> {
 pub async fn play_ytmusic(video_id: &str) -> Result<(), String> {
     let sock = socket_path();
     let s2 = sock.clone();
-    play_at(&sock, move || launch_mpv(&s2), video_id).await
+    play_at(&sock, move || launch_mpv(&s2), video_id, SETTLE).await
 }
 
 pub async fn pause() -> Result<(), String> {
     pause_at(&socket_path()).await
 }
 
+/// `--script-opts` pointing mpv's ytdl hook at the yt-dlp scripts/setup-player.sh installs, when
+/// it is there; otherwise none, and mpv finds yt-dlp on the PATH itself.
+fn ytdl_opt(home: Option<&Path>) -> Option<String> {
+    let ytdlp = home?.join(".local/bin/yt-dlp");
+    ytdlp.is_file().then(|| format!("--script-opts=ytdl_hook-ytdl_path={}", ytdlp.display()))
+}
+
 fn launch_mpv(sock: &Path) -> io::Result<()> {
-    let ytdlp = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".local/bin/yt-dlp"))
-        .unwrap_or_else(|| PathBuf::from("yt-dlp"));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut cmd = Command::new("mpv");
     cmd.arg("--no-video")
         .arg("--idle=yes")
         .arg(format!("--input-ipc-server={}", sock.display()))
-        .arg("--ytdl-format=bestaudio")
-        .arg(format!("--script-opts=ytdl_hook-ytdl_path={}", ytdlp.display()))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .arg("--ytdl-format=bestaudio");
+    if let Some(opt) = ytdl_opt(home.as_deref()) {
+        cmd.arg(opt);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // Own session: mpv must outlive the island and not get its terminal signals.
     unsafe {
         cmd.pre_exec(|| {
@@ -131,6 +174,7 @@ fn launch_mpv(sock: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use std::time::Instant;
     use tokio::net::UnixListener;
 
     fn tmp_sock(name: &str) -> PathBuf {
@@ -141,7 +185,10 @@ mod tests {
         p
     }
 
-    fn fake_server(sock: &Path) -> Arc<Mutex<Vec<String>>> {
+    const STARTED: &[&str] = &[r#"{"event":"start-file","playlist_entry_id":1}"#, r#"{"event":"playback-restart"}"#];
+
+    /// Answers every command with success; after a `loadfile` it also sends `events`, as mpv would.
+    fn fake_server(sock: &Path, events: &'static [&'static str]) -> Arc<Mutex<Vec<String>>> {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let l = UnixListener::bind(sock).unwrap();
         let out = lines.clone();
@@ -153,8 +200,14 @@ mod tests {
                     let (r, mut w) = st.into_split();
                     let mut r = BufReader::new(r).lines();
                     while let Ok(Some(line)) = r.next_line().await {
+                        let load = line.contains("loadfile");
                         out.lock().unwrap().push(line);
-                        let _ = w.write_all(b"{\"error\":\"success\",\"data\":null}\n").await;
+                        let _ = w.write_all(b"{\"error\":\"success\",\"data\":null,\"request_id\":0}\n").await;
+                        if load {
+                            for e in events {
+                                let _ = w.write_all(format!("{e}\n").as_bytes()).await;
+                            }
+                        }
                     }
                 });
             }
@@ -170,11 +223,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn ytdl_path_only_when_it_is_there() {
+        let home = std::env::temp_dir().join(format!("coucou-mpv-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(ytdl_opt(Some(&home)), None, "no yt-dlp there: mpv looks on the PATH");
+        assert_eq!(ytdl_opt(None), None);
+        std::fs::create_dir_all(home.join(".local/bin")).unwrap();
+        std::fs::write(home.join(".local/bin/yt-dlp"), "").unwrap();
+        assert_eq!(
+            ytdl_opt(Some(&home)),
+            Some(format!("--script-opts=ytdl_hook-ytdl_path={}", home.join(".local/bin/yt-dlp").display()))
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     #[tokio::test]
     async fn play_sends_loadfile_to_socket() {
         let sock = tmp_sock("play");
-        let lines = fake_server(&sock);
-        play_at(&sock, || panic!("must not launch: mpv is alive"), "abc123").await.unwrap();
+        let lines = fake_server(&sock, STARTED);
+        let at = Instant::now();
+        play_at(&sock, || panic!("must not launch: mpv is alive"), "abc123", SETTLE).await.unwrap();
+        assert!(at.elapsed() < SETTLE, "playback-restart ends the wait");
         let got = lines.lock().unwrap().clone();
         assert_eq!(
             got,
@@ -183,9 +253,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn play_reports_a_song_that_fails_to_load() {
+        let sock = tmp_sock("fail");
+        // The old song's end, unrelated events, then the new one failing (yt-dlp could not read it).
+        const EVENTS: &[&str] = &[
+            r#"{"event":"end-file","reason":"stop","playlist_entry_id":1}"#,
+            r#"{"event":"start-file","playlist_entry_id":2}"#,
+            r#"{"event":"property-change","id":1,"name":"pause","data":false}"#,
+            "not json",
+            r#"{"event":"end-file","reason":"error","playlist_entry_id":2,"file_error":"unrecognized file format"}"#,
+        ];
+        let _lines = fake_server(&sock, EVENTS);
+        let r = play_at(&sock, || panic!("must not launch"), "bad", SETTLE).await;
+        assert_eq!(r, Err(t("YT Music couldn't play this song")));
+    }
+
+    #[tokio::test]
+    async fn play_with_no_news_is_ok_after_the_wait() {
+        let sock = tmp_sock("quiet");
+        let _lines = fake_server(&sock, &[r#"{"event":"start-file","playlist_entry_id":3}"#]);
+        let settle = Duration::from_millis(200);
+        let at = Instant::now();
+        play_at(&sock, || panic!("must not launch"), "slow", settle).await.unwrap();
+        assert!(at.elapsed() >= settle);
+    }
+
+    #[test]
+    fn classifies_replies_and_events() {
+        let c = |s: &str| classify(&serde_json::from_str(s).unwrap());
+        assert_eq!(c(r#"{"error":"success","data":null}"#), Line::Reply(Ok(())));
+        assert_eq!(c(r#"{"error":"invalid parameter"}"#), Line::Reply(Err("invalid parameter".into())));
+        assert_eq!(c(r#"{"event":"playback-restart"}"#), Line::Started);
+        assert_eq!(c(r#"{"event":"end-file","reason":"error"}"#), Line::Failed);
+        assert_eq!(c(r#"{"event":"end-file","reason":"eof"}"#), Line::Other);
+        assert_eq!(c(r#"{"event":"idle"}"#), Line::Other);
+    }
+
+    #[tokio::test]
     async fn pause_sends_set_property() {
         let sock = tmp_sock("pause");
-        let lines = fake_server(&sock);
+        let lines = fake_server(&sock, &[]);
         pause_at(&sock).await.unwrap();
         assert_eq!(
             lines.lock().unwrap().clone(),
@@ -206,10 +313,10 @@ mod tests {
         let (s2, srv2) = (sock.clone(), srv.clone());
         // The "launcher" brings the fake server up, as a real mpv would.
         let launcher = move || {
-            *srv2.lock().unwrap() = Some(fake_server(&s2));
+            *srv2.lock().unwrap() = Some(fake_server(&s2, STARTED));
             Ok(())
         };
-        play_at(&sock, launcher, "zzz").await.unwrap();
+        play_at(&sock, launcher, "zzz", SETTLE).await.unwrap();
         let lines = srv.lock().unwrap().clone().unwrap();
         assert_eq!(lines.lock().unwrap().len(), 1);
     }

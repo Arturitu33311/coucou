@@ -31,7 +31,7 @@ def main(op, arg):
         for r in yt.search(arg, filter="songs"):
             out.append(song(r))
         for r in yt.search(arg, filter="artists"):
-            out.append(item("artist", r.get("browseId"), r.get("artist"), "Artista", r.get("thumbnails")))
+            out.append(item("artist", r.get("browseId"), r.get("artist"), "", r.get("thumbnails")))
     elif op == "artist":
         a = yt.get_artist(arg)
         for s in (a.get("songs") or {}).get("results") or []:
@@ -43,7 +43,7 @@ def main(op, arg):
         for s in a.get("tracks") or []:
             out.append(song(s, a.get("thumbnails")))
     else:
-        raise ValueError("op desconocida: " + op)
+        raise ValueError("unknown op: " + op)
     print(json.dumps([i for i in out if i], ensure_ascii=False))
 
 

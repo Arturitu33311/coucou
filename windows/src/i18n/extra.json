@@ -4724,6 +4724,215 @@
    "pt-BR": "YT Music só funciona no Linux",
    "ru": "YT Music работает только в Linux",
    "id": "YT Music hanya jalan di Linux"
+  },
+  "Couldn't talk to mpv: {error}": {
+   "zh-Hans": "无法与 mpv 通信：{error}",
+   "hi": "mpv से बात नहीं हो सकी: {error}",
+   "es": "No se pudo hablar con mpv: {error}",
+   "ar": "تعذّر التواصل مع mpv: {error}",
+   "fr": "Impossible de parler à mpv : {error}",
+   "bn": "mpv-এর সঙ্গে যোগাযোগ করা যায়নি: {error}",
+   "pt-BR": "Não foi possível falar com o mpv: {error}",
+   "ru": "Не удалось связаться с mpv: {error}",
+   "id": "Tidak bisa berkomunikasi dengan mpv: {error}"
+  },
+  "mpv didn't answer in time": {
+   "zh-Hans": "mpv 未及时响应",
+   "hi": "mpv ने समय पर जवाब नहीं दिया",
+   "es": "mpv no respondió a tiempo",
+   "ar": "لم يستجب mpv في الوقت المناسب",
+   "fr": "mpv n'a pas répondu à temps",
+   "bn": "mpv সময়মতো উত্তর দেয়নি",
+   "pt-BR": "O mpv não respondeu a tempo",
+   "ru": "mpv не ответил вовремя",
+   "id": "mpv tidak menjawab tepat waktu"
+  },
+  "mpv closed the connection without answering": {
+   "zh-Hans": "mpv 未响应就关闭了连接",
+   "hi": "mpv ने जवाब दिए बिना कनेक्शन बंद कर दिया",
+   "es": "mpv cerró la conexión sin responder",
+   "ar": "أغلق mpv الاتصال دون أن يجيب",
+   "fr": "mpv a fermé la connexion sans répondre",
+   "bn": "mpv উত্তর না দিয়েই সংযোগ বন্ধ করেছে",
+   "pt-BR": "O mpv fechou a conexão sem responder",
+   "ru": "mpv закрыл соединение, не ответив",
+   "id": "mpv menutup koneksi tanpa menjawab"
+  },
+  "mpv refused the command: {error}": {
+   "zh-Hans": "mpv 拒绝了命令：{error}",
+   "hi": "mpv ने आदेश नहीं माना: {error}",
+   "es": "mpv rechazó la orden: {error}",
+   "ar": "رفض mpv الأمر: {error}",
+   "fr": "mpv a refusé la commande : {error}",
+   "bn": "mpv নির্দেশটি নেয়নি: {error}",
+   "pt-BR": "O mpv recusou o comando: {error}",
+   "ru": "mpv отклонил команду: {error}",
+   "id": "mpv menolak perintah: {error}"
+  },
+  "YT Music couldn't play this song": {
+   "zh-Hans": "YT Music 无法播放这首歌",
+   "hi": "YT Music यह गाना नहीं चला सका",
+   "es": "YT Music no pudo reproducir esta canción",
+   "ar": "تعذّر على YT Music تشغيل هذه الأغنية",
+   "fr": "YT Music n'a pas pu lire ce titre",
+   "bn": "YT Music এই গানটি চালাতে পারেনি",
+   "pt-BR": "O YT Music não conseguiu tocar esta música",
+   "ru": "YT Music не смог воспроизвести эту песню",
+   "id": "YT Music tidak bisa memutar lagu ini"
+  },
+  "Couldn't start mpv: {error}": {
+   "zh-Hans": "无法启动 mpv：{error}",
+   "hi": "mpv शुरू नहीं हो सका: {error}",
+   "es": "No se pudo iniciar mpv: {error}",
+   "ar": "تعذّر تشغيل mpv: {error}",
+   "fr": "Impossible de lancer mpv : {error}",
+   "bn": "mpv চালু করা যায়নি: {error}",
+   "pt-BR": "Não foi possível iniciar o mpv: {error}",
+   "ru": "Не удалось запустить mpv: {error}",
+   "id": "Tidak bisa memulai mpv: {error}"
+  },
+  "mpv didn't start in time": {
+   "zh-Hans": "mpv 未能及时启动",
+   "hi": "mpv समय पर शुरू नहीं हुआ",
+   "es": "mpv no se inició a tiempo",
+   "ar": "لم يبدأ mpv في الوقت المناسب",
+   "fr": "mpv n'a pas démarré à temps",
+   "bn": "mpv সময়মতো চালু হয়নি",
+   "pt-BR": "O mpv não iniciou a tempo",
+   "ru": "mpv не запустился вовремя",
+   "id": "mpv tidak mulai tepat waktu"
+  },
+  "YT Music isn't set up: run scripts/setup-player.sh": {
+   "zh-Hans": "YT Music 尚未设置：请运行 scripts/setup-player.sh",
+   "hi": "YT Music सेट अप नहीं है: scripts/setup-player.sh चलाएँ",
+   "es": "YT Music no está preparado: ejecuta scripts/setup-player.sh",
+   "ar": "لم يُجهَّز YT Music: شغّل scripts/setup-player.sh",
+   "fr": "YT Music n'est pas installé : lancez scripts/setup-player.sh",
+   "bn": "YT Music সেট আপ করা হয়নি: scripts/setup-player.sh চালান",
+   "pt-BR": "O YT Music não está configurado: rode scripts/setup-player.sh",
+   "ru": "YT Music не настроен: запустите scripts/setup-player.sh",
+   "id": "YT Music belum disiapkan: jalankan scripts/setup-player.sh"
+  },
+  "Unexpected answer from YT Music: {error}": {
+   "zh-Hans": "YT Music 返回了意外的响应：{error}",
+   "hi": "YT Music से अनपेक्षित जवाब: {error}",
+   "es": "Respuesta inesperada de YT Music: {error}",
+   "ar": "ردّ غير متوقع من YT Music: {error}",
+   "fr": "Réponse inattendue de YT Music : {error}",
+   "bn": "YT Music থেকে অপ্রত্যাশিত উত্তর: {error}",
+   "pt-BR": "Resposta inesperada do YT Music: {error}",
+   "ru": "Неожиданный ответ YT Music: {error}",
+   "id": "Jawaban tak terduga dari YT Music: {error}"
+  },
+  "Couldn't start YT Music: {error}": {
+   "zh-Hans": "无法启动 YT Music：{error}",
+   "hi": "YT Music शुरू नहीं हो सका: {error}",
+   "es": "No se pudo iniciar YT Music: {error}",
+   "ar": "تعذّر تشغيل YT Music: {error}",
+   "fr": "Impossible de lancer YT Music : {error}",
+   "bn": "YT Music চালু করা যায়নি: {error}",
+   "pt-BR": "Não foi possível iniciar o YT Music: {error}",
+   "ru": "Не удалось запустить YT Music: {error}",
+   "id": "Tidak bisa memulai YT Music: {error}"
+  },
+  "YT Music error": {
+   "zh-Hans": "YT Music 出错",
+   "hi": "YT Music में गड़बड़ी",
+   "es": "Error de YT Music",
+   "ar": "خطأ في YT Music",
+   "fr": "Erreur de YT Music",
+   "bn": "YT Music-এ ত্রুটি",
+   "pt-BR": "Erro do YT Music",
+   "ru": "Ошибка YT Music",
+   "id": "Kesalahan YT Music"
+  },
+  "YT Music took too long": {
+   "zh-Hans": "YT Music 响应太慢",
+   "hi": "YT Music ने बहुत देर लगाई",
+   "es": "YT Music tardó demasiado",
+   "ar": "استغرق YT Music وقتًا طويلًا",
+   "fr": "YT Music a mis trop de temps",
+   "bn": "YT Music খুব বেশি সময় নিয়েছে",
+   "pt-BR": "O YT Music demorou demais",
+   "ru": "YT Music отвечал слишком долго",
+   "id": "YT Music terlalu lama"
+  },
+  "YT Music failed: {error}": {
+   "zh-Hans": "YT Music 失败：{error}",
+   "hi": "YT Music विफल रहा: {error}",
+   "es": "YT Music falló: {error}",
+   "ar": "فشل YT Music: {error}",
+   "fr": "YT Music a échoué : {error}",
+   "bn": "YT Music ব্যর্থ হয়েছে: {error}",
+   "pt-BR": "O YT Music falhou: {error}",
+   "ru": "Сбой YT Music: {error}",
+   "id": "YT Music gagal: {error}"
+  },
+  "Set your Spotify Client ID (spotifyClientId) first.": {
+   "zh-Hans": "请先设置你的 Spotify Client ID（spotifyClientId）。",
+   "hi": "पहले अपना Spotify Client ID (spotifyClientId) सेट करें।",
+   "es": "Primero configura tu Client ID de Spotify (spotifyClientId).",
+   "ar": "اضبط معرّف عميل Spotify ‏(spotifyClientId) أولًا.",
+   "fr": "Renseignez d'abord votre Client ID Spotify (spotifyClientId).",
+   "bn": "আগে আপনার Spotify Client ID (spotifyClientId) সেট করুন।",
+   "pt-BR": "Defina primeiro o seu Client ID do Spotify (spotifyClientId).",
+   "ru": "Сначала укажите свой Client ID Spotify (spotifyClientId).",
+   "id": "Atur dulu Client ID Spotify Anda (spotifyClientId)."
+  },
+  "Spotify sign-in: port {port} is busy ({error})": {
+   "zh-Hans": "Spotify 登录：端口 {port} 已被占用（{error}）",
+   "hi": "Spotify साइन-इन: पोर्ट {port} व्यस्त है ({error})",
+   "es": "Inicio de sesión en Spotify: el puerto {port} está ocupado ({error})",
+   "ar": "تسجيل الدخول إلى Spotify: المنفذ {port} مشغول ({error})",
+   "fr": "Connexion à Spotify : le port {port} est occupé ({error})",
+   "bn": "Spotify সাইন-ইন: পোর্ট {port} ব্যস্ত ({error})",
+   "pt-BR": "Entrar no Spotify: a porta {port} está ocupada ({error})",
+   "ru": "Вход в Spotify: порт {port} занят ({error})",
+   "id": "Masuk ke Spotify: port {port} sedang dipakai ({error})"
+  },
+  "Spotify sign-in timed out": {
+   "zh-Hans": "Spotify 登录超时",
+   "hi": "Spotify साइन-इन का समय खत्म हो गया",
+   "es": "Se agotó el tiempo para iniciar sesión en Spotify",
+   "ar": "انتهت مهلة تسجيل الدخول إلى Spotify",
+   "fr": "La connexion à Spotify a expiré",
+   "bn": "Spotify সাইন-ইনের সময় শেষ হয়ে গেছে",
+   "pt-BR": "O tempo para entrar no Spotify esgotou",
+   "ru": "Время входа в Spotify истекло",
+   "id": "Waktu masuk ke Spotify habis"
+  },
+  "Spotify gave no refresh token": {
+   "zh-Hans": "Spotify 没有返回刷新令牌",
+   "hi": "Spotify ने रिफ़्रेश टोकन नहीं दिया",
+   "es": "Spotify no dio un token de renovación",
+   "ar": "لم يُعطِ Spotify رمز تحديث",
+   "fr": "Spotify n'a pas fourni de jeton de renouvellement",
+   "bn": "Spotify কোনো রিফ্রেশ টোকেন দেয়নি",
+   "pt-BR": "O Spotify não forneceu um token de atualização",
+   "ru": "Spotify не выдал токен обновления",
+   "id": "Spotify tidak memberikan token penyegaran"
+  },
+  "Spotify sign-in was refused: {error}": {
+   "zh-Hans": "Spotify 登录被拒绝：{error}",
+   "hi": "Spotify साइन-इन अस्वीकार हुआ: {error}",
+   "es": "Spotify rechazó el inicio de sesión: {error}",
+   "ar": "رُفض تسجيل الدخول إلى Spotify: {error}",
+   "fr": "La connexion à Spotify a été refusée : {error}",
+   "bn": "Spotify সাইন-ইন প্রত্যাখ্যাত হয়েছে: {error}",
+   "pt-BR": "A entrada no Spotify foi recusada: {error}",
+   "ru": "Вход в Spotify отклонён: {error}",
+   "id": "Masuk ke Spotify ditolak: {error}"
+  },
+  "Spotify sign-in gave no code": {
+   "zh-Hans": "Spotify 登录没有返回代码",
+   "hi": "Spotify साइन-इन से कोई कोड नहीं मिला",
+   "es": "El inicio de sesión en Spotify no devolvió ningún código",
+   "ar": "لم يُرجِع تسجيل الدخول إلى Spotify أي رمز",
+   "fr": "La connexion à Spotify n'a renvoyé aucun code",
+   "bn": "Spotify সাইন-ইন কোনো কোড দেয়নি",
+   "pt-BR": "A entrada no Spotify não retornou nenhum código",
+   "ru": "Вход в Spotify не вернул код",
+   "id": "Masuk ke Spotify tidak memberikan kode"
   }
  }
 }
