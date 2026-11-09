@@ -83,12 +83,39 @@ export class AlbumSource {
   }
 }
 
-/** The app's way to find an artist's albums: their page, else a search's albums. */
-export async function fetchArtistAlbums(artist: string): Promise<PlayerItem[]> {
-  const page = await Bridge.playerArtist("both", "", artist);
-  if (page.ok && page.value.albums.length > 0) return page.value.albums;
-  const found = await Bridge.playerSearch("both", artist, 0, 0);
-  return found?.items.filter((it) => it.kind === "album") ?? [];
+/** The bridge calls the album lookup uses (injectable for the tests). */
+export interface AlbumLookup {
+  playerSearch: typeof Bridge.playerSearch;
+  playerArtist: typeof Bridge.playerArtist;
+}
+
+/**
+ * The app's way to find an artist's albums. A search of both sources first: its
+ * albums are Spotify's (YT Music's search returns only songs and artists). With
+ * none, the artist's page on YT Music: the search's YT Music artist (the one whose
+ * name matches, else the first), or one more search on YT Music alone, then
+ * `playerArtist("ytmusic", id, name)`. ("both" is never asked for an artist page:
+ * Rust refuses it, an artist belongs to one source.)
+ */
+export async function fetchArtistAlbums(artist: string, bridge: AlbumLookup = Bridge): Promise<PlayerItem[]> {
+  const found = await bridge.playerSearch("both", artist, 0, 0);
+  const albums = found?.items.filter((it) => it.kind === "album") ?? [];
+  if (albums.length > 0) return albums;
+  let yt = ytArtist(found?.items ?? [], artist);
+  if (!yt) {
+    const again = await bridge.playerSearch("ytmusic", artist, 0, 0);
+    yt = ytArtist(again?.items ?? [], artist);
+  }
+  if (!yt) return [];
+  const page = await bridge.playerArtist("ytmusic", yt.id, yt.title || artist);
+  return page.ok ? page.value.albums : [];
+}
+
+/** A YT Music artist among search results: the one named `name`, else the first. */
+export function ytArtist(items: PlayerItem[], name: string): PlayerItem | null {
+  const artists = items.filter((it) => it.kind === "artist" && it.source === "ytmusic" && it.id);
+  const want = name.trim().toLowerCase();
+  return artists.find((a) => a.title.trim().toLowerCase() === want) ?? artists[0] ?? null;
 }
 
 export interface FlowView {

@@ -353,3 +353,69 @@ test("Feedback: Connect Spotify reports a failed sign-in, and searches again aft
   assert.equal(reran, 1);
 });
 
+// ── Live-test polish (2026-11-09) ─────────────────────────────────────────────
+
+const { fetchArtistAlbums, ytArtist } = await import("../src/desktop-player/flow.ts");
+
+/** A stand-in for the bridge that records the calls and answers from `answers`. */
+function lookup(answers) {
+  const calls = [];
+  return {
+    calls,
+    playerSearch: async (source, query) => {
+      calls.push(["search", source, query]);
+      return { seq: 0, items: answers[`search:${source}`] ?? [], errors: [] };
+    },
+    playerArtist: async (source, id, name) => {
+      calls.push(["artist", source, id, name]);
+      return answers[`artist:${source}:${id}`] ?? { ok: false, error: { message: "no", loginNeeded: false } };
+    },
+  };
+}
+
+test("fetchArtistAlbums: a search's albums (Spotify's) are used as they are", async () => {
+  const albums = [item({ kind: "album", id: "a1", title: "Discovery" })];
+  const b = lookup({ "search:both": [item({ kind: "track" }), ...albums] });
+  assert.deepEqual(await fetchArtistAlbums("Daft Punk", b), albums);
+  assert.deepEqual(b.calls, [["search", "both", "Daft Punk"]]);
+});
+
+test("fetchArtistAlbums: with no albums, the YT Music artist's page gives them", async () => {
+  const ytAlbums = [item({ source: "ytmusic", kind: "album", id: "MPRE1", title: "Random Access Memories" })];
+  const b = lookup({
+    "search:both": [
+      item({ source: "ytmusic", kind: "track", id: "v1", title: "Instant Crush" }),
+      item({ source: "ytmusic", kind: "artist", id: "UCother", title: "Daft Punk Tribute" }),
+      item({ source: "ytmusic", kind: "artist", id: "UCdp", title: "Daft Punk" }),
+    ],
+    "artist:ytmusic:UCdp": { ok: true, value: { tracks: [], albums: ytAlbums } },
+  });
+  assert.deepEqual(await fetchArtistAlbums("Daft Punk", b), ytAlbums);
+  assert.deepEqual(b.calls, [["search", "both", "Daft Punk"], ["artist", "ytmusic", "UCdp", "Daft Punk"]]);
+});
+
+test("fetchArtistAlbums: no YT Music artist in the first search asks YT Music alone; none at all is no albums", async () => {
+  const ytAlbums = [item({ source: "ytmusic", kind: "album", id: "MPRE2" })];
+  const b = lookup({
+    "search:ytmusic": [item({ source: "ytmusic", kind: "artist", id: "UCq", title: "Queen" })],
+    "artist:ytmusic:UCq": { ok: true, value: { tracks: [], albums: ytAlbums } },
+  });
+  assert.deepEqual(await fetchArtistAlbums("Queen", b), ytAlbums);
+  assert.deepEqual(b.calls.map((c) => c.slice(0, 2)), [["search", "both"], ["search", "ytmusic"], ["artist", "ytmusic"]]);
+
+  const none = lookup({});
+  assert.deepEqual(await fetchArtistAlbums("Nobody", none), []);
+  assert.equal(none.calls.some((c) => c[0] === "artist"), false, "never asks for a page with no artist");
+});
+
+test("ytArtist: the exact name first, else the first YT Music artist; Spotify artists are not taken", () => {
+  const list = [
+    item({ source: "spotify", kind: "artist", id: "s", title: "Daft Punk" }),
+    item({ source: "ytmusic", kind: "artist", id: "y1", title: "Daft Punk Live" }),
+    item({ source: "ytmusic", kind: "artist", id: "y2", title: "daft punk " }),
+  ];
+  assert.equal(ytArtist(list, "Daft Punk").id, "y2");
+  assert.equal(ytArtist(list, "Someone").id, "y1");
+  assert.equal(ytArtist(list.slice(0, 1), "Daft Punk"), null);
+});
+
