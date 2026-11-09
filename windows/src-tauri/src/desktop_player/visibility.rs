@@ -42,6 +42,7 @@ pub fn desktop_visible(wins: &[Win], current: u32) -> bool {
 
 /// True when someone else's desktop-type window sits above ours in `stacking`
 /// (bottom to top, as `_NET_CLIENT_LIST_STACKING`). False while ours is not there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn foreign_desktop_above(stacking: &[Win]) -> bool {
     let Some(mine) = stacking.iter().rposition(|w| w.ours && w.desktop_type) else { return false };
     stacking[mine + 1..].iter().any(|w| w.desktop_type && !w.ours)
@@ -50,6 +51,7 @@ pub fn foreign_desktop_above(stacking: &[Win]) -> bool {
 /// Raise only when a foreign desktop window has just come above ours: once per
 /// time it happens, so a wallpaper app that raises itself back cannot make a loop,
 /// and a raise that does nothing (no xdotool) is not retried on every event.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn should_raise(was_above: bool, is_above: bool) -> bool {
     is_above && !was_above
 }

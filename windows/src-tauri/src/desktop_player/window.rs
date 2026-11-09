@@ -60,6 +60,7 @@ pub fn primary_geometry(app: &AppHandle) -> Option<Geometry> {
 
 /// Shows the window on the primary monitor, over the wallpaper; it is made
 /// (hidden) the first time. Where it cannot be made it stays off. Any thread.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // called by the watcher, Linux only
 pub fn show(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
@@ -71,6 +72,7 @@ pub fn show(app: &AppHandle) {
 }
 
 /// Hides the window and lets go of the keyboard. Any thread.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn hide(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
@@ -83,6 +85,7 @@ pub fn hide(app: &AppHandle) {
 
 /// Puts the window back over the other desktop-level windows, for when a
 /// wallpaper app maps its own desktop window on top of it. Any thread.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn raise(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     {
