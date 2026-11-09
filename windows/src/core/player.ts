@@ -42,3 +42,22 @@ export interface PlayResult {
   /** Played through the official Spotify app because the headless device was not there. */
   fallbackUsed: boolean;
 }
+
+/** Why a play, the DJ or an artist/album load failed (Rust's `PlayerError`). */
+export interface PlayerFailure {
+  /** Already translated; "" when nothing better than the view's own words is known. */
+  message: string;
+  /** Spotify needs the user to sign in (again). */
+  loginNeeded: boolean;
+}
+
+export type PlayerOutcome<T> = { ok: true; value: T } | { ok: false; error: PlayerFailure };
+
+/** Reads what a failed `player_*` command threw: Rust's `{ message, loginNeeded }`, or a bare string. */
+export function playerFailure(err: unknown): PlayerFailure {
+  if (err && typeof err === "object") {
+    const o = err as { message?: unknown; loginNeeded?: unknown };
+    return { message: typeof o.message === "string" ? o.message : "", loginNeeded: o.loginNeeded === true };
+  }
+  return { message: typeof err === "string" ? err : "", loginNeeded: false };
+}

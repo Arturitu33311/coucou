@@ -4933,6 +4933,17 @@
    "pt-BR": "A entrada no Spotify não retornou nenhum código",
    "ru": "Вход в Spotify не вернул код",
    "id": "Masuk ke Spotify tidak memberikan kode"
+  },
+  "Starting…": {
+   "zh-Hans": "正在开始…",
+   "hi": "शुरू हो रहा है…",
+   "es": "Iniciando…",
+   "ar": "جارٍ البدء…",
+   "fr": "Lancement…",
+   "bn": "শুরু হচ্ছে…",
+   "pt-BR": "Iniciando…",
+   "ru": "Запуск…",
+   "id": "Memulai…"
   }
  }
 }

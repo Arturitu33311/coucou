@@ -26,7 +26,7 @@ import { closePlanCard, openPlanColor, planCardOpen } from "../views/usage";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { buildMusicStrip, type MusicHost } from "../views/music";
 import { barsWantedFor, setBarsWanted } from "./music";
-import type { PlayerHost } from "../views/player";
+import { foldsOnBlur, type PlayerHost } from "../views/player";
 import { h, svg } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
@@ -1177,6 +1177,12 @@ export class Island {
         else if (!State.isPinned) this.collapse();
       } else if (hubKey(e)) e.preventDefault();
       State.lastActivity = performance.now();
+    });
+
+    // The player waits an hour for the pointer (PLAYER_HOLD_S), so a click outside it is
+    // what folds it: the window then loses the keyboard while the pointer is elsewhere.
+    window.addEventListener("blur", () => {
+      if (foldsOnBlur(State)) this.collapse();
     });
 
     void onDragDrop((e) => this.onDragDrop(e));

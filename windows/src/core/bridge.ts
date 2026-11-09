@@ -8,7 +8,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { AgentSession, LyricLine, MusicTrack, Peripheral, Settings } from "./state";
 import type { RecapHistory, RecapPrefs } from "../recap/summary";
 import type { SpotifyState } from "./spotify";
-import type { ArtistPage, PlayerItem, PlayerSource, PlayResult, SearchResult } from "./player";
+import { playerFailure, type ArtistPage, type PlayerItem, type PlayerOutcome, type PlayerSource, type PlayResult, type SearchResult } from "./player";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -333,21 +333,24 @@ export const Bridge = {
   musicBars: (on: boolean) => call<boolean>("music_bars", { on }),
 
   // ── Glass player (src-tauri/src/player) ───────────────────────────────────
-  // Each resolves to null outside the app or when the command failed.
+  // The search and the recents resolve to null outside the app or when the command failed;
+  // the artist, album, play and DJ calls say why they failed (a PlayerOutcome).
   /** Searches one source or both; `seq` comes back in the answer so a stale one can be dropped. */
   playerSearch: (source: PlayerSource, query: string, offset: number, seq: number) =>
     call<SearchResult>("player_search", { source, query, offset, seq }),
   /** An artist's songs and albums (`name` feeds Spotify's `artist:"…"` search). */
   playerArtist: (source: PlayerSource, id: string, name: string) =>
-    call<ArtistPage>("player_artist", { source, id, name }),
+    playerCall<ArtistPage>("player_artist", { source, id, name }),
   /** An album's songs. */
-  playerAlbum: (source: PlayerSource, id: string) => call<PlayerItem[]>("player_album", { source, id }),
+  playerAlbum: (source: PlayerSource, id: string) => playerCall<PlayerItem[]>("player_album", { source, id }),
   /** Plays a song, an album or a list where the user listens (the other source is paused first). */
-  playerPlay: (item: PlayerItem) => call<PlayResult>("player_play", { item }),
+  playerPlay: (item: PlayerItem) => playerCall<PlayResult>("player_play", { item }),
   /** What was played lately, newest first. */
   playerRecents: () => call<PlayerItem[]>("player_recents"),
   /** Starts Spotify's DJ. */
-  playerDj: () => call<PlayResult>("player_dj"),
+  playerDj: () => playerCall<PlayResult>("player_dj"),
+  /** A cover from the player's services' image servers, as a data: URL (no "online" setting needed). */
+  playerArt: (url: string) => callOrThrow<string>("player_art", { url }),
   /** Opens Spotify's sign-in in the browser and waits for it. Resolves to an error message, or null when it worked. */
   playerSpotifyLogin: async (): Promise<string | null> => {
     if (!IS_TAURI) return "not running in the app";
@@ -670,6 +673,19 @@ export interface HookPreview {
   settingsPath: string;
   /** Hand back to hooksApply so only the reviewed diff is ever written. */
   fingerprint: string;
+}
+
+/** A glass player command that says why it failed: Rust's `{ message, loginNeeded }`. */
+async function playerCall<T>(cmd: string, args?: Record<string, unknown>): Promise<PlayerOutcome<T>> {
+  const nothing: PlayerOutcome<T> = { ok: false, error: { message: "", loginNeeded: false } };
+  if (!IS_TAURI) return nothing;
+  try {
+    const value = await invoke<T>(cmd, args);
+    return value == null ? nothing : { ok: true, value };
+  } catch (err) {
+    console.error(`[coucou] ${cmd} failed`, err);
+    return { ok: false, error: playerFailure(err) };
+  }
 }
 
 /** Same as `call`, but surfaces the error so the UI can show what went wrong. */

@@ -16,7 +16,9 @@ import { ICONS } from "./icons";
 import type { ViewActions, ViewHost } from "./views";
 import { Bridge } from "../core/bridge";
 import { State, type Settings } from "../core/state";
-import type { ArtistPage, PlayerItem, PlayerSource, PlayerSourceName, SourceError } from "../core/player";
+import type {
+  ArtistPage, PlayerFailure, PlayerItem, PlayerOutcome, PlayerSource, PlayerSourceName, PlayResult, SourceError,
+} from "../core/player";
 import { buildCoverflow, type Coverflow } from "./coverflow";
 import { liveBars, musicTint, MUSIC_RED } from "../island/music";
 import { t, tl } from "../i18n/i18n";
@@ -60,6 +62,21 @@ export class QueryGate {
   }
 }
 
+/**
+ * The window lost the keyboard (a click in another app): the open player folds, as a click
+ * outside it should — unless pinned, a card waits, or the pointer is still on the island
+ * (a click there that opened the browser or the Spotify app).
+ */
+export function foldsOnBlur(s: {
+  mode: string;
+  view: string;
+  isPinned: boolean;
+  pointerInIsland: boolean;
+  pendingApproval: unknown;
+}): boolean {
+  return s.mode === "expanded" && s.view === "player" && !s.isPinned && !s.pointerInIsland && !s.pendingApproval;
+}
+
 const isWindows = (userAgent: string) => userAgent.includes("Windows");
 
 /** What the selector offers: YT Music (mpv + yt-dlp) is Linux only, so Windows has Spotify alone. */
@@ -90,12 +107,22 @@ function control(path: string, size: number, label: string, onClick: () => void)
   return btn;
 }
 
-/** The covers come as web URLs, which the page may not load itself (CSP): Rust fetches them. */
+/**
+ * The covers come as web URLs, which the page may not load itself (CSP): Rust fetches them
+ * (only from the player's services' image servers). A cover that failed is asked again next time.
+ */
 const thumbs = new Map<string, Promise<string | null>>();
-function thumb(url: string): Promise<string | null> {
+export function thumb(url: string): Promise<string | null> {
   let p = thumbs.get(url);
   if (!p) {
-    p = Bridge.musicArt(url).then((data) => data || null, () => null);
+    const asked: Promise<string | null> = Bridge.playerArt(url).then(
+      (data) => data || null,
+      () => null,
+    );
+    p = asked.then((data) => {
+      if (data === null && thumbs.get(url) === p) thumbs.delete(url);
+      return data;
+    });
     thumbs.set(url, p);
     // A long session of searching must not keep every cover it ever saw.
     if (thumbs.size > 150) thumbs.delete(thumbs.keys().next().value as string);
@@ -303,6 +330,12 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   let loadingMore = false;
   let failed = false;
   let notice: { text: string; tone: "" | "err"; until: number } | null = null;
+  /** A play or the DJ is on its way: further presses wait for it. */
+  let starting = false;
+  /** Something the user did failed for want of a Spotify sign-in. */
+  let loginNeeded = false;
+  /** Spotify said, when the view came on screen, that it has no session. */
+  let spotifyOff = false;
   let artistOpen: PlayerItem | null = null;
   let debounce: number | null = null;
   // Idle (nothing typed) and the artist page each keep their own selection.
@@ -361,6 +394,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     const at = Date.now();
     if (at - recentsAt < RECENTS_FRESH_MS) return;
     recentsAt = at;
+    void checkSpotify();
     const seq = recentsGate.next();
     const res = await Bridge.playerRecents();
     if (!recentsGate.isCurrent(seq)) return;
@@ -395,11 +429,48 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     idleNav.set(allRows, djShown() ? [() => void playDj(), ...acts] : acts);
   }
 
-  async function playDj() {
+  /** Whether Spotify has a session, so "Connect Spotify" can be offered before anything fails. */
+  async function checkSpotify() {
+    const on = await Bridge.playerSpotifyConnected();
+    if (on === null) return; // not known (outside the app)
+    spotifyOff = !on;
+    paintFoot();
+  }
+
+  function playDj() {
+    return start(() => Bridge.playerDj(), t("Couldn't start the DJ"), "spotify");
+  }
+
+  /** A play or the DJ: one at a time, "Starting…" meanwhile, then what happened. */
+  async function start(run: () => Promise<PlayerOutcome<PlayResult>>, failText: string, source: PlayerSourceName) {
     used();
-    const res = await Bridge.playerDj();
-    if (!res) say(t("Couldn't start the DJ"), "err");
-    else if (res.fallbackUsed) say(t("Played through the Spotify app"));
+    if (starting) {
+      paintFoot(); // the press is ignored: the first one is still starting
+      return;
+    }
+    starting = true;
+    notice = { text: t("Starting…"), tone: "", until: Infinity };
+    paintFoot();
+    try {
+      const res = await run();
+      notice = null;
+      if (!res.ok) {
+        report(res.error, failText);
+        return;
+      }
+      loginNeeded = false;
+      if (source === "spotify") spotifyOff = false;
+      if (res.value.fallbackUsed) say(t("Played through the Spotify app"));
+      else paintFoot();
+    } finally {
+      starting = false;
+    }
+  }
+
+  /** Says why something failed, and offers to sign in to Spotify when that is why. */
+  function report(e: PlayerFailure, fallback: string) {
+    if (e.loginNeeded) loginNeeded = true;
+    say(e.message || fallback, "err");
   }
 
   // ── Rendering ──
@@ -419,15 +490,18 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       for (const e of errors) {
         parts.push(h("span", { class: "pl-msg err", text: `${SOURCE_NAME[e.source] ?? e.source}: ${e.message}` }));
       }
-      if (errors.some((e) => e.loginNeeded)) {
-        const b = h("button", { class: "pl-login", text: t("Connect Spotify") });
-        b.addEventListener("click", (e) => {
-          e.stopPropagation();
-          void connectSpotify();
-        });
-        parts.push(b);
-      }
       if (parts.length === 0 && loadingMore) parts.push(h("span", { class: "pl-msg", text: t("Loading…") }));
+    }
+    // From any action that needed it, or up front when Spotify is chosen and has no session.
+    const offerLogin =
+      loginNeeded || (query !== "" && errors.some((e) => e.loginNeeded)) || (spotifyOff && source() !== "ytmusic");
+    if (offerLogin) {
+      const b = h("button", { class: "pl-login", text: t("Connect Spotify") });
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void connectSpotify();
+      });
+      parts.push(b);
     }
     foot.append(...parts);
     foot.classList.toggle("on", parts.length > 0);
@@ -576,6 +650,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     State.settings.playerSource = opt as Settings["playerSource"];
     void Bridge.saveSettings(State.settings);
     paintSources();
+    paintFoot(); // the sign-in button goes with a YT Music only choice
     if (query) void runSearch();
     input.focus();
   }
@@ -590,8 +665,14 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   async function connectSpotify() {
     used();
     const err = await Bridge.playerSpotifyLogin();
-    if (err) say(err, "err");
-    else if (query) void runSearch();
+    if (err) {
+      say(err, "err");
+      return;
+    }
+    loginNeeded = false;
+    spotifyOff = false;
+    paintFoot();
+    if (query) void runSearch();
   }
 
   async function activate(item: PlayerItem) {
@@ -600,9 +681,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       void openArtist(item);
       return;
     }
-    const res = await Bridge.playerPlay(item);
-    if (!res) say(t("Couldn't play this"), "err");
-    else if (res.fallbackUsed) say(t("Played through the Spotify app"));
+    await start(() => Bridge.playerPlay(item), t("Couldn't play this"), item.source);
   }
 
   // ── An artist: name, albums in a cover flow, songs beside them ──
@@ -648,8 +727,10 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     paintBody();
     songs.focus();
     // Asked of the artist's own source: the selector may say "both".
-    const page: ArtistPage | null = await Bridge.playerArtist(item.source, item.id, item.title);
+    const res = await Bridge.playerArtist(item.source, item.id, item.title);
     if (!artistGate.isCurrent(seq) || artistOpen !== item) return;
+    const page: ArtistPage | null = res.ok ? res.value : null;
+    if (!res.ok) report(res.error, t("Couldn't load the songs"));
     albums = page?.albums ?? [];
     artistTracks = page?.tracks ?? [];
     if (albums.length > 0) {
@@ -657,7 +738,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       flowBox.append(flow.el);
       artistMain.classList.remove("no-albums");
     }
-    paintSongs(page ? artistTracks : null, page === null);
+    paintSongs(page ? artistTracks : [], page === null); // a failed load says so instead of loading forever
     // The keys go to the covers first, else to the songs (never into the field: Backspace goes back).
     if (flow) flow.el.focus();
     else songs.focus();
@@ -669,9 +750,10 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     const seq = artistGate.next();
     shownAlbum = album;
     paintSongs(null);
-    const list = await Bridge.playerAlbum(album.source, album.id);
+    const res = await Bridge.playerAlbum(album.source, album.id);
     if (!artistGate.isCurrent(seq) || artistOpen !== artistAt) return;
-    paintSongs(list ?? [], list === null);
+    if (!res.ok) report(res.error, t("Couldn't load the songs"));
+    paintSongs(res.ok ? res.value : [], !res.ok);
   }
 
   function showArtistSongs() {
@@ -811,6 +893,8 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   // Keys typed anywhere but the field (the cover flow, the songs) reach the page here.
   root.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.target === input || !artistOpen) return;
+    // A button reached with Tab handles its own keys (Enter presses it).
+    if ((e.target as HTMLElement | null)?.tagName === "BUTTON") return;
     artistKey(e, false);
   });
   list.addEventListener("scroll", () => {
@@ -886,7 +970,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
         return;
       }
       if (State.playerFrom === "music") actions.setView("music");
-      else actions.collapse();
+      else if (!State.isPinned) actions.collapse(); // pinned: Esc leaves it open, as in the other views
     },
   };
   paintIdle();

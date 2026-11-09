@@ -413,3 +413,254 @@ test("artistPageWithNothingDoesNotCrash", async () => {
   assert.equal(pane.find(".cf-cover").length, 0);
   assert.ok(pane.textContent.includes("Nobody"));
 });
+
+// ── Final review fixes ────────────────────────────────────────────────────────
+
+const { foldsOnBlur, thumb } = await import("../src/views/player.ts");
+const { playerFailure } = await import("../src/core/player.ts");
+const footOf = (host) => host.el.querySelector(".pl-foot");
+const loginButton = (host) => footOf(host).find(".pl-login")[0];
+
+test("playerFailure reads Rust's error object or a bare string", () => {
+  assert.deepEqual(playerFailure({ message: "Spotify login needed", loginNeeded: true }), {
+    message: "Spotify login needed",
+    loginNeeded: true,
+  });
+  assert.deepEqual(playerFailure("boom"), { message: "boom", loginNeeded: false });
+  assert.deepEqual(playerFailure(null), { message: "", loginNeeded: false });
+  assert.deepEqual(playerFailure({ message: 3 }), { message: "", loginNeeded: false });
+});
+
+test("a failed play shows Rust's reason, and Connect Spotify when signing in is why", async () => {
+  await withAnswers(
+    {
+      player_play: () => {
+        throw { message: "Spotify login needed", loginNeeded: true };
+      },
+    },
+    async () => {
+      const { actions } = fakeActions();
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      host.sync();
+      assert.equal(loginButton(host), undefined);
+      const input = host.el.querySelector(".pl-input");
+      // The search itself worked (no login error there): only the play needs the sign-in.
+      await withAnswers({ player_search: (a) => ({ seq: a.seq, items: [track(7)], errors: [] }) }, async () => {
+        input.value = "x";
+        press(input, "Enter", input); // typed faster than the debounce: searches now
+        await flush();
+        await flush();
+        press(input, "Enter", input);
+        await flush();
+        await flush();
+      });
+      assert.ok(footOf(host).textContent.includes("Spotify login needed"), footOf(host).textContent);
+      assert.ok(!footOf(host).textContent.includes("Couldn't play this"));
+      assert.ok(loginButton(host), "Connect Spotify is offered");
+    },
+  );
+});
+
+test("the DJ failing says why instead of a generic line", async () => {
+  await withAnswers(
+    {
+      player_dj: () => {
+        throw { message: "No Spotify device", loginNeeded: false };
+      },
+    },
+    async () => {
+      const { actions } = fakeActions();
+      State.settings.playerSource = "both";
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      host.sync();
+      host.el.find(".pl-dj")[0].fire("click");
+      await flush();
+      await flush();
+      assert.ok(footOf(host).textContent.includes("No Spotify device"));
+      assert.equal(loginButton(host), undefined);
+    },
+  );
+});
+
+test("a second press while a play starts is ignored, with Starting… shown", async () => {
+  let release;
+  const plays = [];
+  await withAnswers(
+    {
+      player_play: (a) => {
+        plays.push(a.item.id);
+        return new Promise((r) => (release = () => r({ fallbackUsed: false })));
+      },
+      player_search: (a) => ({ seq: a.seq, items: [track(1), track(2)], errors: [] }),
+    },
+    async () => {
+      const { actions } = fakeActions();
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      host.sync();
+      const input = host.el.querySelector(".pl-input");
+      input.value = "song";
+      press(input, "Enter", input);
+      await flush();
+      await flush();
+      const rows = host.el.querySelector(".pl-list").find(".pl-row");
+      assert.equal(rows.length, 2);
+      rows[0].fire("click");
+      await flush();
+      assert.ok(footOf(host).textContent.includes("Starting…"));
+      rows[1].fire("click");
+      press(input, "Enter", input);
+      await flush();
+      assert.deepEqual(plays, ["t1"], "nothing else was sent while the first one starts");
+      assert.ok(footOf(host).textContent.includes("Starting…"));
+      release();
+      await flush();
+      await flush();
+      assert.ok(!footOf(host).textContent.includes("Starting…"));
+      rows[1].fire("click");
+      await flush();
+      assert.deepEqual(plays, ["t1", "t2"], "free again once it answered");
+      release();
+      await flush();
+    },
+  );
+});
+
+test("Connect Spotify shows up front when Spotify has no session and is selected", async () => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 9_000_000 });
+  const saved = State.settings.playerSource;
+  try {
+    await withAnswers({ player_spotify_connected: false }, async () => {
+      State.settings.playerSource = "both";
+      const { actions } = fakeActions();
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      State.mode = "expanded";
+      State.view = "player";
+      host.sync();
+      await flush();
+      assert.ok(loginButton(host), "offered before any search");
+      // YT Music alone has no use for it.
+      host.el.find(".pl-src").find((b) => b.getAttribute("data-src") === "ytmusic").fire("click");
+      assert.equal(loginButton(host), undefined);
+    });
+    await withAnswers({ player_spotify_connected: true }, async () => {
+      State.settings.playerSource = "spotify";
+      const { actions } = fakeActions();
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      mock.timers.tick(5000);
+      host.sync();
+      await flush();
+      assert.equal(loginButton(host), undefined);
+    });
+  } finally {
+    mock.timers.reset();
+    State.settings.playerSource = saved;
+    State.view = "overview";
+    State.mode = "hidden";
+  }
+});
+
+test("an artist that fails to load says why", async () => {
+  await withAnswers(
+    {
+      player_artist: () => {
+        throw { message: "YT Music took too long", loginNeeded: false };
+      },
+    },
+    async () => {
+      const { actions } = fakeActions();
+      const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+      host.openArtist({ source: "ytmusic", kind: "artist", id: "a3", title: "Slow", subtitle: "", artUrl: "" });
+      await flush();
+      await flush();
+      assert.ok(footOf(host).textContent.includes("YT Music took too long"));
+      assert.ok(host.el.querySelector(".pl-artist-pane").textContent.includes("Couldn't load the songs"));
+    },
+  );
+});
+
+test("Esc leaves a pinned player open", () => {
+  const { actions, log } = fakeActions();
+  const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+  State.playerFrom = null;
+  State.isPinned = true;
+  try {
+    host.escape();
+    assert.equal(log.filter(([n]) => n === "collapse").length, 0);
+    State.isPinned = false;
+    host.escape();
+    assert.equal(log.filter(([n]) => n === "collapse").length, 1);
+  } finally {
+    State.isPinned = false;
+  }
+});
+
+test("a click outside (the window loses the keyboard) folds the player, unless pinned or the pointer is on it", () => {
+  const base = { mode: "expanded", view: "player", isPinned: false, pointerInIsland: false, pendingApproval: null };
+  assert.equal(foldsOnBlur(base), true);
+  assert.equal(foldsOnBlur({ ...base, isPinned: true }), false);
+  assert.equal(foldsOnBlur({ ...base, pointerInIsland: true }), false);
+  assert.equal(foldsOnBlur({ ...base, pendingApproval: { id: 1 } }), false);
+  assert.equal(foldsOnBlur({ ...base, view: "music" }), false);
+  assert.equal(foldsOnBlur({ ...base, mode: "compact" }), false);
+});
+
+test("covers come from player_art, and a failed one is asked again", async () => {
+  let fail = true;
+  const asked = [];
+  await withAnswers(
+    {
+      player_art: (a) => {
+        asked.push(a.url);
+        if (fail) throw "art: HTTP 503";
+        return "data:image/png;base64,AAAA";
+      },
+    },
+    async () => {
+      const url = "https://i.scdn.co/image/retry-me";
+      assert.equal(await thumb(url), null);
+      fail = false;
+      assert.equal(await thumb(url), "data:image/png;base64,AAAA");
+      assert.equal(await thumb(url), "data:image/png;base64,AAAA");
+      assert.deepEqual(asked, [url, url], "a success is kept, the failure was not");
+      assert.equal(sent("music_art").filter((a) => a.url === url).length, 0);
+    },
+  );
+});
+
+test("keys on a Tab-focused button on the artist page are the button's", async () => {
+  await withAnswers({ player_artist: { tracks: [track(1)], albums: [] } }, async () => {
+    const { actions } = fakeActions();
+    const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+    host.openArtist({ source: "spotify", kind: "artist", id: "a4", title: "Band", subtitle: "", artUrl: "" });
+    await flush();
+    const pane = host.el.querySelector(".pl-artist-pane");
+    const back = pane.querySelector(".pl-back");
+    const before = sent("player_play").length;
+    // Arrow onto the song, then Enter while the Back button has the focus: not a play.
+    press(host.el, "ArrowDown", pane.querySelector(".pl-songs"));
+    const e = press(host.el, "Enter", back);
+    assert.equal(e.defaultPrevented, false);
+    press(host.el, "Backspace", back);
+    await flush();
+    assert.equal(sent("player_play").length, before);
+    assert.notEqual(pane.style.display, "none", "still on the artist");
+  });
+});
+
+test("a YT Music artist row is labelled by the view, not by the helper", async () => {
+  // The helper sends an empty subtitle for artists: the view's kind label says "Artist".
+  const singer = { source: "ytmusic", kind: "artist", id: "UC1", title: "Singer", subtitle: "", artUrl: "" };
+  await withAnswers({ player_search: (a) => ({ seq: a.seq, items: [singer], errors: [] }) }, async () => {
+    const { actions } = fakeActions();
+    const host = buildPlayerView(actions, { userAgent: LINUX_UA });
+    host.sync();
+    const input = host.el.querySelector(".pl-input");
+    input.value = "singer";
+    press(input, "Enter", input);
+    await flush();
+    await flush();
+    const row = host.el.querySelector(".pl-list").find(".pl-row")[0];
+    assert.equal(row.find(".pl-kind")[0]?.textContent, "Artist");
+    assert.equal(row.find(".pl-row-sub").length, 0);
+  });
+});
