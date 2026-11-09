@@ -26,6 +26,11 @@ const UPOWER_DEVICE: &str = "org.freedesktop.UPower.Device";
 const NM: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 
+/// The pages told of a change: the island, and the desktop player's gauge (which
+/// otherwise kept the reading it pulled at start, e.g. a passing "limited" from
+/// NetworkManager's check, and said "Offline" until the app was restarted).
+pub const LISTENERS: [&str; 2] = [WINDOW_LABEL, crate::desktop_player::window::LABEL];
+
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Sys {
@@ -111,7 +116,9 @@ fn refresh(app: &AppHandle, conn: &Connection) {
     if cur.as_ref() != Some(&now) {
         *cur = Some(now.clone());
         drop(cur);
-        let _ = app.emit_to(WINDOW_LABEL, "sysstate", now);
+        for label in LISTENERS {
+            let _ = app.emit_to(label, "sysstate", now.clone());
+        }
     }
 }
 
@@ -173,6 +180,22 @@ mod tests {
         assert!(!online_from(3, 60));
         assert!(online_from(0, 70), "no check configured: the state decides");
         assert!(!online_from(0, 20));
+    }
+
+    #[test]
+    fn changes_reach_the_island_and_the_desktop_player() {
+        assert!(LISTENERS.contains(&WINDOW_LABEL));
+        assert!(LISTENERS.contains(&crate::desktop_player::window::LABEL));
+    }
+
+    /// The pages read these keys (src/core/state.ts `SysInfo`): battery, plugged, charging, online.
+    #[test]
+    fn serializes_the_fields_the_pages_read() {
+        let v = serde_json::to_value(Sys { battery: Some(80), plugged: true, charging: false, online: true }).unwrap();
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["battery", "charging", "online", "plugged"]);
+        assert_eq!(v["online"], serde_json::Value::Bool(true));
     }
 
     #[test]
