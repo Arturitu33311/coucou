@@ -29,6 +29,8 @@ pub struct Win {
     pub ours: bool,
     /// `_NET_WM_WINDOW_TYPE_DESKTOP`: a desktop-level window (the player, a wallpaper app's).
     pub desktop_type: bool,
+    /// A desktop-type window whose WM_CLASS names Hidamari (the wallpaper app we stand in for).
+    pub hidamari: bool,
 }
 
 const ALL_DESKTOPS: u32 = 0xFFFF_FFFF;
@@ -54,6 +56,41 @@ pub fn foreign_desktop_above(stacking: &[Win]) -> bool {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn should_raise(was_above: bool, is_above: bool) -> bool {
     is_above && !was_above
+}
+
+/// Hidamari's X11 WM_CLASS (instance and class) contains "hidamari", any case.
+pub fn is_hidamari(wm_class: &str) -> bool {
+    wm_class.to_ascii_lowercase().contains("hidamari")
+}
+
+/// What to do about foreign desktop-type windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub enum Action {
+    Raise,
+    StopHidamari,
+    None,
+}
+
+/// Decide, once per event. `shown`: our desktop window is really on screen (never
+/// act otherwise: a player that cannot show must not remove the wallpaper).
+/// `was_hidamari`: Hidamari was already present at the previous event (stop it
+/// once per appearance, so a failed kill is not retried on every event).
+/// `was_above`/`is_above`: as `should_raise`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn foreign_action(stacking: &[Win], shown: bool, was_hidamari: bool, was_above: bool) -> Action {
+    if !shown {
+        return Action::None;
+    }
+    let hidamari = stacking.iter().any(|w| w.hidamari && w.desktop_type && !w.ours);
+    if hidamari {
+        return if was_hidamari { Action::None } else { Action::StopHidamari };
+    }
+    if should_raise(was_above, foreign_desktop_above(stacking)) {
+        Action::Raise
+    } else {
+        Action::None
+    }
 }
 
 static VISIBLE: AtomicBool = AtomicBool::new(false);
@@ -111,6 +148,7 @@ mod linux {
         t_dialog: u32,
         t_desktop: u32,
         pid: u32,
+        wm_class: u32,
     }
 
     fn atom(c: &RustConnection, n: &str) -> R<u32> {
@@ -129,6 +167,7 @@ mod linux {
             t_dialog: atom(c, "_NET_WM_WINDOW_TYPE_DIALOG")?,
             t_desktop: atom(c, "_NET_WM_WINDOW_TYPE_DESKTOP")?,
             pid: atom(c, "_NET_WM_PID")?,
+            wm_class: atom(c, "WM_CLASS")?,
         })
     }
 
@@ -147,11 +186,18 @@ mod linux {
         let normal = types.is_empty() || types.iter().any(|t| *t == a.t_normal || *t == a.t_dialog);
         let ours = cards(c, id, a.pid, AtomEnum::CARDINAL, 1).first() == Some(&me);
         let desktop_type = types.contains(&a.t_desktop);
-        Win { id, desktop, hidden, normal, ours, desktop_type }
+        let hidamari = desktop_type && !ours && wm_class(c, a, id).map_or(false, |s| is_hidamari(&s));
+        Win { id, desktop, hidden, normal, ours, desktop_type, hidamari }
     }
 
-    /// (desktop in view, a foreign desktop window above ours)
-    fn compute(c: &RustConnection, a: &Atoms, root: Window, watched: &mut HashSet<Window>) -> (bool, bool) {
+    /// WM_CLASS is two NUL-separated strings (instance, class); joined with a space.
+    fn wm_class(c: &RustConnection, a: &Atoms, id: Window) -> Option<String> {
+        let r = c.get_property(false, id, a.wm_class, AtomEnum::STRING, 0, 64).ok()?.reply().ok()?;
+        Some(String::from_utf8_lossy(&r.value).replace('\0', " "))
+    }
+
+    /// (desktop in view, the stacking list read)
+    fn compute(c: &RustConnection, a: &Atoms, root: Window, watched: &mut HashSet<Window>) -> (bool, Vec<Win>) {
         let current = cards(c, root, a.current_desktop, AtomEnum::CARDINAL, 1).first().copied().unwrap_or(0);
         let me = std::process::id();
         let mut wins = Vec::new();
@@ -162,7 +208,7 @@ mod linux {
             }
             wins.push(read_win(c, a, id, me));
         }
-        (desktop_visible(&wins, current), foreign_desktop_above(&wins))
+        (desktop_visible(&wins, current), wins)
     }
 
     pub fn run(app: &tauri::AppHandle) -> R<()> {
@@ -173,7 +219,10 @@ mod linux {
         c.flush()?;
 
         let mut watched = HashSet::new();
-        let (mut last, mut above) = compute(&c, &a, root, &mut watched);
+        let (mut last, first) = compute(&c, &a, root, &mut watched);
+        let mut above = foreign_desktop_above(&first);
+        // true once we have dealt with the Hidamari window that is present (not before our window shows)
+        let mut hidamari = false;
         publish(app, last);
         loop {
             let mut relevant = false;
@@ -195,14 +244,41 @@ mod linux {
             // Forget windows that left the list so the set doesn't grow forever.
             let live: HashSet<Window> = cards(&c, root, a.stacking, AtomEnum::WINDOW, 4096).into_iter().collect();
             watched.retain(|w| live.contains(w));
-            let (now, now_above) = compute(&c, &a, root, &mut watched);
+            let (now, wins) = compute(&c, &a, root, &mut watched);
+            let now_above = foreign_desktop_above(&wins);
             if now != last {
                 last = now;
                 publish(app, now);
-            } else if now && should_raise(above, now_above) {
-                window::raise(app);
+            } else if now {
+                match foreign_action(&wins, window::is_shown(), hidamari, above) {
+                    Action::Raise => window::raise(app),
+                    Action::StopHidamari => stop_hidamari(),
+                    Action::None => {}
+                }
             }
             above = now_above;
+            hidamari = wins.iter().any(|w| w.hidamari) && (hidamari || (now && window::is_shown()));
+        }
+    }
+
+    /// The desktop player stands in for Hidamari's wallpaper: stop it (the user's
+    /// launcher restarts it when Coucou exits). Spawned, never waited on.
+    fn stop_hidamari() {
+        match std::process::Command::new("flatpak")
+            .args(["kill", "io.github.jeffshee.Hidamari"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                crate::log::line("desktop player: stopping Hidamari (flatpak kill)");
+                // Reap in the background so no zombie is left behind.
+                let _ = std::thread::Builder::new().name("hidamari-kill".into()).spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => crate::log::line(format!("desktop player: could not stop Hidamari: {e}")),
         }
     }
 
@@ -237,11 +313,11 @@ mod tests {
     use super::*;
 
     fn w(id: u32, desktop: Option<u32>) -> Win {
-        Win { id, desktop, hidden: false, normal: true, ours: false, desktop_type: false }
+        Win { id, desktop, hidden: false, normal: true, ours: false, desktop_type: false, hidamari: false }
     }
 
     fn desk(id: u32, ours: bool) -> Win {
-        Win { id, desktop: Some(ALL_DESKTOPS), hidden: false, normal: false, ours, desktop_type: true }
+        Win { id, desktop: Some(ALL_DESKTOPS), hidden: false, normal: false, ours, desktop_type: true, hidamari: false }
     }
 
     #[test]
@@ -303,5 +379,40 @@ mod tests {
         assert!(!should_raise(true, true));
         assert!(!should_raise(true, false));
         assert!(!should_raise(false, false));
+    }
+
+    fn hida(id: u32) -> Win {
+        Win { hidamari: true, ..desk(id, false) }
+    }
+
+    #[test]
+    fn hidamari_is_recognised_by_wm_class() {
+        assert!(is_hidamari("hidamari Hidamari"));
+        assert!(is_hidamari("io.github.jeffshee.Hidamari"));
+        assert!(!is_hidamari("gnome-shell Gnome-shell"));
+        assert!(!is_hidamari(""));
+    }
+
+    #[test]
+    fn hidamari_is_stopped_once_while_our_window_shows() {
+        let st = [hida(2), desk(1, true)];
+        assert_eq!(foreign_action(&st, true, false, false), Action::StopHidamari);
+        // already handled at the previous event: no repeat
+        assert_eq!(foreign_action(&st, true, true, false), Action::None);
+        // gone and back later: stopped again
+        assert_eq!(foreign_action(&[hida(5), desk(1, true)], true, false, false), Action::StopHidamari);
+    }
+
+    #[test]
+    fn nothing_is_stopped_while_our_window_is_not_shown() {
+        assert_eq!(foreign_action(&[hida(2)], false, false, false), Action::None);
+    }
+
+    #[test]
+    fn other_desktop_windows_keep_the_raise_behaviour() {
+        let st = [desk(1, true), desk(2, false)];
+        assert_eq!(foreign_action(&st, true, false, false), Action::Raise);
+        assert_eq!(foreign_action(&st, true, false, true), Action::None);
+        assert_eq!(foreign_action(&[desk(2, false), desk(1, true)], true, false, false), Action::None);
     }
 }
