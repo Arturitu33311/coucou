@@ -360,6 +360,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* always some travel, even with one recent: the header can always go up over the clock */
+  min-height: calc(100% + 300px);
 }
 .dp-recents-header {
   align-self: flex-start;

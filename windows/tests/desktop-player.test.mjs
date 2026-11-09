@@ -358,7 +358,15 @@ test("Feedback: Connect Spotify reports a failed sign-in, and searches again aft
 
 // ── Live-test polish (2026-11-09) ─────────────────────────────────────────────
 
-const { fetchArtistAlbums, ytArtist } = await import("../src/desktop-player/flow.ts");
+const { fetchArtistAlbums, ytArtist, albumByline } = await import("../src/desktop-player/flow.ts");
+
+test("albumByline: a YT Music album shows the artist then its year; Spotify's subtitle is the artist", () => {
+  assert.equal(albumByline(item({ source: "ytmusic", kind: "album", subtitle: "2013" }), "Daft Punk"), "Daft Punk · 2013");
+  assert.equal(albumByline(item({ source: "ytmusic", kind: "album", subtitle: "" }), "Daft Punk"), "Daft Punk");
+  assert.equal(albumByline(item({ source: "ytmusic", kind: "album", subtitle: "2001" }), null), "2001");
+  assert.equal(albumByline(item({ kind: "album", subtitle: "Daft Punk" }), "Someone"), "Daft Punk");
+  assert.equal(albumByline(item({ kind: "album", subtitle: "" }), "Queen"), "Queen");
+});
 
 /** A stand-in for the bridge that records the calls and answers from `answers`. */
 function lookup(answers) {

@@ -112,6 +112,15 @@ export async function fetchArtistAlbums(artist: string, bridge: AlbumLookup = Br
   return page.ok ? page.value.albums : [];
 }
 
+/**
+ * Who an album is by, for the caption. A YT Music artist page gives the year as
+ * the album's subtitle: the artist shown, then the year ("Daft Punk · 2013").
+ */
+export function albumByline(album: PlayerItem, artist: string | null): string {
+  if (album.source === "ytmusic") return [artist, album.subtitle].filter((s) => s && s.trim()).join(" · ");
+  return album.subtitle || artist || "";
+}
+
 /** A YT Music artist among search results: the one named `name`, else the first. */
 export function ytArtist(items: PlayerItem[], name: string): PlayerItem | null {
   const artists = items.filter((it) => it.kind === "artist" && it.source === "ytmusic" && it.id);
@@ -212,7 +221,7 @@ export function buildFlow(
     caption.style.display = "flex";
     capTitle.textContent = curr.title;
     capTitle.title = curr.title;
-    capSub.textContent = `${curr.subtitle || activeArtist || ""} · ${t("Album")}`;
+    capSub.textContent = `${albumByline(curr, activeArtist ?? null)} · ${t("Album")}`;
   }
 
   container.addEventListener("wheel", (e) => {
