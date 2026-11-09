@@ -26,9 +26,8 @@ const UPOWER_DEVICE: &str = "org.freedesktop.UPower.Device";
 const NM: &str = "org.freedesktop.NetworkManager";
 const NM_PATH: &str = "/org/freedesktop/NetworkManager";
 
-/// The pages told of a change: the island, and the desktop player's gauge (which
-/// otherwise kept the reading it pulled at start, e.g. a passing "limited" from
-/// NetworkManager's check, and said "Offline" until the app was restarted).
+/// The pages told of a change: the island and the desktop player's gauge, named
+/// (the page's global `listen()` hears every target today; this does not rely on it).
 pub const LISTENERS: [&str; 2] = [WINDOW_LABEL, crate::desktop_player::window::LABEL];
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -62,8 +61,14 @@ pub fn charging_from(state: u32) -> bool {
 
 /// NetworkManager's connectivity: 0 unknown, 1 none, 2 captive portal, 3 limited, 4 full. When it
 /// does not check (unknown), its overall state decides: 70 is "connected to the internet".
+///
+/// "Limited" on a connected network (state 60, CONNECTED_SITE, or more) counts as online: it only
+/// means NetworkManager's own check page did not answer, and that check flaps (Zorin's
+/// connectivity.zorin-os.com left a working laptop "limited" for 19 minutes on 2026-11-09, so the
+/// gauge said "Offline" while music streamed). The price: a dead line behind a working router
+/// reads online too. None and a captive portal stay offline.
 pub fn online_from(connectivity: u32, state: u32) -> bool {
-    connectivity == 4 || (connectivity == 0 && state >= 70)
+    connectivity == 4 || (connectivity == 3 && state >= 60) || (connectivity == 0 && state >= 70)
 }
 
 fn proxy<'a>(conn: &'a Connection, dest: &'a str, path: &'a str, iface: &'a str) -> Option<zbus::blocking::Proxy<'a>> {
@@ -177,9 +182,17 @@ mod tests {
         assert!(online_from(4, 70));
         assert!(!online_from(1, 70), "connected to a network that reaches nowhere");
         assert!(!online_from(2, 60), "a captive portal is not the internet yet");
-        assert!(!online_from(3, 60));
         assert!(online_from(0, 70), "no check configured: the state decides");
         assert!(!online_from(0, 20));
+    }
+
+    /// The live case of 2026-11-09: NM said LIMITED / CONNECTED_SITE while the internet worked.
+    #[test]
+    fn limited_on_a_connected_network_is_online() {
+        assert!(online_from(3, 60), "the check page did not answer: still online");
+        assert!(online_from(3, 70));
+        assert!(!online_from(3, 50), "still connecting: not yet");
+        assert!(!online_from(3, 20), "disconnected");
     }
 
     #[test]
