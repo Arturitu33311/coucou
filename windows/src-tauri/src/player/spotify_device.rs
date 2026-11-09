@@ -11,6 +11,9 @@ const COUCOU: &str = "Coucou";
 const POLL_EVERY: Duration = Duration::from_millis(500);
 const SERVICE_WAIT: Duration = Duration::from_secs(6);
 const APP_WAIT: Duration = Duration::from_secs(10);
+/// How long `systemctl --user start` may take before it counts as failed.
+#[cfg(target_os = "linux")]
+const SERVICE_START_MAX: Duration = Duration::from_secs(3);
 /// Once "Coucou" failed to appear, plays go straight to the app for this long (no 6 s wait each time).
 #[cfg(any(target_os = "linux", test))]
 const MISSING_FOR: Duration = Duration::from_secs(5 * 60);
@@ -144,15 +147,16 @@ impl Effects for Real {
         spotify_api::devices().await
     }
     async fn start_service(&mut self) -> bool {
-        tokio::process::Command::new("systemctl")
+        let start = tokio::process::Command::new("systemctl")
             .args(["--user", "start", "coucou-spotifyd.service"])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
-            .status()
-            .await
-            .is_ok_and(|s| s.success())
+            .status();
+        // A unit stuck "activating" would otherwise hold every play (they are serialised) for
+        // systemd's own start timeout: past a few seconds it counts as failed.
+        matches!(tokio::time::timeout(SERVICE_START_MAX, start).await, Ok(Ok(s)) if s.success())
     }
     fn launch_app(&mut self) {
         use std::os::unix::process::CommandExt;
