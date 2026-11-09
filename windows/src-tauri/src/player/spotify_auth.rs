@@ -55,7 +55,7 @@ fn b64url(data: &[u8]) -> String {
     out
 }
 
-fn pct_encode(s: &str) -> String {
+pub(crate) fn pct_encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
@@ -281,6 +281,14 @@ async fn token_request(form: &[(&str, &str)]) -> Result<TokenReply, AuthError> {
 
 static REFRESH_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
 
+/// Drops the cached access token so the next `access_token()` refreshes. For a 401: the API rejected a token
+/// we still thought was valid.
+pub fn invalidate_cached_token() {
+    if let Ok(mut c) = CACHE.lock() {
+        *c = None;
+    }
+}
+
 fn cached() -> Option<String> {
     let c = CACHE.lock().ok()?;
     let (token, until) = c.as_ref()?;
@@ -337,6 +345,9 @@ pub async fn access_token() -> Result<String, AuthError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The token cache is a process-wide static: tests that touch it run one at a time.
+    static CACHE_TESTS: Mutex<()> = Mutex::new(());
 
     #[test]
     fn challenge_matches_rfc7636_vector() {
@@ -423,6 +434,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_callers_share_one_refresh() {
+        let _serial = CACHE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
         *CACHE.lock().unwrap() = None;
@@ -441,6 +453,15 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         *CACHE.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn invalidating_the_cache_forces_the_next_call_to_refresh() {
+        let _serial = CACHE_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        store_access("old", 3600);
+        assert_eq!(cached().as_deref(), Some("old"));
+        invalidate_cached_token();
+        assert_eq!(cached(), None);
     }
 
     #[test]

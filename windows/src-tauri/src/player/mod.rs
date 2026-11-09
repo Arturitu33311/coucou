@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub mod history;
 #[cfg(target_os = "linux")]
 pub mod mpv;
+pub mod spotify_api;
 pub mod spotify_auth;
 #[cfg(target_os = "linux")]
 pub mod ytmusic;
