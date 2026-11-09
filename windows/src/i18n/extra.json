@@ -4603,6 +4603,83 @@
    "pt-BR": "Nada tocando",
    "ru": "Ничего не играет",
    "id": "Tidak ada yang diputar"
+  },
+  "DJ": {
+   "zh-Hans": "DJ",
+   "hi": "DJ",
+   "es": "DJ",
+   "ar": "DJ",
+   "fr": "DJ",
+   "bn": "DJ",
+   "pt-BR": "DJ",
+   "ru": "DJ",
+   "id": "DJ"
+  },
+  "Music picked for you by Spotify's DJ": {
+   "zh-Hans": "Spotify DJ 为你挑选的音乐",
+   "hi": "Spotify के DJ द्वारा आपके लिए चुना गया संगीत",
+   "es": "Música elegida para ti por el DJ de Spotify",
+   "ar": "موسيقى يختارها لك DJ ‏Spotify",
+   "fr": "De la musique choisie pour vous par le DJ de Spotify",
+   "bn": "Spotify-এর DJ আপনার জন্য বেছে নেওয়া গান",
+   "pt-BR": "Músicas escolhidas para você pelo DJ do Spotify",
+   "ru": "Музыка, которую подобрал для вас DJ Spotify",
+   "id": "Musik pilihan DJ Spotify untukmu"
+  },
+  "Couldn't start the DJ": {
+   "zh-Hans": "无法启动 DJ",
+   "hi": "DJ शुरू नहीं हो सका",
+   "es": "No se pudo iniciar el DJ",
+   "ar": "تعذّر تشغيل DJ",
+   "fr": "Impossible de lancer le DJ",
+   "bn": "DJ চালু করা গেল না",
+   "pt-BR": "Não foi possível iniciar o DJ",
+   "ru": "Не удалось запустить DJ",
+   "id": "Tidak dapat memulai DJ"
+  },
+  "Songs": {
+   "zh-Hans": "歌曲",
+   "hi": "गाने",
+   "es": "Canciones",
+   "ar": "الأغاني",
+   "fr": "Titres",
+   "bn": "গান",
+   "pt-BR": "Músicas",
+   "ru": "Песни",
+   "id": "Lagu"
+  },
+  "No songs": {
+   "zh-Hans": "没有歌曲",
+   "hi": "कोई गाना नहीं",
+   "es": "No hay canciones",
+   "ar": "لا توجد أغانٍ",
+   "fr": "Aucun titre",
+   "bn": "কোনো গান নেই",
+   "pt-BR": "Nenhuma música",
+   "ru": "Нет песен",
+   "id": "Tidak ada lagu"
+  },
+  "Couldn't load the songs": {
+   "zh-Hans": "无法加载歌曲",
+   "hi": "गाने लोड नहीं हो सके",
+   "es": "No se pudieron cargar las canciones",
+   "ar": "تعذّر تحميل الأغاني",
+   "fr": "Impossible de charger les titres",
+   "bn": "গান লোড করা গেল না",
+   "pt-BR": "Não foi possível carregar as músicas",
+   "ru": "Не удалось загрузить песни",
+   "id": "Tidak dapat memuat lagu"
+  },
+  "Play the album": {
+   "zh-Hans": "播放专辑",
+   "hi": "एल्बम चलाएँ",
+   "es": "Reproducir el álbum",
+   "ar": "تشغيل الألبوم",
+   "fr": "Lire l'album",
+   "bn": "অ্যালবাম চালান",
+   "pt-BR": "Tocar o álbum",
+   "ru": "Слушать альбом",
+   "id": "Putar album"
   }
  }
 }

@@ -7,15 +7,17 @@
 // search waits for typing, the idle check is one timer that stops when the view
 // is no longer on screen, the bars are drawn from the island's frame loop).
 //
-// Recents, the DJ and the artist page are filled in by the next stage: the
-// "nothing typed yet" content goes in `idleSlot`, an artist opens `artistPane`.
+// With nothing typed: the DJ (Spotify) and what was played lately, read once
+// each time the view comes on screen. An artist opens its page: the albums as a
+// cover flow (views/coverflow.ts), the songs beside them.
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import type { ViewActions, ViewHost } from "./views";
 import { Bridge } from "../core/bridge";
 import { State, type Settings } from "../core/state";
-import type { PlayerItem, PlayerSource, PlayerSourceName, SourceError } from "../core/player";
+import type { ArtistPage, PlayerItem, PlayerSource, PlayerSourceName, SourceError } from "../core/player";
+import { buildCoverflow, type Coverflow } from "./coverflow";
 import { liveBars, musicTint, MUSIC_RED } from "../island/music";
 import { t, tl } from "../i18n/i18n";
 
@@ -25,10 +27,12 @@ export const DEBOUNCE_MS = 250;
 export const PLAYER_IDLE_MS = 30_000;
 /** Spotify gives at most 10 results per call: the next page starts 10 further on. */
 const PAGE = 10;
+/** The view is entered through both sync() and focus(): the recents are read once for both. */
+const RECENTS_FRESH_MS = 2000;
 
 export interface PlayerHost extends ViewHost {
   tick(nowMs: number): void;
-  /** Opens an artist's page (the next stage fills it with songs and albums). */
+  /** Opens an artist's page: its albums in a cover flow, its songs beside them. */
   openArtist(item: PlayerItem): void;
   /** The island's pointer state changed (island.ts, next to `wasInIsland`). */
   pointer(inside: boolean): void;
@@ -72,6 +76,8 @@ export function effectiveSource(choice: Settings["playerSource"], userAgent: str
 
 const MAGNIFIER = "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM15.4 15.4L20 20";
 const PERSON = "M12 12.2a4 4 0 1 0 0-8a4 4 0 1 0 0 8zM4.8 20c.8-3.4 3.7-5.6 7.2-5.6s6.4 2.2 7.2 5.6";
+/** The DJ's mark: two sparks. */
+const SPARK = "M11 2.5l1.9 5.6 5.6 1.9-5.6 1.9L11 17.5l-1.9-5.6L3.5 10l5.6-1.9L11 2.5zM18.5 14.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z";
 const SOURCE_COLOR: Record<PlayerSourceName, string> = { spotify: "#1ED760", ytmusic: "#FF3344" };
 const SOURCE_NAME: Record<PlayerSourceName, string> = { spotify: "Spotify", ytmusic: "YT Music" };
 
@@ -163,6 +169,37 @@ class MiniBars {
   }
 }
 
+/** Arrow keys over a small list of rows, kept apart from the search results' own. */
+class RowNav {
+  rows: HTMLElement[] = [];
+  acts: (() => void)[] = [];
+  sel = -1;
+  set(rows: HTMLElement[], acts: (() => void)[]) {
+    this.rows[this.sel]?.classList.remove("sel");
+    this.rows = rows;
+    this.acts = acts;
+    this.sel = -1;
+  }
+  select(i: number, scroll: boolean) {
+    this.rows[this.sel]?.classList.remove("sel");
+    this.sel = i;
+    const row = this.rows[i];
+    if (!row) return;
+    row.classList.add("sel");
+    if (scroll) row.scrollIntoView({ block: "nearest" });
+  }
+  arrow(key: "ArrowUp" | "ArrowDown") {
+    this.select(nextIndex(this.sel, this.rows.length, key), true);
+  }
+  /** Runs the selected row; false when none is. */
+  run(): boolean {
+    const act = this.acts[this.sel];
+    if (!act) return false;
+    act();
+    return true;
+  }
+}
+
 // ── The view ──────────────────────────────────────────────────────────────────
 
 export function buildPlayerView(actions: ViewActions, env: { userAgent?: string } = {}): PlayerHost {
@@ -213,7 +250,36 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   const search = h("label", { class: "pl-search" }, svg(MAGNIFIER, 14, { stroke: 2 }), input, seg);
 
   // Body: the idle slot (nothing typed), the results, or an artist.
-  const idleSlot = h("div", { class: "pl-idle", "data-hint": tl("Type a song or an artist") });
+  // Idle: the DJ (Spotify only), then the recents.
+  const djRow = h(
+    "div",
+    { class: "pl-row pl-dj", role: "option" },
+    h("div", { class: "pl-dj-mark" }, svg(SPARK, 15)),
+    h(
+      "div",
+      { class: "pl-row-text" },
+      h("div", { class: "pl-row-title" }, tl("DJ")),
+      h("div", { class: "pl-row-sub" }, tl("Music picked for you by Spotify's DJ")),
+    ),
+    h("i", { class: "pl-src-dot", style: `background:${SOURCE_COLOR.spotify}` }),
+  );
+  djRow.addEventListener("mousedown", (e) => e.preventDefault());
+  djRow.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void playDj();
+  });
+  djRow.addEventListener("mousemove", () => {
+    const i = idleNav.rows.indexOf(djRow);
+    if (idleNav.sel !== i) idleNav.select(i, false);
+  });
+  const recentsList = h("div", { class: "pl-recents" });
+  const idleSlot = h(
+    "div",
+    { class: "pl-idle" },
+    djRow,
+    h("div", { class: "pl-label" }, tl("Recent")),
+    recentsList,
+  );
   const list = h("div", { class: "pl-list", role: "listbox" });
   const artistPane = h("div", { class: "pl-artist-pane" });
   const body = h("div", { class: "pl-body" }, idleSlot, list, artistPane);
@@ -239,6 +305,16 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   let notice: { text: string; tone: "" | "err"; until: number } | null = null;
   let artistOpen: PlayerItem | null = null;
   let debounce: number | null = null;
+  // Idle (nothing typed) and the artist page each keep their own selection.
+  const idleNav = new RowNav();
+  let recents: PlayerItem[] = [];
+  let recentsAt = -Infinity;
+  const recentsGate = new QueryGate();
+  const artistGate = new QueryGate();
+  const trackNav = new RowNav();
+  let flow: Coverflow | null = null;
+  let albums: PlayerItem[] = [];
+  let artistTracks: PlayerItem[] = [];
 
   const source = (): PlayerSource => effectiveSource(State.settings.playerSource ?? "both", userAgent);
   const visible = () => State.view === "player" && State.mode === "expanded";
@@ -275,8 +351,56 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     shown = true;
     pointerIn = State.pointerInIsland;
     used();
+    void loadRecents();
   }
   for (const type of ["mousedown", "wheel", "keydown"]) root.addEventListener(type, () => used());
+
+  // ── Idle: the DJ and the recents ──
+  /** Once per opening of the view (sync and focus both announce it), never on a timer. */
+  async function loadRecents() {
+    const at = Date.now();
+    if (at - recentsAt < RECENTS_FRESH_MS) return;
+    recentsAt = at;
+    const seq = recentsGate.next();
+    const res = await Bridge.playerRecents();
+    if (!recentsGate.isCurrent(seq)) return;
+    recents = res ?? [];
+    paintIdle();
+  }
+
+  const djShown = () => source() !== "ytmusic";
+
+  function paintIdle() {
+    djRow.style.display = djShown() ? "" : "none";
+    clear(recentsList);
+    const rows = recents.map((item) => {
+      // The recents mix both sources whatever the selector says (Windows only has Spotify).
+      const row = baseRow(item, options.length > 1);
+      row.addEventListener("mousedown", (e) => e.preventDefault());
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void activate(item);
+      });
+      row.addEventListener("mousemove", () => {
+        const i = idleNav.rows.indexOf(row);
+        if (idleNav.sel !== i) idleNav.select(i, false);
+      });
+      return row;
+    });
+    if (rows.length > 0) recentsList.append(...rows);
+    // Nothing played from here yet (or not read yet): say what the field is for.
+    else recentsList.append(h("div", { class: "pl-empty" }, tl("Type a song or an artist")));
+    const allRows = djShown() ? [djRow, ...rows] : rows;
+    const acts = recents.map((item) => () => void activate(item));
+    idleNav.set(allRows, djShown() ? [() => void playDj(), ...acts] : acts);
+  }
+
+  async function playDj() {
+    used();
+    const res = await Bridge.playerDj();
+    if (!res) say(t("Couldn't start the DJ"), "err");
+    else if (res.fallbackUsed) say(t("Played through the Spotify app"));
+  }
 
   // ── Rendering ──
   function paintBody() {
@@ -320,30 +444,8 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   }
 
   function rowFor(item: PlayerItem, index: number): HTMLElement {
-    const art = h("div", { class: item.kind === "artist" ? "pl-thumb round" : "pl-thumb" });
-    setImage(art, null, item.kind === "artist" ? PERSON : ICONS.note, 12);
-    if (item.artUrl) {
-      void thumb(item.artUrl).then((src) => {
-        if (src) setImage(art, src, ICONS.note, 12);
-      });
-    }
-    const kind = kindLabel(item.kind);
-    const row = h(
-      "div",
-      { class: "pl-row", role: "option", "data-idx": index },
-      art,
-      h(
-        "div",
-        { class: "pl-row-text" },
-        h("div", { class: "pl-row-title", text: item.title }),
-        item.subtitle ? h("div", { class: "pl-row-sub", text: item.subtitle }) : null,
-      ),
-      kind ? h("span", { class: "pl-kind", text: kind }) : null,
-      // With both sources mixed, a dot says which one a row comes from.
-      source() === "both"
-        ? h("i", { class: "pl-src-dot", title: SOURCE_NAME[item.source], style: `background:${SOURCE_COLOR[item.source]}` })
-        : null,
-    );
+    const row = baseRow(item, source() === "both");
+    row.setAttribute("data-idx", String(index));
     row.addEventListener("mousemove", () => {
       if (selected !== index) select(index, false);
     });
@@ -353,6 +455,34 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       void activate(item);
     });
     return row;
+  }
+
+  /** One item as a row: its cover, title, artist, kind and (with both sources mixed) source. */
+  function baseRow(item: PlayerItem, dot: boolean): HTMLElement {
+    const art = h("div", { class: item.kind === "artist" ? "pl-thumb round" : "pl-thumb" });
+    setImage(art, null, item.kind === "artist" ? PERSON : ICONS.note, 12);
+    if (item.artUrl) {
+      void thumb(item.artUrl).then((src) => {
+        if (src) setImage(art, src, ICONS.note, 12);
+      });
+    }
+    const kind = kindLabel(item.kind);
+    return h(
+      "div",
+      { class: "pl-row", role: "option" },
+      art,
+      h(
+        "div",
+        { class: "pl-row-text" },
+        h("div", { class: "pl-row-title", text: item.title }),
+        item.subtitle ? h("div", { class: "pl-row-sub", text: item.subtitle }) : null,
+      ),
+      kind ? h("span", { class: "pl-kind", text: kind }) : null,
+      // With both sources mixed, a dot says which one a row comes from.
+      dot
+        ? h("i", { class: "pl-src-dot", title: SOURCE_NAME[item.source], style: `background:${SOURCE_COLOR[item.source]}` })
+        : null,
+    );
   }
 
   function paintList() {
@@ -453,6 +583,8 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   function paintSources() {
     const current = source();
     for (const [opt, b] of sourceButtons) b.classList.toggle("on", opt === current);
+    // The DJ is Spotify's: it goes with a YT Music only choice and comes back with Spotify.
+    if ((djRow.style.display === "none") === djShown()) paintIdle();
   }
 
   async function connectSpotify() {
@@ -465,7 +597,7 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
   async function activate(item: PlayerItem) {
     used();
     if (item.kind === "artist") {
-      host.openArtist(item);
+      void openArtist(item);
       return;
     }
     const res = await Bridge.playerPlay(item);
@@ -473,20 +605,161 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     else if (res.fallbackUsed) say(t("Played through the Spotify app"));
   }
 
+  // ── An artist: name, albums in a cover flow, songs beside them ──
+  const artistFace = h("div", { class: "pl-artist-face" });
+  const artistName = h("div", { class: "pl-artist-name" });
+  const backBtn = control(ICONS.chevronLeft, 12, t("Back"), () => back());
+  backBtn.classList.add("pl-back");
+  const flowBox = h("div", { class: "pl-artist-flow" });
+  const songsHead = h("div", { class: "pl-songs-head" });
+  const songs = h("div", { class: "pl-songs", tabindex: "-1", role: "listbox" });
+  const artistMain = h("div", { class: "pl-artist-main" }, flowBox, h("div", { class: "pl-artist-songs" }, songsHead, songs));
+  artistPane.append(
+    h(
+      "div",
+      { class: "pl-artist-head" },
+      backBtn,
+      artistFace,
+      h("div", { class: "pl-artist-id" }, artistName, h("div", { class: "pl-row-sub" }, tl("Artist"))),
+    ),
+    artistMain,
+  );
+  /** Which songs the list shows: the artist's own, or one album's. */
+  let shownAlbum: PlayerItem | null = null;
+
+  async function openArtist(item: PlayerItem) {
+    used();
+    artistOpen = item;
+    const seq = artistGate.next();
+    artistName.textContent = item.title;
+    setImage(artistFace, null, PERSON, 14);
+    if (item.artUrl) {
+      void thumb(item.artUrl).then((src) => {
+        if (src && artistOpen === item) setImage(artistFace, src, PERSON, 14);
+      });
+    }
+    albums = [];
+    artistTracks = [];
+    shownAlbum = null;
+    flow = null;
+    clear(flowBox);
+    artistMain.classList.add("no-albums");
+    paintSongs(null);
+    paintBody();
+    songs.focus();
+    // Asked of the artist's own source: the selector may say "both".
+    const page: ArtistPage | null = await Bridge.playerArtist(item.source, item.id, item.title);
+    if (!artistGate.isCurrent(seq) || artistOpen !== item) return;
+    albums = page?.albums ?? [];
+    artistTracks = page?.tracks ?? [];
+    if (albums.length > 0) {
+      flow = buildCoverflow(albums, (album) => void openAlbum(album), thumb);
+      flowBox.append(flow.el);
+      artistMain.classList.remove("no-albums");
+    }
+    paintSongs(page ? artistTracks : null, page === null);
+    // The keys go to the covers first, else to the songs (never into the field: Backspace goes back).
+    if (flow) flow.el.focus();
+    else songs.focus();
+  }
+
+  async function openAlbum(album: PlayerItem) {
+    used();
+    const artistAt = artistOpen;
+    const seq = artistGate.next();
+    shownAlbum = album;
+    paintSongs(null);
+    const list = await Bridge.playerAlbum(album.source, album.id);
+    if (!artistGate.isCurrent(seq) || artistOpen !== artistAt) return;
+    paintSongs(list ?? [], list === null);
+  }
+
+  function showArtistSongs() {
+    used();
+    artistGate.next(); // an album still on its way is no longer wanted
+    shownAlbum = null;
+    paintSongs(artistTracks);
+  }
+
+  /** `list` null: still loading. */
+  function paintSongs(list: PlayerItem[] | null, failedLoad = false) {
+    clear(songsHead);
+    const songsTab = h("button", { class: shownAlbum ? "pl-tab" : "pl-tab on" }, tl("Songs"));
+    songsTab.addEventListener("mousedown", (e) => e.preventDefault());
+    songsTab.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (shownAlbum) showArtistSongs();
+    });
+    songsHead.append(songsTab);
+    const album = shownAlbum;
+    if (album) {
+      songsHead.append(h("span", { class: "pl-tab on", title: album.title, text: album.title }));
+      const playAll = control(ICONS.play, 9, t("Play the album"), () => void activate(album));
+      playAll.classList.add("pl-play-album");
+      songsHead.append(playAll);
+    }
+    clear(songs);
+    const shown = list ?? [];
+    const rows = shown.map((it, i) => {
+      const row = baseRow(it, false);
+      row.addEventListener("mousedown", (e) => e.preventDefault());
+      row.addEventListener("mousemove", () => {
+        if (trackNav.sel !== i) trackNav.select(i, false);
+      });
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void activate(it);
+      });
+      return row;
+    });
+    trackNav.set(rows, shown.map((it) => () => void activate(it)));
+    if (rows.length > 0) songs.append(...rows);
+    else {
+      const text = list === null ? tl("Loading…") : failedLoad ? tl("Couldn't load the songs") : tl("No songs");
+      songs.append(h("div", { class: "pl-empty" }, text));
+    }
+    songs.scrollTop = 0;
+  }
+
+  /** Back from an artist to the results (or to the recents it was opened from). */
+  function back() {
+    used();
+    artistOpen = null;
+    artistGate.next();
+    flow = null;
+    paintBody();
+    input.focus();
+  }
+
   // ── Keys (Esc is the island's, which hands it to escape()) ──
   input.addEventListener("input", () => {
     used();
     scheduleSearch();
   });
+  /** Nothing typed and no artist open: the arrows go through the DJ and the recents. */
+  const idle = () => !artistOpen && query === "" && input.value.trim() === "" && debounce == null;
+
   input.addEventListener("keydown", (e) => {
     used();
+    if (artistOpen) {
+      artistKey(e, true);
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (artistOpen || items.length === 0) return;
+      if (idle()) {
+        e.preventDefault();
+        idleNav.arrow(e.key);
+        return;
+      }
+      if (items.length === 0) return;
       e.preventDefault();
       select(nextIndex(selected, items.length, e.key), true);
     } else if (e.key === "Enter") {
-      if (artistOpen) return;
       e.preventDefault();
+      if (idle()) {
+        idleNav.run();
+        return;
+      }
       // Typed faster than the debounce: search now rather than play an old result.
       if (debounce != null || input.value.trim() !== query) {
         if (debounce != null) window.clearTimeout(debounce);
@@ -497,7 +770,48 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       const item = items[selected] ?? items[0];
       if (item) void activate(item);
     }
-    // Backspace and everything else edit the text, always.
+    // Backspace and everything else edit the text.
+  });
+
+  /**
+   * Keys on the artist page. From the field (`inField`) the text comes first:
+   * Backspace goes back only when the field is empty, and Left/Right move the
+   * caret. Elsewhere (the cover flow, the songs) Backspace always goes back.
+   */
+  function artistKey(e: KeyboardEvent, inField: boolean) {
+    if (e.defaultPrevented) return; // the cover flow took it
+    if (e.key === "Backspace") {
+      if (inField && input.value !== "") return;
+      e.preventDefault();
+      back();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (trackNav.rows.length === 0) return;
+      e.preventDefault();
+      // Up from the first song gives the keys back to the cover flow.
+      if (e.key === "ArrowUp" && trackNav.sel <= 0 && flow && flow.center() >= 0) {
+        trackNav.select(-1, false);
+        flow.el.focus();
+        return;
+      }
+      if (e.key === "ArrowDown" && trackNav.sel === trackNav.rows.length - 1) return;
+      trackNav.arrow(e.key);
+      if (!inField) songs.focus();
+    } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !inField) {
+      e.preventDefault();
+      flow?.move(e.key === "ArrowLeft" ? -1 : 1);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      // A song chosen with the arrows plays; otherwise the album in front opens.
+      if (trackNav.run()) return;
+      const front = flow ? albums[flow.center()] : undefined;
+      if (front) void openAlbum(front);
+    }
+  }
+
+  // Keys typed anywhere but the field (the cover flow, the songs) reach the page here.
+  root.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.target === input || !artistOpen) return;
+    artistKey(e, false);
   });
   list.addEventListener("scroll", () => {
     if (list.scrollTop + list.clientHeight >= list.scrollHeight - 24) void loadMore();
@@ -563,38 +877,19 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
       if (shown) used(); // leaving starts the 30 s from now
     },
     openArtist(item: PlayerItem) {
-      used();
-      artistOpen = item;
-      clear(artistPane);
-      const face = h("div", { class: "pl-artist-face" });
-      setImage(face, null, PERSON, 22);
-      if (item.artUrl) {
-        void thumb(item.artUrl).then((src) => {
-          if (src && artistOpen === item) setImage(face, src, PERSON, 22);
-        });
-      }
-      artistPane.append(
-        h(
-          "div",
-          { class: "pl-artist-head" },
-          face,
-          h("div", {}, h("div", { class: "pl-artist-name", text: item.title }), h("div", { class: "pl-row-sub", text: t("Artist") })),
-        ),
-      );
-      paintBody();
+      void openArtist(item);
     },
     escape() {
       used();
       if (artistOpen) {
-        artistOpen = null;
-        paintBody();
-        input.focus();
+        back();
         return;
       }
       if (State.playerFrom === "music") actions.setView("music");
       else actions.collapse();
     },
   };
+  paintIdle();
   paintSources();
   paintBody();
   return host;
