@@ -54,6 +54,28 @@ Del boceto (versión 5), de arriba a abajo:
   y su geometría por `_NET_CLIENT_LIST_STACKING`) solo cuando cambia el foco o la pila, nunca en bucle.
 - **0 % CPU oculto**: la ventana de escritorio no anima nada mientras está tapada; el fondo ya se pausa oculto.
 
+## Decisiones tras la revisión del diseño (de Claude; Alan puede cambiarlas)
+
+1. **Una sola ventana, no dos capas.** El fondo de escritorio completo (escena teñida, reloj actual, medidor, luz de
+   bordes, letra **y** las partes que se tocan) lo dibuja **Coucou en una ventana de escritorio** que reemplaza a
+   Hidamari en el perfil diario. Así el desenfoque del cristal funciona (todo está en la misma página) y no hay que
+   sincronizar dos capas. Hidamari queda para los otros perfiles y `linux-wallpaper/wallpaper.html` sigue funcionando
+   solo, como respaldo cuando Coucou no corre (no se rompe ni se bifurca; la nueva página reusa su reloj y su medidor).
+   Esto sustituye la "Cómo se construye: dos capas" de arriba.
+2. **Datos**: la página de Coucou toma música, portada, tinte, barras y letra de lo que la isla ya tiene (MPRIS,
+   `music.rs`); la letra sigue el ajuste existente de Coucou (`musicOnline`), sin abrir nada nuevo a lrclib. Batería y red
+   de lo que Coucou ya lee (sysstate) o, si falta, igual que `server.py`.
+3. **Clics**: la ventana es de escritorio (tipo DESKTOP, debajo de todo, fuera de Alt+Tab/Actividades); los clics
+   fuera de los paneles caen en ella sin efecto, como en un escritorio normal (no hace falta región de entrada).
+4. **Pantalla**: el monitor principal. Otros monitores conservan su fondo.
+5. **"Escritorio a la vista"** (Alan usa Pop Shell en mosaico): el reproductor de escritorio se usa cuando el **espacio de
+   trabajo actual no tiene ventanas visibles** (vacío o todo minimizado); en cualquier otro caso, el notch. Se reevalúa
+   con los eventos de la pila de ventanas de X11, nunca en bucle.
+6. **Orden**: primero se arregla el fallo del notch (cierre solo / sin teclado con el atajo); el ensayo de la ventana de
+   escritorio (orden de capas y foco para escribir) va después y decide si se sigue.
+7. **Cover flow sin música**: los álbumes del último artista del historial; sin historial, se oculta y queda solo la
+   búsqueda.
+
 ## Riesgos (van primero en el plan, como ensayos)
 
 1. **Orden de capas en X11/GNOME**: que la ventana de Coucou quede **encima de la ventana de Hidamari y debajo de todo lo
