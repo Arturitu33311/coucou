@@ -29,6 +29,7 @@ mod clipboard;
 mod codex_plan;
 mod config_file;
 mod desktop;
+mod desktop_player;
 #[cfg(target_os = "linux")]
 mod dictation;
 mod drive;
@@ -1705,6 +1706,7 @@ pub fn run() {
             clipboard::sync_enabled(&handle, loaded.clipboard_history);
             // Which device is in use: Mochi and Coucou are drawn only there (rules shared with the phone).
             presence::start(&handle);
+            desktop_player::visibility::start(handle.clone());
             // A Bluetooth block left from a run that died before lifting it.
             handoff::recover();
             // Handy (dictation) recording: the island says so. Event-driven, asleep otherwise.

@@ -19,6 +19,10 @@ let islandRef: Island | null = null;
 export function registerMusicHandlers(island: Island) {
   islandRef = island;
   void onEvent<MusicTrack | null>("music", (track) => apply(track));
+  void onEvent<boolean>("desktop-visible", (v) => {
+    State.desktopVisible = v;
+    State.notify();
+  });
   void Bridge.musicState().then((track) => apply(track));
   void onEvent<{ bars: number[]; silent: boolean }>("music-bars", (p) => {
     live = { bars: p.bars, silent: p.silent, at: performance.now() };
