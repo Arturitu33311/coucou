@@ -22,9 +22,11 @@ import { Clock, clockText, msToNextMinute } from "./clock";
 import { buildGauge } from "./gauge";
 import { css, hourOf, mix, sceneColors, type RGB, type SceneColors } from "./scene";
 import { buildRecents, type RecentsView } from "./recents";
-import { buildFlow, type FlowView } from "./flow";
-import { buildSearch, type SearchView } from "./search";
+import { AlbumSource, buildFlow, fetchArtistAlbums, flowArtist, type FlowView } from "./flow";
+import { buildSearch, QueryGate, type SearchView } from "./search";
 import { buildPlayerBar, type PlayerBarView } from "./bar";
+import { Feedback } from "./feedback";
+import { lyricShown, progressTimerWanted, SongLists } from "./logic";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -70,16 +72,35 @@ lyric.setAttribute("aria-live", "off");
 // the slots the next panels fill, at the mockup's places
 const slots = ["dp-recents", "dp-flow", "dp-search", "dp-bar"].map((id) => div("", id));
 
-const recentsView: RecentsView = buildRecents(slots[0]);
-let searchView!: SearchView;
-const flowView: FlowView = buildFlow(slots[1], (album) => {
-  if (searchView) {
-    searchView.setSearch(album.title);
-    searchView.focusSearch();
-  }
-});
-searchView = buildSearch(slots[2]);
-const barView: PlayerBarView = buildPlayerBar(slots[3]);
+// The panels are built in main(), once the interface language is set.
+let recentsView: RecentsView | null = null;
+let flowView: FlowView | null = null;
+let searchView: SearchView | null = null;
+let barView: PlayerBarView | null = null;
+const albumSource = new AlbumSource(fetchArtistAlbums);
+/** Whether the line being sung is shown (the bar's lyrics button). */
+let lyricsOn = true;
+
+function buildPanels() {
+  const feedback = new Feedback();
+  recentsView = buildRecents(slots[0], feedback);
+  // the front cover's album lists its songs in the results
+  flowView = buildFlow(slots[1], albumSource, (album) => searchView?.showAlbum(album));
+  searchView = buildSearch(slots[2], feedback);
+  barView = buildPlayerBar(slots[3], feedback, () => {
+    lyricsOn = !lyricsOn;
+    barView?.setLyrics(lyricsOn);
+    paintLyric();
+  });
+  barView.setLyrics(lyricsOn);
+}
+
+function relabelPanels() {
+  recentsView?.relabel();
+  flowView?.relabel();
+  searchView?.relabel();
+  barView?.relabel();
+}
 
 stage.append(halo, time, gauge.root, ...slots, lyric);
 root.append(scene, art, wash, floor, stage, edge);
@@ -104,20 +125,31 @@ let artUrl = "";
 let rgb: RGB | null = null;
 let lyrics: LyricLine[] | null = null;
 let musicOnline = false;
+/** The cover on screen, as a data: URL; the bar and the "now" card show it too. */
+let artData: string | null = null;
 
 function keyOf(t: MusicTrack): string {
   return [t.player, t.title, t.artists.join(","), t.lengthMs].join("\u001f");
 }
 
-function updatePanels(currentArtData: string | null = null) {
-  barView.setTrack(track, currentArtData);
-  recentsView.setTrack(track, currentArtData);
-  const artist = track?.artists.join(", ") || null;
-  void Bridge.playerRecents().then((rec) => {
-    void flowView.update(artist, rec || []);
-  }).catch(() => {
-    void flowView.update(artist, []);
-  });
+const songLists = new SongLists();
+const listsGate = new QueryGate();
+
+function updatePanels() {
+  barView?.setTrack(track, artData);
+  recentsView?.setTrack(track, artData);
+  syncProgress();
+  // the play state, a seek or the cover arriving: the lists stay as they are
+  if (songLists.changed(trackKey)) void refreshLists();
+}
+
+/** Once per song: what was played lately, for the recents and the cover flow's artist. */
+async function refreshLists() {
+  const seq = listsGate.next();
+  const rec = (await Bridge.playerRecents()) ?? [];
+  if (!listsGate.isCurrent(seq)) return;
+  recentsView?.setItems(rec);
+  void flowView?.update(flowArtist(track?.artists[0] ?? null, rec));
 }
 
 function applyTrack(t: MusicTrack | null) {
@@ -131,7 +163,7 @@ function applyTrack(t: MusicTrack | null) {
     showArt(null);
     paintScene();
     paintLyric();
-    updatePanels(null);
+    updatePanels();
     return;
   }
   const key = keyOf(t);
@@ -148,7 +180,7 @@ function applyTrack(t: MusicTrack | null) {
     void loadArt(key, t.artUrl);
   }
   paintLyric();
-  updatePanels(null);
+  updatePanels();
 }
 
 /** Only ever lands on the song and the cover it was started for. */
@@ -158,7 +190,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = null;
     showArt(null);
     paintScene();
-    updatePanels(null);
+    updatePanels();
     return;
   }
   try {
@@ -169,7 +201,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = avg;
     showArt(data);
     paintScene();
-    updatePanels(data);
+    updatePanels();
   } catch {
     if (!current()) return;
     // a cover that has only just been written may not be readable yet
@@ -180,7 +212,7 @@ async function loadArt(key: string, url: string, retried = false) {
     rgb = null;
     showArt(null);
     paintScene();
-    updatePanels(null);
+    updatePanels();
   }
 }
 
@@ -200,6 +232,7 @@ async function loadLyrics(key: string) {
 }
 
 function showArt(data: string | null) {
+  artData = data;
   root.classList.toggle("has-art", !!data);
   if (data) art.src = data;
   else art.removeAttribute("src");
@@ -283,7 +316,7 @@ function paintLyric() {
     shownLine = text;
     if (text) lyric.textContent = text;
   }
-  lyric.classList.toggle("on", !!text);
+  lyric.classList.toggle("on", lyricShown(text, lyricsOn));
 }
 
 // ── Gauge ─────────────────────────────────────────────────────────────────────
@@ -299,26 +332,30 @@ function applySys(s: SysInfo | null) {
 
 let progressTimer: number | null = null;
 
+/** The progress bar moves twice a second while a song plays and the page is seen; else no timer. */
+function syncProgress() {
+  const want = progressTimerWanted(track?.status, document.hidden);
+  if (want && progressTimer == null) {
+    progressTimer = window.setInterval(() => barView?.tick(), 500);
+  } else if (!want && progressTimer != null) {
+    window.clearInterval(progressTimer);
+    progressTimer = null;
+  }
+}
+
 function wake() {
+  syncProgress();
   if (document.hidden) {
     if (minuteTimer != null) window.clearTimeout(minuteTimer);
     if (lyricTimer != null) window.clearTimeout(lyricTimer);
-    if (progressTimer != null) window.clearInterval(progressTimer);
     minuteTimer = null;
     lyricTimer = null;
-    progressTimer = null;
     return;
   }
   paintScene();
   paintLyric();
   armMinute();
-  barView.tick();
-  if (progressTimer != null) window.clearInterval(progressTimer);
-  progressTimer = window.setInterval(() => {
-    if (!document.hidden && track?.status === "Playing") {
-      barView.tick();
-    }
-  }, 500);
+  barView?.tick();
 }
 
 async function main() {
@@ -334,6 +371,7 @@ async function main() {
   onLanguageChange(() => {
     gauge.set(sys);
     paintClock();
+    relabelPanels();
   });
   // the clock's face is a system font: draw again once fonts are settled
   void document.fonts?.ready.then(() => {
@@ -342,12 +380,15 @@ async function main() {
   });
 
   void onEvent("desktop-player-search", () => {
-    searchView.focusSearch();
+    searchView?.focusSearch();
   });
 
   const boot = await Bridge.boot();
   setLanguage(resolveLanguage(boot?.settings.language, systemLanguages()));
   musicOnline = !!boot?.settings.musicOnline;
+  // in the user's language from the start (the labels are relabelled on each change)
+  buildPanels();
+  updatePanels();
 
   void onEvent<Settings>("settings-changed", (s) => {
     setLanguage(resolveLanguage(s.language, systemLanguages()));

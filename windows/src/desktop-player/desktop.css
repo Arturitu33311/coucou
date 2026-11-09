@@ -521,12 +521,23 @@ body {
   color: #101114;
   background: #1ed760;
 }
-.dp-search-results {
+/* above the field: the results, then the feedback line right over it */
+.dp-search-over {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 100%;
   margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+.dp-search-over > * {
+  pointer-events: auto;
+}
+.dp-search-results {
   max-height: 380px;
   overflow-y: auto;
   border-radius: 20px;
@@ -585,15 +596,38 @@ body {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.6);
 }
-.dp-search-login-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  margin-bottom: 8px;
-  border-radius: 10px;
-  background: rgba(30, 215, 96, 0.15);
+.dp-search-head {
+  padding: 8px 12px 6px;
   font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the feedback line (feedback.ts): what a play did, a source's error, Connect Spotify */
+.dp-feedback {
+  display: none;
+  align-self: center;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 8px 10px 8px 16px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+.dp-feedback.on {
+  display: flex;
+}
+.dp-msg {
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-msg.err {
+  color: #ffb4b4;
 }
 .dp-search-login-btn {
   border: 0;
@@ -631,6 +665,9 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.15s ease;
+}
+.dp-bar-btn.off {
+  opacity: 0.45;
 }
 .dp-bar-btn:hover {
   background: rgba(255, 255, 255, 0.12);

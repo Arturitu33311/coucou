@@ -1,11 +1,13 @@
 // "Continue listening" panel on the left (#dp-recents).
 // Shows the currently playing track as a large glass card, followed by
-// recent tracks from Bridge.playerRecents() tilted with rotateY(22deg) and fading out.
+// recent tracks tilted with rotateY(22deg) and fading out. The list itself is
+// read by main.ts once per song (the same read feeds the cover flow).
 
 import { Bridge } from "../core/bridge";
 import type { PlayerItem } from "../core/player";
 import type { MusicTrack } from "../core/state";
 import { t } from "../i18n/i18n";
+import type { Feedback } from "./feedback";
 
 /** Pure helper: calculates the tilt and opacity for recent item rows without depth (translateZ). */
 export function recentRowStyle(index: number): { transform: string; opacity: number } {
@@ -18,10 +20,12 @@ export function recentRowStyle(index: number): { transform: string; opacity: num
 export interface RecentsView {
   root: HTMLElement;
   setTrack(track: MusicTrack | null, artData: string | null): void;
-  reload(): Promise<void>;
+  /** What was played lately, newest first. */
+  setItems(items: PlayerItem[]): void;
+  relabel(): void;
 }
 
-export function buildRecents(container: HTMLElement): RecentsView {
+export function buildRecents(container: HTMLElement, feedback: Feedback): RecentsView {
   container.className = "stack dp-recents-container";
   container.innerHTML = "";
 
@@ -32,8 +36,9 @@ export function buildRecents(container: HTMLElement): RecentsView {
       <path d="M3 12a9 9 0 1 0 3-6.7"></path>
       <path d="M3 4v4h4"></path>
     </svg>
-    <span class="dp-recents-title">${t("Continue listening")}</span>
+    <span class="dp-recents-title"></span>
   `;
+  const headerTitle = header.querySelector<HTMLElement>(".dp-recents-title")!;
 
   const nowCard = document.createElement("div");
   nowCard.className = "lg tilt dp-now-card";
@@ -114,25 +119,18 @@ export function buildRecents(container: HTMLElement): RecentsView {
       row.prepend(coverEl);
 
       row.addEventListener("click", () => {
-        void Bridge.playerPlay(item);
+        void feedback.start(() => Bridge.playerPlay(item), t("Couldn't play this"), item.source);
       });
 
       rowsContainer.appendChild(row);
     });
   }
 
-  async function reload() {
-    try {
-      const rec = await Bridge.playerRecents();
-      items = rec || [];
-      renderRows();
-    } catch {
-      items = [];
-      renderRows();
-    }
+  function relabel() {
+    headerTitle.textContent = t("Continue listening");
+    renderNow();
   }
-
-  void reload();
+  relabel();
 
   return {
     root: container,
@@ -141,7 +139,11 @@ export function buildRecents(container: HTMLElement): RecentsView {
       currentArt = artData;
       renderNow();
     },
-    reload,
+    setItems(list: PlayerItem[]) {
+      items = list;
+      renderRows();
+    },
+    relabel,
   };
 }
 

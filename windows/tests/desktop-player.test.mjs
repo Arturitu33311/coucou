@@ -159,3 +159,179 @@ test("formatTime formats milliseconds as m:ss", () => {
   assert.equal(formatTime(337000), "5:37");
 });
 
+// ── Review fixes (Tasks 5+6) ──────────────────────────────────────────────────
+
+const { AlbumSource, FLOW_SCALE, firstArtist } = await import("../src/desktop-player/flow.ts");
+const { coverflowTransform } = await import("../src/views/coverflow.ts");
+const notch = await import("../src/views/player.ts");
+const { firstSelection, DEBOUNCE_MS } = await import("../src/desktop-player/search.ts");
+const { progressTimerWanted, lyricShown, SongLists } = await import("../src/desktop-player/logic.ts");
+const { Feedback } = await import("../src/desktop-player/feedback.ts");
+const { internals } = await import("./tauri.mjs");
+
+const item = (over) => ({ source: "spotify", kind: "track", id: "x", title: "T", subtitle: "", artUrl: "", ...over });
+
+test("flowArtist skips the DJ and lists, and takes the first of a subtitle's artists", () => {
+  const recents = [
+    item({ kind: "context", title: "DJ", subtitle: "Spotify" }),
+    item({ title: "Get Lucky", subtitle: "Daft Punk, Pharrell Williams" }),
+  ];
+  assert.equal(flowArtist(null, recents), "Daft Punk");
+  assert.equal(flowArtist(null, [item({ kind: "artist", title: "Queen" })]), "Queen");
+  assert.equal(flowArtist(null, [item({ kind: "context", title: "DJ" })]), null);
+  assert.equal(firstArtist("A, B, C"), "A");
+});
+
+test("the desktop's cover flow is the notch's coverflowTransform, scaled", () => {
+  for (const [i, c] of [[0, 0], [1, 0], [0, 2], [5, 2], [2, 3]]) {
+    const p = coverflowTransform(i, c);
+    const f = flowTransform(i, c);
+    assert.equal(f.size, 300 * p.scale);
+    assert.ok(Math.abs(f.left + f.size / 2 - 520 - p.x * FLOW_SCALE) < 1e-9);
+    assert.equal(f.rotateY, p.rotateY);
+    assert.equal(f.z, p.z * FLOW_SCALE);
+    assert.equal(f.opacity, p.opacity);
+  }
+});
+
+test("AlbumSource asks once per artist, remembers empty and failed answers, drops stale ones", async () => {
+  const asked = [];
+  const pending = new Map();
+  const src = new AlbumSource((artist) => {
+    asked.push(artist);
+    if (artist === "Fails") return Promise.reject(new Error("offline"));
+    return new Promise((resolve) => pending.set(artist, resolve));
+  });
+  // an artist with no albums is asked once, not on every song
+  const empty = src.albumsFor("Nobody");
+  pending.get("Nobody")([]);
+  assert.deepEqual(await empty, []);
+  assert.deepEqual(await src.albumsFor("Nobody"), []);
+  assert.deepEqual(await src.albumsFor("Fails"), []);
+  assert.deepEqual(await src.albumsFor("Fails"), []);
+  assert.deepEqual(asked, ["Nobody", "Fails"]);
+  // A is overtaken by B: A's late answer is dropped, but kept for later
+  const a = src.albumsFor("A");
+  const b = src.albumsFor("B");
+  pending.get("B")([item({ kind: "album", title: "B1" })]);
+  pending.get("A")([item({ kind: "album", title: "A1" })]);
+  assert.equal(await a, null);
+  assert.equal((await b)[0].title, "B1");
+  assert.equal((await src.albumsFor("A"))[0].title, "A1");
+  assert.deepEqual(asked, ["Nobody", "Fails", "A", "B"]);
+});
+
+test("SongLists: the lists are read again only when the song changes", () => {
+  const s = new SongLists();
+  assert.equal(s.changed(""), true); // first call, nothing playing
+  assert.equal(s.changed("song-1"), true);
+  assert.equal(s.changed("song-1"), false); // pause, seek, cover loaded
+  assert.equal(s.changed("song-1"), false);
+  assert.equal(s.changed("song-2"), true);
+  assert.equal(s.changed(""), true);
+});
+
+test("progress timer only while playing and seen; lyric line follows its button", () => {
+  assert.equal(progressTimerWanted("Playing", false), true);
+  assert.equal(progressTimerWanted("Paused", false), false);
+  assert.equal(progressTimerWanted("Playing", true), false);
+  assert.equal(progressTimerWanted(undefined, false), false);
+  assert.equal(lyricShown("la la", true), true);
+  assert.equal(lyricShown("la la", false), false);
+  assert.equal(lyricShown("", true), false);
+});
+
+test("the search reuses the notch's gate, debounce and arrows, and preselects row 0", () => {
+  assert.equal(QueryGate, notch.QueryGate);
+  assert.equal(nextIndex, notch.nextIndex);
+  assert.equal(DEBOUNCE_MS, notch.DEBOUNCE_MS);
+  assert.equal(firstSelection(5), 0);
+  assert.equal(firstSelection(0), -1);
+});
+
+// Feedback: the notch's foot, on the desktop.
+
+const lines = (fb) => fb.el.children.filter((c) => c.tagName === "SPAN").map((c) => c.textContent);
+const buttons = (fb) => fb.el.children.filter((c) => c.tagName === "BUTTON");
+const failure = (message, loginNeeded) => Promise.resolve({ ok: false, error: { message, loginNeeded } });
+
+test("footContent: a source's error reads 'Spotify: …', the sign-in offer comes once", () => {
+  const base = { notice: null, now: 0, query: "abba", loadingMore: false, loginNeeded: false, spotifyOff: false, source: "both" };
+  const c = notch.footContent({
+    ...base,
+    errors: [
+      { source: "spotify", message: "Session expired", loginNeeded: true },
+      { source: "ytmusic", message: "yt-dlp missing", loginNeeded: false },
+    ],
+  });
+  assert.deepEqual(c.lines.map((l) => l.text), ["Spotify: Session expired", "YT Music: yt-dlp missing"]);
+  assert.equal(c.offerLogin, true);
+  // YT Music only: no offer for Spotify's missing session
+  assert.equal(notch.footContent({ ...base, query: "", errors: [], spotifyOff: true, source: "ytmusic" }).offerLogin, false);
+});
+
+test("Feedback: a failed play says why and offers to connect Spotify once", async () => {
+  const fb = new Feedback(() => 1000);
+  await fb.start(() => failure("", true), "Couldn't play this", "spotify");
+  assert.deepEqual(lines(fb), ["Couldn't play this"]);
+  assert.equal(buttons(fb).length, 1);
+  assert.equal(buttons(fb)[0].textContent, "Connect Spotify");
+  // the search's per-source error is on the same line, still one button
+  fb.notice = null;
+  fb.side = { query: () => "abba", errors: () => [{ source: "spotify", message: "Login", loginNeeded: true }], source: () => "both", rerun() {} };
+  fb.paint();
+  assert.deepEqual(lines(fb), ["Spotify: Login"]);
+  assert.equal(buttons(fb).length, 1);
+});
+
+test("Feedback: the DJ failing says so; a play through the Spotify app says that", async () => {
+  const fb = new Feedback(() => 1000);
+  await fb.start(() => failure("", false), "Couldn't start the DJ", "spotify");
+  assert.deepEqual(lines(fb), ["Couldn't start the DJ"]);
+  assert.equal(buttons(fb).length, 0);
+  await fb.start(() => Promise.resolve({ ok: true, value: { fallbackUsed: true } }), "Couldn't play this", "spotify");
+  assert.deepEqual(lines(fb), ["Played through the Spotify app"]);
+});
+
+test("Feedback: one start at a time, 'Starting…' meanwhile", async () => {
+  const fb = new Feedback(() => 1000);
+  let runs = 0;
+  let finish;
+  const first = fb.start(() => {
+    runs++;
+    return new Promise((r) => (finish = r));
+  }, "x", "spotify");
+  assert.deepEqual(lines(fb), ["Starting…"]);
+  await fb.start(() => {
+    runs++;
+    return Promise.resolve({ ok: true, value: { fallbackUsed: false } });
+  }, "x", "spotify");
+  assert.equal(runs, 1);
+  finish({ ok: true, value: { fallbackUsed: false } });
+  await first;
+  assert.deepEqual(lines(fb), []);
+  assert.equal(fb.el.classList.contains("on"), false);
+});
+
+test("Feedback: Connect Spotify reports a failed sign-in, and searches again after one that worked", async () => {
+  const fb = new Feedback(() => 1000);
+  let reran = 0;
+  fb.side = { query: () => "abba", errors: () => [], source: () => "both", rerun: () => reran++ };
+  fb.loginNeeded = true;
+  const real = internals.invoke;
+  internals.invoke = async (cmd, args) => {
+    if (cmd === "player_spotify_login") throw "Sign-in was cancelled";
+    return real(cmd, args);
+  };
+  try {
+    await fb.connect();
+  } finally {
+    internals.invoke = real;
+  }
+  assert.deepEqual(lines(fb), ["Sign-in was cancelled"]);
+  assert.equal(reran, 0);
+  await fb.connect(); // the stand-in answers null: signed in
+  assert.equal(fb.loginNeeded, false);
+  assert.equal(reran, 1);
+});
+

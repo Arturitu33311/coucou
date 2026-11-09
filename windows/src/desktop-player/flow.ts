@@ -1,54 +1,106 @@
 // Cover flow of albums (#dp-flow).
-// Shows albums for the current artist (or falls back to the last artist from recents).
-// If no artist can be found (empty history), the flow is hidden.
+// The albums of the current artist (or, with nothing playing, of the last artist
+// played), placed with the notch's cover-flow rule (views/coverflow.ts) at the
+// desktop's scale. Hidden when no artist can be found.
+//
+// Each artist's albums are asked for once (an empty answer is remembered too)
+// and only when the artist changes; an answer for an artist no longer shown is
+// dropped (QueryGate).
 
 import { Bridge } from "../core/bridge";
 import type { PlayerItem } from "../core/player";
+import { coverflowTransform } from "../views/coverflow";
+import { QueryGate } from "../views/player";
 import { t } from "../i18n/i18n";
 
+/** The first of a subtitle's artists ("Daft Punk, Pharrell Williams" → "Daft Punk"). */
+export function firstArtist(subtitle: string): string {
+  return subtitle.split(", ")[0].trim();
+}
+
 /**
- * Pure helper: chooses the artist for the cover flow.
- * Uses the currently playing artist if available, otherwise falls back to the first
- * artist found in the recent history. Returns null if neither is available.
+ * The artist for the cover flow: the one playing (its first artist), else the
+ * last one in the history — skipping the DJ and lists, which have no artist.
+ * Null when there is neither.
  */
 export function flowArtist(currentArtist: string | null, recents: PlayerItem[]): string | null {
-  if (currentArtist && currentArtist.trim()) {
-    return currentArtist.trim();
-  }
+  if (currentArtist && currentArtist.trim()) return currentArtist.trim();
   for (const r of recents) {
-    const candidate = r.kind === "artist" ? r.title : r.subtitle;
-    if (candidate && candidate.trim()) {
-      return candidate.trim();
-    }
+    if (r.kind === "context") continue;
+    const candidate = r.kind === "artist" ? r.title.trim() : firstArtist(r.subtitle);
+    if (candidate) return candidate;
   }
   return null;
 }
 
-/** Pure helper: position, size, rotation, z-index and opacity for item `i` when `center` is active. */
+/** The desktop's cover flow is the notch's (views/coverflow.ts) at this scale. */
+export const FLOW_SCALE = 1.7;
+/** Front cover's side, and where its centre is on the panel. */
+const COVER = 300;
+const CENTER_X = 520;
+const CENTER_Y = 150;
+
+/** Where cover `i` sits when cover `center` is in front: the notch's rule, scaled. */
 export function flowTransform(i: number, center: number) {
-  const d = i - center;
-  const a = Math.abs(d);
-  const size = a === 0 ? 300 : a === 1 ? 240 : 200;
-  const x = 520 - size / 2 + (d === 0 ? 0 : Math.sign(d) * (130 + (a - 1) * 95));
-  const rot = d === 0 ? 0 : (d < 0 ? 45 : -45);
+  const p = coverflowTransform(i, center);
+  const size = COVER * p.scale;
   return {
-    left: x,
-    top: 150 - size / 2,
+    left: CENTER_X + p.x * FLOW_SCALE - size / 2,
+    top: CENTER_Y - size / 2,
     size,
-    rotateY: rot,
-    z: 10 - a,
-    opacity: a > 3 ? 0 : Math.max(0, 1 - a * 0.12),
+    rotateY: p.rotateY,
+    z: p.z * FLOW_SCALE,
+    zIndex: 10 - Math.abs(i - center),
+    opacity: p.opacity,
   };
+}
+
+/**
+ * Albums per artist, asked for once each: an empty or failed answer is kept too,
+ * so an artist with none is not asked again on every song. `albumsFor` resolves
+ * to null when a newer artist was asked for meanwhile.
+ */
+export class AlbumSource {
+  private readonly cache = new Map<string, PlayerItem[]>();
+  private readonly gate = new QueryGate();
+  private readonly fetch: (artist: string) => Promise<PlayerItem[]>;
+  constructor(fetch: (artist: string) => Promise<PlayerItem[]>) {
+    this.fetch = fetch;
+  }
+
+  async albumsFor(artist: string): Promise<PlayerItem[] | null> {
+    const seq = this.gate.next();
+    const known = this.cache.get(artist);
+    if (known) return known;
+    let albums: PlayerItem[];
+    try {
+      albums = await this.fetch(artist);
+    } catch {
+      albums = [];
+    }
+    this.cache.set(artist, albums);
+    return this.gate.isCurrent(seq) ? albums : null;
+  }
+}
+
+/** The app's way to find an artist's albums: their page, else a search's albums. */
+export async function fetchArtistAlbums(artist: string): Promise<PlayerItem[]> {
+  const page = await Bridge.playerArtist("both", "", artist);
+  if (page.ok && page.value.albums.length > 0) return page.value.albums;
+  const found = await Bridge.playerSearch("both", artist, 0, 0);
+  return found?.items.filter((it) => it.kind === "album") ?? [];
 }
 
 export interface FlowView {
   root: HTMLElement;
-  update(currentArtist: string | null, recents: PlayerItem[]): Promise<void>;
+  /** The artist to show (flowArtist); asks for the albums only when it changed. */
+  update(artist: string | null): Promise<void>;
+  relabel(): void;
 }
 
-export function buildFlow(container: HTMLElement, onPickAlbum?: (album: PlayerItem) => void): FlowView {
+export function buildFlow(container: HTMLElement, source: AlbumSource, onPickAlbum?: (album: PlayerItem) => void): FlowView {
   container.className = "dp-flow-container";
-  container.innerHTML = "";
+  container.replaceChildren();
 
   const stage = document.createElement("div");
   stage.className = "dp-flow-stage";
@@ -56,16 +108,22 @@ export function buildFlow(container: HTMLElement, onPickAlbum?: (album: PlayerIt
   const caption = document.createElement("div");
   caption.className = "lg dp-flow-caption";
   caption.style.display = "none";
+  const capTitle = document.createElement("span");
+  capTitle.className = "dp-flow-title";
+  const capSub = document.createElement("span");
+  capSub.className = "dp-flow-sub";
+  caption.append(capTitle, capSub);
 
   container.append(stage, caption);
 
-  let activeArtist: string | null = null;
+  /** undefined until the first update, so a first "no artist" still paints. */
+  let activeArtist: string | null | undefined = undefined;
   let albums: PlayerItem[] = [];
   let centerIndex = 0;
   const artCache = new Map<string, string>();
 
   function renderCovers() {
-    stage.innerHTML = "";
+    stage.replaceChildren();
     if (albums.length === 0) {
       container.style.display = "none";
       caption.style.display = "none";
@@ -77,13 +135,14 @@ export function buildFlow(container: HTMLElement, onPickAlbum?: (album: PlayerIt
       const tf = flowTransform(i, centerIndex);
       const cover = document.createElement("div");
       cover.className = "cover dp-flow-cover";
+      cover.title = item.title;
       cover.style.position = "absolute";
       cover.style.left = `${tf.left}px`;
       cover.style.top = `${tf.top}px`;
       cover.style.width = `${tf.size}px`;
       cover.style.height = `${tf.size}px`;
-      cover.style.transform = `rotateY(${tf.rotateY}deg)`;
-      cover.style.zIndex = String(tf.z);
+      cover.style.transform = `translateZ(${tf.z}px) rotateY(${tf.rotateY}deg)`;
+      cover.style.zIndex = String(tf.zIndex);
       cover.style.opacity = String(tf.opacity);
       cover.style.pointerEvents = tf.opacity > 0 ? "auto" : "none";
 
@@ -111,19 +170,14 @@ export function buildFlow(container: HTMLElement, onPickAlbum?: (album: PlayerIt
         }
       });
 
-      stage.appendChild(cover);
+      stage.append(cover);
     });
 
     const curr = albums[centerIndex];
-    if (curr) {
-      caption.style.display = "flex";
-      caption.innerHTML = `
-        <span class="dp-flow-title" title="${escapeHtml(curr.title)}">${escapeHtml(curr.title)}</span>
-        <span class="dp-flow-sub">${escapeHtml(curr.subtitle || activeArtist || "")} · ${t("Album")}</span>
-      `;
-    } else {
-      caption.style.display = "none";
-    }
+    caption.style.display = "flex";
+    capTitle.textContent = curr.title;
+    capTitle.title = curr.title;
+    capSub.textContent = `${curr.subtitle || activeArtist || ""} · ${t("Album")}`;
   }
 
   container.addEventListener("wheel", (e) => {
@@ -142,40 +196,24 @@ export function buildFlow(container: HTMLElement, onPickAlbum?: (album: PlayerIt
     }
   }, { passive: false });
 
-  async function update(artistName: string | null, recents: PlayerItem[]) {
-    const chosen = flowArtist(artistName, recents);
-    if (!chosen) {
-      activeArtist = null;
+  async function update(artist: string | null) {
+    if (artist === activeArtist) return;
+    activeArtist = artist;
+    if (!artist) {
       albums = [];
       renderCovers();
       return;
     }
-    if (chosen === activeArtist && albums.length > 0) {
-      return;
-    }
-    activeArtist = chosen;
-    try {
-      const outcome = await Bridge.playerArtist("both", "", chosen);
-      if (outcome.ok && outcome.value.albums.length > 0) {
-        albums = outcome.value.albums;
-      } else {
-        // Fallback: search for albums by this artist
-        const searchRes = await Bridge.playerSearch("both", chosen, 0, 1);
-        albums = searchRes?.items.filter((it) => it.kind === "album") || [];
-      }
-    } catch {
-      albums = [];
-    }
-    centerIndex = Math.min(albums.length > 0 ? Math.floor(albums.length / 2) : 0, albums.length - 1);
+    const found = await source.albumsFor(artist);
+    if (found === null || activeArtist !== artist) return; // another artist meanwhile
+    albums = found;
+    centerIndex = albums.length > 0 ? Math.floor(albums.length / 2) : 0;
     renderCovers();
   }
 
   return {
     root: container,
     update,
+    relabel: renderCovers,
   };
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

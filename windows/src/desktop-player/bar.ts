@@ -1,16 +1,21 @@
 // Player bar at the bottom (#dp-bar).
 // Shows media controls (prev/play/next), mini cover, track title & source,
-// progress bar with time, and DJ / lyrics buttons.
+// progress bar with time, and DJ / lyrics buttons. The lyrics button shows or
+// hides the line being sung (main.ts); the DJ reports through the feedback line.
 
 import { Bridge } from "../core/bridge";
 import type { MusicInfo, MusicTrack } from "../core/state";
 import { musicPosition } from "../island/music";
 import { t } from "../i18n/i18n";
+import type { Feedback } from "./feedback";
 
 export interface PlayerBarView {
   root: HTMLElement;
   setTrack(track: MusicTrack | null, artData: string | null): void;
   tick(): void;
+  /** Whether the line being sung is shown (the lyrics button's state). */
+  setLyrics(on: boolean): void;
+  relabel(): void;
 }
 
 export function formatTime(ms: number): string {
@@ -21,22 +26,22 @@ export function formatTime(ms: number): string {
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
-export function buildPlayerBar(container: HTMLElement): PlayerBarView {
+export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyrics: () => void): PlayerBarView {
   container.className = "lg dp-player-bar";
   container.innerHTML = `
     <div class="dp-bar-controls">
-      <button type="button" class="dp-bar-btn dp-btn-prev" aria-label="${t("Previous")}">
+      <button type="button" class="dp-bar-btn dp-btn-prev">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           <path d="M19 5L9 12l10 7V5z"></path>
           <path d="M5 5v14"></path>
         </svg>
       </button>
-      <button type="button" class="dp-bar-play-btn" aria-label="${t("Play")}">
+      <button type="button" class="dp-bar-play-btn">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M7 4l13 8-13 8z"></path>
         </svg>
       </button>
-      <button type="button" class="dp-bar-btn dp-btn-next" aria-label="${t("Next")}">
+      <button type="button" class="dp-bar-btn dp-btn-next">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           <path d="M5 5l10 7-10 7V5z"></path>
           <path d="M19 5v14"></path>
@@ -46,7 +51,7 @@ export function buildPlayerBar(container: HTMLElement): PlayerBarView {
     <div class="cover dp-bar-cover"></div>
     <div class="dp-bar-middle">
       <div class="dp-bar-meta">
-        <span class="dp-bar-title">${t("Nothing is playing")}</span>
+        <span class="dp-bar-title"></span>
         <span class="dp-bar-time">0:00 / 0:00</span>
       </div>
       <div class="dp-bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
@@ -55,12 +60,12 @@ export function buildPlayerBar(container: HTMLElement): PlayerBarView {
       <span class="dp-bar-sub">Coucou</span>
     </div>
     <div class="dp-bar-actions">
-      <button type="button" class="dp-bar-btn dp-btn-lyrics" aria-label="${t("Lyrics")}">
+      <button type="button" class="dp-bar-btn dp-btn-lyrics" aria-pressed="true">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
           <path d="M4 6h16M4 12h10M4 18h13"></path>
         </svg>
       </button>
-      <button type="button" class="dp-bar-btn dp-btn-dj" aria-label="DJ" title="${t("Music picked for you by Spotify's DJ")}">DJ</button>
+      <button type="button" class="dp-bar-btn dp-btn-dj" aria-label="DJ">DJ</button>
     </div>
   `;
 
@@ -68,6 +73,7 @@ export function buildPlayerBar(container: HTMLElement): PlayerBarView {
   const playBtn = container.querySelector<HTMLButtonElement>(".dp-bar-play-btn")!;
   const nextBtn = container.querySelector<HTMLButtonElement>(".dp-btn-next")!;
   const djBtn = container.querySelector<HTMLButtonElement>(".dp-btn-dj")!;
+  const lyricsBtn = container.querySelector<HTMLButtonElement>(".dp-btn-lyrics")!;
   const coverEl = container.querySelector<HTMLElement>(".dp-bar-cover")!;
   const titleEl = container.querySelector<HTMLElement>(".dp-bar-title")!;
   const timeEl = container.querySelector<HTMLElement>(".dp-bar-time")!;
@@ -81,7 +87,8 @@ export function buildPlayerBar(container: HTMLElement): PlayerBarView {
   prevBtn.addEventListener("click", () => void Bridge.musicControl("previous"));
   playBtn.addEventListener("click", () => void Bridge.musicControl("playpause"));
   nextBtn.addEventListener("click", () => void Bridge.musicControl("next"));
-  djBtn.addEventListener("click", () => void Bridge.playerDj());
+  djBtn.addEventListener("click", () => void feedback.start(() => Bridge.playerDj(), t("Couldn't start the DJ"), "spotify"));
+  lyricsBtn.addEventListener("click", () => onLyrics());
 
   trackEl.addEventListener("click", (e) => {
     if (!currentTrack || currentTrack.lengthMs <= 0) return;
@@ -138,9 +145,24 @@ export function buildPlayerBar(container: HTMLElement): PlayerBarView {
     updateProgress();
   }
 
+  function relabel() {
+    prevBtn.setAttribute("aria-label", t("Previous"));
+    nextBtn.setAttribute("aria-label", t("Next"));
+    lyricsBtn.setAttribute("aria-label", t("Lyrics"));
+    lyricsBtn.title = t("Lyrics");
+    djBtn.title = t("Music picked for you by Spotify's DJ");
+    setTrack(currentTrack, currentArt);
+  }
+  relabel();
+
   return {
     root: container,
     setTrack,
     tick: updateProgress,
+    setLyrics(on: boolean) {
+      lyricsBtn.setAttribute("aria-pressed", String(on));
+      lyricsBtn.classList.toggle("off", !on);
+    },
+    relabel,
   };
 }
