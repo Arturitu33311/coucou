@@ -197,15 +197,58 @@
   display: none;
 }
 
-/* The next stage fills this; until then a quiet hint. */
-.pl-idle:empty::before {
-  content: attr(data-hint);
-  position: absolute;
-  inset: 0;
+/* ── Nothing typed: the DJ, then the recents ── */
+
+.pl-idle {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pl-dj {
+  flex: 0 0 auto;
+  height: 40px;
+  background: linear-gradient(100deg, rgba(30, 215, 96, 0.16), rgba(255, 255, 255, 0.04) 60%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.pl-dj.sel {
+  background: linear-gradient(100deg, rgba(30, 215, 96, 0.28), rgba(255, 255, 255, 0.1) 60%);
+}
+
+.pl-dj-mark {
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  font: 400 12px var(--font);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.55), transparent 45%),
+    linear-gradient(135deg, #1ed760, var(--acc, #fa2d48));
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.pl-label {
+  flex: 0 0 auto;
+  padding: 5px 6px 1px;
+  font: 600 9.5px var(--font);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   color: var(--dim-3);
+}
+
+.pl-recents {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.pl-recents::-webkit-scrollbar,
+.pl-songs::-webkit-scrollbar {
+  display: none;
 }
 
 .pl-row {
@@ -273,30 +316,246 @@
   color: var(--dim-3);
 }
 
-/* ── An artist (filled by the next stage) ── */
+/* ── An artist: a title row, then the cover flow beside the songs ── */
+
+.pl-artist-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pl-artist-pane:focus,
+.pl-songs:focus,
+.cf:focus {
+  outline: none;
+}
 
 .pl-artist-head {
+  flex: 0 0 30px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 6px 0;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 4px 0 0;
+}
+
+.pl-back {
+  flex-basis: 24px;
+  width: 24px;
+  height: 24px;
 }
 
 .pl-artist-face {
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 52px;
-  height: 52px;
+  width: 28px;
+  height: 28px;
   overflow: hidden;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.08);
   color: var(--dim-2);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+
+.pl-artist-id {
+  min-width: 0;
+  line-height: 1.15;
 }
 
 .pl-artist-name {
-  font: 700 16px var(--font);
+  font: 700 14px var(--font);
   color: var(--ink);
+}
+
+.pl-artist-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.pl-artist-flow {
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+.pl-artist-songs {
+  flex: 0 0 248px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* No albums (Spotify's development mode often has none): the songs take the row. */
+.pl-artist-main.no-albums .pl-artist-flow {
+  display: none;
+}
+
+.pl-artist-main.no-albums .pl-artist-songs {
+  flex: 1 1 auto;
+}
+
+.pl-songs-head {
+  flex: 0 0 22px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pl-tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dim-2);
+  font: 600 10.5px/20px var(--font);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.pl-tab:not(span):hover {
+  color: var(--ink);
+}
+
+.pl-tab.on {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
+.pl-play-album {
+  flex-basis: 20px;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+}
+
+.pl-songs {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.pl-songs .pl-row {
+  height: 32px;
+}
+
+.pl-songs .pl-thumb {
+  width: 24px;
+  height: 24px;
+}
+
+/* ── The cover flow (views/coverflow.ts) ──
+   Each cover is placed by its transform; the transition is the movement, so
+   nothing runs while it rests. The glass is gradients and a 1 px edge, not a
+   backdrop blur (slow on WebKitGTK, and the covers move). */
+
+.cf {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 12px;
+  background: radial-gradient(70% 60% at 50% 42%, rgba(255, 255, 255, 0.07), transparent 70%);
+}
+
+.cf-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Flat stacking (no preserve-3d): the covers' z-index settles the overlaps. */
+  perspective: 520px;
+}
+
+.cf-cover {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 96px;
+  height: 96px;
+  margin: -52px 0 0 -48px;
+  border-radius: 10px;
+  transition:
+    transform 0.42s cubic-bezier(0.22, 0.8, 0.24, 1),
+    opacity 0.42s ease;
+  will-change: transform;
+  cursor: default;
+  -webkit-box-reflect: below 3px linear-gradient(transparent 68%, rgba(255, 255, 255, 0.22));
+}
+
+.cf-face {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+  color: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.cf-face img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The glass: a sheen across the top and a bright edge, over the artwork. */
+.cf-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0.06) 38%, transparent 55%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+
+.cf-cover:not(.front) .cf-sheen {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.18), transparent 50%), rgba(0, 0, 0, 0.18);
+}
+
+.cf-caption {
+  flex: 0 0 30px;
+  padding: 0 10px 2px;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.cf-title,
+.cf-sub {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cf-title {
+  font: 600 11.5px var(--font);
+  color: var(--ink);
+}
+
+.cf-sub {
+  font: 400 10px var(--font);
+  color: var(--dim-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cf-cover {
+    transition: none;
+  }
 }
 
 /* ── The quiet line ── */
@@ -344,12 +603,19 @@
 .pl.tinted .pl-row-sub,
 .pl.tinted .pl-foot,
 .pl.tinted .pl-src,
-.pl.tinted .pl-kind {
+.pl.tinted .pl-kind,
+.pl.tinted .pl-tab,
+.pl.tinted .cf-sub {
   color: rgba(255, 255, 255, 0.75);
 }
 
+.pl.tinted .pl-tab.on {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
 .pl.tinted .pl-search,
-.pl.tinted .pl-idle:empty::before,
+.pl.tinted .pl-label,
 .pl.tinted .pl-empty,
 .pl.tinted .pl-input::placeholder {
   color: rgba(255, 255, 255, 0.6);
