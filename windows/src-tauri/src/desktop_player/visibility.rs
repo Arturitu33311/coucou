@@ -83,14 +83,23 @@ pub fn foreign_action(stacking: &[Win], shown: bool, was_hidamari: bool, was_abo
         return Action::None;
     }
     let hidamari = stacking.iter().any(|w| w.hidamari && w.desktop_type && !w.ours);
-    if hidamari {
-        return if was_hidamari { Action::None } else { Action::StopHidamari };
+    if hidamari && !was_hidamari {
+        return Action::StopHidamari;
     }
+    // Hidamari already had its one stop (or it is another wallpaper app): if it is
+    // still above us (the kill failed, not flatpak...), raise like any foreign window.
     if should_raise(was_above, foreign_desktop_above(stacking)) {
         Action::Raise
     } else {
         Action::None
     }
+}
+
+/// Whether Hidamari counts as handled after this event: only an actual
+/// `StopHidamari` marks it, and only while its window is still present.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn next_hidamari(present: bool, was_hidamari: bool, taken: Action) -> bool {
+    present && (was_hidamari || taken == Action::StopHidamari)
 }
 
 static VISIBLE: AtomicBool = AtomicBool::new(false);
@@ -246,18 +255,22 @@ mod linux {
             watched.retain(|w| live.contains(w));
             let (now, wins) = compute(&c, &a, root, &mut watched);
             let now_above = foreign_desktop_above(&wins);
+            let present = wins.iter().any(|w| w.hidamari);
+            let mut taken = Action::None;
             if now != last {
                 last = now;
                 publish(app, now);
             } else if now {
-                match foreign_action(&wins, window::is_shown(), hidamari, above) {
+                // One snapshot of "shown" per iteration: the action and the state both derive from it.
+                taken = foreign_action(&wins, window::is_shown(), hidamari, above);
+                match taken {
                     Action::Raise => window::raise(app),
                     Action::StopHidamari => stop_hidamari(),
                     Action::None => {}
                 }
             }
             above = now_above;
-            hidamari = wins.iter().any(|w| w.hidamari) && (hidamari || (now && window::is_shown()));
+            hidamari = next_hidamari(present, hidamari, taken);
         }
     }
 
@@ -397,7 +410,7 @@ mod tests {
     fn hidamari_is_stopped_once_while_our_window_shows() {
         let st = [hida(2), desk(1, true)];
         assert_eq!(foreign_action(&st, true, false, false), Action::StopHidamari);
-        // already handled at the previous event: no repeat
+        // already handled at the previous event: no second kill
         assert_eq!(foreign_action(&st, true, true, false), Action::None);
         // gone and back later: stopped again
         assert_eq!(foreign_action(&[hida(5), desk(1, true)], true, false, false), Action::StopHidamari);
@@ -414,5 +427,25 @@ mod tests {
         assert_eq!(foreign_action(&st, true, false, false), Action::Raise);
         assert_eq!(foreign_action(&st, true, false, true), Action::None);
         assert_eq!(foreign_action(&[desk(2, false), desk(1, true)], true, false, false), Action::None);
+    }
+
+    #[test]
+    fn a_failed_stop_falls_back_to_raising() {
+        // Hidamari still present after its one stop and now above us: raise, once
+        let above = [desk(1, true), hida(2)];
+        assert_eq!(foreign_action(&above, true, true, false), Action::Raise);
+        assert_eq!(foreign_action(&above, true, true, true), Action::None);
+        // first sight is still a stop, not a raise
+        assert_eq!(foreign_action(&above, true, false, false), Action::StopHidamari);
+    }
+
+    #[test]
+    fn hidamari_is_handled_only_by_an_actual_stop() {
+        assert!(!next_hidamari(true, false, Action::None));
+        assert!(!next_hidamari(true, false, Action::Raise));
+        assert!(next_hidamari(true, false, Action::StopHidamari));
+        assert!(next_hidamari(true, true, Action::None));
+        // gone: forget it, so a later reappearance is stopped again
+        assert!(!next_hidamari(false, true, Action::None));
     }
 }
