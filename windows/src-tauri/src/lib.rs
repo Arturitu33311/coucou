@@ -1484,6 +1484,7 @@ pub fn run() {
             approval_decline,
             question_answer,
             music::music_state,
+            desktop_player::visibility::desktop_is_visible,
             music::music_control,
             audiolink::audiolink_swap,
             audiolink::audiolink_own_sound,

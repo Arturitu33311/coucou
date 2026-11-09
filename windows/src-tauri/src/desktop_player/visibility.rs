@@ -39,6 +39,12 @@ pub fn current() -> bool {
     VISIBLE.load(Ordering::Relaxed)
 }
 
+/// The webview pulls this at startup: the first event fires before its listener exists.
+#[tauri::command]
+pub fn desktop_is_visible() -> bool {
+    current()
+}
+
 /// Start the watcher on a Linux X11 session; nothing anywhere else.
 pub fn start(app: tauri::AppHandle) {
     #[cfg(target_os = "linux")]
@@ -72,7 +78,6 @@ mod linux {
     pub struct Atoms {
         stacking: u32,
         current_desktop: u32,
-        active: u32,
         wm_desktop: u32,
         wm_state: u32,
         hidden: u32,
@@ -90,7 +95,6 @@ mod linux {
         Ok(Atoms {
             stacking: atom(c, "_NET_CLIENT_LIST_STACKING")?,
             current_desktop: atom(c, "_NET_CURRENT_DESKTOP")?,
-            active: atom(c, "_NET_ACTIVE_WINDOW")?,
             wm_desktop: atom(c, "_NET_WM_DESKTOP")?,
             wm_state: atom(c, "_NET_WM_STATE")?,
             hidden: atom(c, "_NET_WM_STATE_HIDDEN")?,
@@ -149,7 +153,7 @@ mod linux {
             while let Some(ev) = next {
                 if let Event::PropertyNotify(p) = ev {
                     relevant |= if p.window == root {
-                        p.atom == a.stacking || p.atom == a.current_desktop || p.atom == a.active
+                        p.atom == a.stacking || p.atom == a.current_desktop
                     } else {
                         p.atom == a.wm_state || p.atom == a.wm_desktop || p.atom == a.wtype
                     };

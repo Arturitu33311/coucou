@@ -23,6 +23,10 @@ export function registerMusicHandlers(island: Island) {
     State.desktopVisible = v;
     State.notify();
   });
+  void Bridge.desktopVisible().then((v) => {
+    State.desktopVisible = v;
+    State.notify();
+  });
   void Bridge.musicState().then((track) => apply(track));
   void onEvent<{ bars: number[]; silent: boolean }>("music-bars", (p) => {
     live = { bars: p.bars, silent: p.silent, at: performance.now() };
