@@ -910,6 +910,17 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
         if let (Some(window), Some(resting)) = (gw.window(), resting_hint(&mode)) {
             window.set_type_hint(if activating { gtk::gdk::WindowTypeHint::Utility } else { resting });
         }
+        // GTK's present carries no user timestamp, and GNOME's focus-stealing prevention then keeps
+        // the keyboard where it was (the island opened from a shortcut could not be typed in). An
+        // _NET_ACTIVE_WINDOW request sent as a pager does (xdotool windowactivate), as the
+        // keyboard owner above is given back the same way.
+        if activating {
+            if let Some(xid) = gw.window().and_then(|w| w.downcast::<gdkx11::X11Window>().ok()).map(|w| w.xid()) {
+                std::thread::spawn(move || {
+                    let _ = xdotool(&["windowactivate", &xid.to_string()]);
+                });
+            }
+        }
     }
     if LAYER_SURFACE.load(Ordering::Relaxed) {
         let mode = if activating { layer::KEYBOARD_ON_DEMAND } else { layer::KEYBOARD_NONE };

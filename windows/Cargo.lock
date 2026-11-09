@@ -725,6 +725,7 @@ dependencies = [
  "cpal",
  "dbus",
  "futures-util",
+ "gdkx11",
  "gtk",
  "keyring",
  "libc",
