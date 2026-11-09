@@ -84,8 +84,11 @@ function marquee(cls: string): { el: HTMLElement; set(text: string): void } {
   };
 }
 
-function control(path: string, size: number, label: string, onClick: () => void): HTMLButtonElement {
-  const btn = h("button", { class: "m-ctl", title: label, "aria-label": label }, svg(path, size));
+// magnifier.glass, drawn as a line (the same as the player's search field)
+const MAGNIFIER = "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM15.4 15.4L20 20";
+
+function control(path: string, size: number, label: string, onClick: () => void, stroke?: number): HTMLButtonElement {
+  const btn = h("button", { class: "m-ctl", title: label, "aria-label": label }, svg(path, size, stroke ? { stroke } : {}));
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     onClick();
@@ -281,6 +284,11 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   });
   const time = h("span", { class: "m-time" });
   const row = h("div", { class: "m-row" }, prev, play, next, bar.el, time);
+  // The way into the player (the full view only; the compact card stays as it is).
+  if (full) {
+    const search = control(MAGNIFIER, 13, t("Search songs and artists"), () => actions.setView("player"), 2);
+    row.append(search);
+  }
 
   const canvas = h("canvas", { class: "m-viz" });
   const viz = new Visualizer(canvas, full ? 56 : 22);

@@ -153,6 +153,14 @@ async function main() {
         if (State.mode === "expanded") island.fsm.forcePetit();
         else island.openFromKeyboard();
         break;
+      case "player":
+        setPaused(false);
+        if (State.mode === "expanded" && State.view === "player") island.fsm.forcePetit();
+        else {
+          island.alert("player");
+          island.takeKeyboard();
+        }
+        break;
       case "recap":
         setPaused(false);
         void Recap.open(island);

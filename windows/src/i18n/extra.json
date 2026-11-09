@@ -1486,6 +1486,17 @@
    "ru": "Открыть гардероб",
    "id": "Buka lemari"
   },
+  "Open the music player": {
+   "zh-Hans": "打开音乐播放器",
+   "hi": "म्यूज़िक प्लेयर खोलें",
+   "es": "Abrir el reproductor de música",
+   "ar": "فتح مشغّل الموسيقى",
+   "fr": "Ouvrir le lecteur de musique",
+   "bn": "মিউজিক প্লেয়ার খুলুন",
+   "pt-BR": "Abrir o player de música",
+   "ru": "Открыть музыкальный плеер",
+   "id": "Buka pemutar musik"
+  },
   "OpenAI-compatible": {
    "zh-Hans": "兼容 OpenAI",
    "hi": "OpenAI-संगत",

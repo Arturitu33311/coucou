@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 
 const MAC_IDS = [
   "toggleIsland", "openChat", "goToAlert", "jumpToTerminal", "attachFrontWindow",
-  "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle",
+  "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle", "openPlayer",
 ];
 
 // ── Defaults (testDefaultsExhaustive, testAllDefaultsHaveModifier, testNoDefaultDuplicates) ──
@@ -30,7 +30,9 @@ test("every default parses, is canonical and holds Ctrl+Alt", () => {
   for (const d of SHORTCUTS) {
     const c = parseKeys(d.defaultKeys);
     assert.ok(c, `${d.id} default does not parse`);
-    assert.ok(c.ctrl && c.alt && !c.meta, `${d.id} default is not Ctrl+Alt`);
+    // The player's is Alt+Super+M (no Ctrl, so never AltGr).
+    if (d.id === "openPlayer") assert.ok(c.meta && c.alt && !c.ctrl, `${d.id} default is not Super+Alt`);
+    else assert.ok(c.ctrl && c.alt && !c.meta, `${d.id} default is not Ctrl+Alt`);
     assert.equal(formatKeys(c), d.defaultKeys, `${d.id} default is not in canonical form`);
   }
 });
@@ -80,8 +82,10 @@ test("only the island toggle is off by default; the one not ported yet is reserv
   }
   assert.deepEqual(activeKeys({}).map(([id]) => id), [
     "openChat", "goToAlert", "jumpToTerminal", "nextPill", "prevPill", "muteToggle", "desktopToggle",
-    "wardrobeToggle",
+    "wardrobeToggle", "openPlayer",
   ]);
+  assert.equal(SHORTCUTS.find((d) => d.id === "openPlayer").defaultKeys, "Alt+Super+M");
+  assert.equal(SHORTCUTS.find((d) => d.id === "openPlayer").enabledByDefault, true);
   // The Mac's ⌃⌥D, on the same letter.
   assert.equal(SHORTCUTS.find((d) => d.id === "desktopToggle").defaultKeys, "Ctrl+Alt+D");
 });
@@ -315,6 +319,18 @@ beforeEach(() => {
 test("the wardrobe shortcut's own event opens the wardrobe", () => {
   emit("open-wardrobe", null);
   assert.deepEqual(did, ["resume", "wardrobe"]);
+});
+
+test("openPlayer opens the player and takes the keyboard (not the keyboard-open timer)", () => {
+  emit("shortcut", "openPlayer");
+  assert.deepEqual(did, ["resume", "alert:player", "keyboard"]);
+});
+
+test("openPlayer closes the island when the player is already showing", () => {
+  State.mode = "expanded";
+  State.view = "player";
+  emit("shortcut", "openPlayer");
+  assert.deepEqual(did, ["collapse"]);
 });
 
 test("a global shortcut arrives as an event and opens the chat", () => {

@@ -1419,6 +1419,9 @@ pub fn run() {
                     if argv.iter().any(|a| a == "--toggle") {
                         // `coucou --toggle` (bound to a keyboard shortcut) opens the island, or closes it if it is open.
                         let _ = app.emit_to(island::WINDOW_LABEL, "tray", "toggle".to_string());
+                    } else if argv.iter().any(|a| a == "--player") {
+                        // `coucou --player`: the music player (the same as the openPlayer shortcut).
+                        let _ = app.emit_to(island::WINDOW_LABEL, "tray", "player".to_string());
                     } else {
                         // Opening Coucou again (its shortcut, the Start menu) shows its window.
                         show_hub(app, None);

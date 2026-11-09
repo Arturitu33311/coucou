@@ -69,6 +69,8 @@ pub const ACTIONS: &[ActionDef] = &[
     action("muteToggle", "Ctrl+Alt+S", true, true),
     action("desktopToggle", "Ctrl+Alt+D", true, true),
     action("wardrobeToggle", "Ctrl+Alt+G", true, true),
+    // Super+Alt, not Ctrl+Alt: the player is typed into at once.
+    action("openPlayer", "Alt+Super+M", true, true),
 ];
 
 pub fn find(id: &str) -> Option<&'static ActionDef> {
@@ -92,6 +94,7 @@ pub fn description(id: &str) -> &'static str {
         "muteToggle" => n_("Mute or unmute Mochi"),
         "desktopToggle" => n_("Send Mochi to the desktop"),
         "wardrobeToggle" => n_("Open the wardrobe"),
+        "openPlayer" => n_("Open the music player"),
         _ => "Coucou",
     }
 }
@@ -688,9 +691,9 @@ mod wayland {
 mod tests {
     use super::*;
 
-    const MAC_IDS: [&str; 10] = [
+    const MAC_IDS: [&str; 11] = [
         "toggleIsland", "openChat", "goToAlert", "jumpToTerminal", "attachFrontWindow",
-        "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle",
+        "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle", "openPlayer",
     ];
 
     fn never(_: &Shortcut) -> Option<String> {
@@ -710,7 +713,13 @@ mod tests {
         for def in ACTIONS {
             let shortcut = parse(def.default_keys)
                 .unwrap_or_else(|| panic!("{} default does not parse", def.id));
-            assert!(is_altgr_like(&shortcut), "{} default is not Ctrl+Alt", def.id);
+            if def.id == "openPlayer" {
+                // Alt+Super+M: no Ctrl, so never AltGr.
+                assert!(shortcut.mods.contains(Modifiers::SUPER | Modifiers::ALT), "{}", def.id);
+                assert!(!is_altgr_like(&shortcut), "{}", def.id);
+            } else {
+                assert!(is_altgr_like(&shortcut), "{} default is not Ctrl+Alt", def.id);
+            }
         }
     }
 
@@ -855,6 +864,7 @@ mod tests {
         assert_eq!(from_args(&args(&["coucou", "--shortcut"])), None);
         assert_eq!(from_args(&args(&["coucou", "--shortcut", "rm -rf"])), None);
         assert_eq!(from_args(&args(&["coucou", "--shortcut", "desktopToggle"])), Some("desktopToggle"));
+        assert_eq!(from_args(&args(&["coucou", "--shortcut", "openPlayer"])), Some("openPlayer"));
         assert_eq!(from_args(&args(&["coucou", "--shortcut", "attachFrontWindow"])), None);
         assert_eq!(from_args(&args(&["coucou"])), None);
     }
