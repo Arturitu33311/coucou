@@ -106,3 +106,20 @@ del proyecto 1) antes o junto con el ensayo 3.
 
 Tamaños exactos y escalado a otras resoluciones, animaciones de entrada, cuántos recientes caben, cómo se despliegan los
 resultados de búsqueda sobre el cover flow, y el mecanismo exacto de detección de "escritorio a la vista".
+
+## Pendientes tras la integración (2026-11-09, pedido de Alan)
+
+Integrado en `unify/monorepo` funcionando, pero **falta mejorar la optimización y la parte visual**:
+
+- **Optimización**: el primer audio de YT Music tarda ~10 s (casi todo yt-dlp); la página del escritorio decodifica
+  portadas aunque esté tapada; la isla y el escritorio piden la letra por separado (dos consultas a lrclib a la vez);
+  un fallo de red al buscar los álbumes de un artista queda en caché hasta reiniciar; medir CPU/RAM de la ventana de
+  escritorio frente a Hidamari.
+- **Visual**: el giro de las tarjetas es una imitación 2D (WebKit corre con `WEBKIT_DISABLE_COMPOSITING_MODE=1`, sin 3D
+  real); acercar más el look al boceto/iBaila (liquid glass, reflejos, cover flow); el medidor solo dice En línea /
+  Sin conexión (el boceto muestra tipo de red y señal); revisar desplazamiento con rueda/arrastre y escalas en otras
+  resoluciones.
+- **Sin probar en vivo**: que Hidamari vuelva al cerrarse Coucou; Spotify (falta el inicio de sesión de spotifyd y del
+  panel); DJ de Spotify.
+- Menores anotados en las revisiones (ledger de SDD): coincidencia de portada solo por título, `desktop_is_visible` sin uso,
+  capacidad compartida `default` para la ventana de escritorio, etc.
