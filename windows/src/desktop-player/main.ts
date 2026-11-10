@@ -48,10 +48,14 @@ function div(cls: string, id = ""): HTMLDivElement {
 
 const root = document.getElementById("dp")!;
 const scene = div("dp-scene");
-const art = document.createElement("img");
+// The cover behind everything, blurred once per song into a small canvas the browser enlarges smoothly
+// (bakeArt). A CSS blur(70px) was re-run over the whole screen on every repaint above it, with no
+// compositing to keep the result: scrolling the column cost a whole core.
+const art = document.createElement("canvas");
 art.className = "dp-art";
-art.alt = "";
-art.decoding = "async";
+const artImg = new Image();
+artImg.decoding = "async";
+artImg.addEventListener("load", () => bakeArt(artImg, art));
 const wash = div("dp-wash");
 const floor = div("dp-floor");
 const stage = div("dp-stage");
@@ -288,8 +292,79 @@ async function loadLyrics(key: string) {
 function showArt(data: string | null) {
   artData = data;
   root.classList.toggle("has-art", !!data);
-  if (data) art.src = data;
-  else art.removeAttribute("src");
+  if (data) artImg.src = data;
+}
+
+/** Side of the shrunk cover, and the size of the baked scene (16:9) the browser enlarges to the screen. */
+const ART_SMALL = 32;
+const ART_W = 160;
+const ART_H = 90;
+
+/**
+ * The scene's cover: shrunk to a few pixels, saturated by half again (the old CSS saturate(150%)),
+ * enlarged 1.2x to cover the 16:9 scene as the CSS scale did, then box-blurred three times. Runs once
+ * per cover on 14 400 pixels; the screen-sized result is the browser's smooth enlargement of it.
+ */
+function bakeArt(img: HTMLImageElement, out: HTMLCanvasElement) {
+  const small = document.createElement("canvas");
+  small.width = ART_SMALL;
+  small.height = ART_SMALL;
+  const sc = small.getContext("2d");
+  if (!sc) return;
+  sc.drawImage(img, 0, 0, ART_SMALL, ART_SMALL);
+  out.width = ART_W;
+  out.height = ART_H;
+  const ctx = out.getContext("2d");
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  const side = ART_W * 1.2;
+  ctx.drawImage(small, (ART_W - side) / 2, (ART_H - side) / 2, side, side);
+  const px = ctx.getImageData(0, 0, ART_W, ART_H);
+  saturateAndBlur(px.data, ART_W, ART_H);
+  ctx.putImageData(px, 0, 0);
+}
+
+function saturateAndBlur(d: Uint8ClampedArray, w: number, h: number) {
+  for (let i = 0; i < d.length; i += 4) {
+    const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    for (let c = 0; c < 3; c++) d[i + c] = l + (d[i + c] - l) * 1.5;
+  }
+  const tmp = new Float32Array(w * h * 3);
+  for (let pass = 0; pass < 3; pass++) {
+    boxBlur(d, tmp, w, h, 6, true);
+    boxBlur(d, tmp, w, h, 6, false);
+  }
+}
+
+/** One box-blur pass of radius `r` along rows (`horizontal`) or columns, edges clamped. */
+function boxBlur(d: Uint8ClampedArray, tmp: Float32Array, w: number, h: number, r: number, horizontal: boolean) {
+  const lines = horizontal ? h : w;
+  const len = horizontal ? w : h;
+  const at = (line: number, k: number) => (horizontal ? line * w + k : k * w + line) * 4;
+  for (let line = 0; line < lines; line++) {
+    for (let k = 0; k < len; k++) {
+      let r0 = 0, g0 = 0, b0 = 0;
+      for (let o = -r; o <= r; o++) {
+        const i = at(line, Math.min(len - 1, Math.max(0, k + o)));
+        r0 += d[i];
+        g0 += d[i + 1];
+        b0 += d[i + 2];
+      }
+      const n = 2 * r + 1;
+      const t = (line * len + k) * 3;
+      tmp[t] = r0 / n;
+      tmp[t + 1] = g0 / n;
+      tmp[t + 2] = b0 / n;
+    }
+    for (let k = 0; k < len; k++) {
+      const i = at(line, k);
+      const t = (line * len + k) * 3;
+      d[i] = tmp[t];
+      d[i + 1] = tmp[t + 1];
+      d[i + 2] = tmp[t + 2];
+    }
+  }
 }
 
 // ── Scene, edge light and clock ───────────────────────────────────────────────
