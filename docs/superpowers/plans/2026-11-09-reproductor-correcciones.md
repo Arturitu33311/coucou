@@ -154,3 +154,59 @@ Cuadro a cuadro (2 fps) más acercamientos a resolución completa:
    debajo de la de Coucou, que pasa a ser transparente. Para Spotify se busca el video en YouTube por
    "artista título". WebKit sin compositing no puede reproducir video barato, por eso no se hace dentro de la página.
 7. Borde neón que late con los graves (franjas delgadas, ~15 fps, medido).
+
+## 6. Pendientes al cerrar el 2026-11-09 (todo lo que falta, en orden)
+
+Estado: rama `fix/player-autoadvance` (13c974f0), instalada en la laptop (respaldo `coucou.prev-20261109c`).
+
+### Video de fondo (lo que notó Alan en vivo)
+1. **Al cambiar de canción el video anterior se queda congelado** hasta que carga el nuevo (yt-dlp tarda de ~10 a
+   ~48 s). Arreglo: al cambiar de canción, quitar `has-video` en el acto (vuelve la portada) y `stop` en el mpv de
+   video. Resolver la URL antes: en paralelo con la búsqueda del id, con caché de URLs resueltas y con la siguiente
+   canción de la cola precargada.
+2. **El video va desfasado de la canción.** Se pide con la posición del momento de la petición, pero empieza
+   segundos después, y el video oficial o lyric video no siempre coincide con la versión de audio. Arreglo: al
+   empezar, `seek` a la posición actual de la canción (MPRIS); corregir la deriva cuando pase de ~1,5 s
+   (comparar `time-pos` contra la posición extrapolada) y al hacer seek o pausa. Preferir el video cuya duración
+   se acerque a la de la canción.
+3. **La letra no se ve sobre el video.** La línea bajo la barra es pequeña y no contrasta. → letra cinética al
+   centro (§5, propuesta 2), con sombra o velo detrás.
+4. Recortar las franjas negras que traen algunos videos (lyric videos en cinemascope); mpv `vf=crop` a partir de
+   la proporción detectada.
+5. Hacer el mpv compatible con versiones >0.37: quitar `--background=#000000` (innecesario con panscan).
+
+### Rediseño hacia la referencia (§5)
+6. Modos Explorar / Inmersivo con botón; el cover flow hoy tapa el video.
+7. Letra cinética palabra por palabra (serif OFL empaquetada, acento con el color de la portada).
+8. Columna = cola/contexto con ecualizador en la actual; filas sin caja.
+9. Barra compacta + 3 botones redondos; búsqueda detrás de la lupa; reloj delgado (Oswald no está instalada).
+10. Borde neón que late con los graves (franjas delgadas, ~15 fps, medido).
+11. Animaciones: tarjetas que se levantan con hover y vinilo que sale de la portada.
+
+### Rendimiento
+12. **Scroll de la columna trabado**: 7 s de CPU por 3,5 s de scroll; en reposo 0,5 s. Descartado: el desenfoque
+    de las tarjetas y el blur del fondo (ya quitados de todos modos). Sospecha principal:
+    `WEBKIT_DISABLE_COMPOSITING_MODE=1` en `~/.local/bin/coucou-island`; probar con compositing encendido (medir
+    CPU, ver si hay parpadeo o fallos de transparencia; vuelta atrás fácil). El banco con MiniBrowser
+    (`tmp/bench`) no medía el scroll: arreglarlo antes de usarlo.
+13. "OK Coucou" transcribe música con Parakeet (~1 núcleo con música): no transcribir mientras suena música por
+    los altavoces, Parakeet a 2 hilos, sin espera activa.
+14. Arranque lento de YT Music (~10 s, yt-dlp): resolver antes y reusar.
+15. Letra: una sola consulta compartida entre isla y escritorio; caché de álbumes sin guardar errores de red.
+
+### Sin verificar en vivo
+16. Autoavance: una canción de YT Music y una de Spotify desde el buscador de Coucou; adelantar hasta casi el
+    final (`playerctl -p mpv position …`) y ver que sigue la siguiente con su portada. Spotify ahora debería sonar
+    por spotifyd ("Coucou"), no por la app.
+17. Relay que pausaba la PC: arreglo de Android (sesiones remotas / Spotify Connect) **sin instalar en el S22**
+    (`install-phone.sh`).
+18. Portada y fondo que a veces no coinciden: revisar con el autoavance (cada canción encolada entra al historial
+    al sonar).
+
+### Otros
+19. Medidor: tipo de red y señal (hoy solo "En línea").
+20. Integrar a `unify/monorepo` cuando 1–3 y 16 estén verificados (regla de `~/estado`: lo estable va a la
+    principal).
+21. Menores: Node 22 como predeterminado para las pruebas (`nvm alias default 22`), actualizar la skill
+    Impeccable, Tauri 2.12.5, prueba rota previa `PendingPcmTest.kt` en Android, 2 pruebas i18n previas
+    fallando (hub y ajustes).
