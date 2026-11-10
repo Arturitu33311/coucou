@@ -2,6 +2,7 @@ package com.agupta07505.smartisland.coucou.audiolink
 
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.session.MediaController
 import android.media.session.PlaybackState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,6 +50,14 @@ class WatchersLogicTest {
         assertFalse(WatchersLogic.isMirror("com.spotify.music"))
         assertFalse(WatchersLogic.isMirror("com.google.android.youtube"))
         assertFalse(WatchersLogic.isMirror(null))
+    }
+
+    @Test
+    fun spotify_connect_playing_on_the_laptop_is_not_the_phones_music() {
+        // Spotify on the phone shows the laptop's Spotify ("playing on ALAN-LAP") as a remote session.
+        assertTrue(WatchersLogic.isRemote(MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE))
+        assertFalse(WatchersLogic.isRemote(MediaController.PlaybackInfo.PLAYBACK_TYPE_LOCAL))
+        assertFalse(WatchersLogic.isRemote(null))
     }
 
     @Test
