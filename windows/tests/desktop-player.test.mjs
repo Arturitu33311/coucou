@@ -127,7 +127,8 @@ test("recentRowsTiltWithoutDepth", () => {
   assert.equal(s.opacity, 1);
   // no 3D: the 2D likeness, still no depth
   const f = recentRowStyle(true);
-  assert.match(f.transform, /^scaleX\(0\.927\) skewY\(-3\.96deg\)$/);
+  // mirrored slant: the far (right) edge drops, so the cards point at the centre
+  assert.match(f.transform, /^scaleX\(0\.927\) skewY\(3\.96deg\)$/);
   assert.ok(!f.transform.includes("rotateY") && !f.transform.includes("translateZ"));
 });
 

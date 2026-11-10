@@ -21,8 +21,12 @@ import { ROW_PERSPECTIVE, ROW_TURN, turnTransform } from "./tilt";
  * wherever the scroll has taken it.
  */
 export function recentRowStyle(flat = false): { transform: string; opacity: number } {
+  // In 2D the slant is mirrored: a far edge that rises read as the cards pointing outwards; dropping
+  // it reads as pointing at the centre (Alan, 11-09). 3D keeps the real rotateY.
   return {
-    transform: turnTransform(ROW_TURN, flat, { perspective: ROW_PERSPECTIVE }),
+    transform: flat
+      ? turnTransform(-ROW_TURN, true)
+      : turnTransform(ROW_TURN, false, { perspective: ROW_PERSPECTIVE }),
     opacity: 1,
   };
 }
