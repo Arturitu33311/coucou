@@ -452,7 +452,9 @@ pub async fn player_recents() -> Vec<Item> {
         }),
         Err(_) => Vec::new(),
     };
-    merge_recents(history::load(), remote, RECENTS_MAX)
+    // The DJ can't be started from here (see the notch's djShown): an old DJ entry is left out.
+    let local = history::load().into_iter().filter(|e| e.item.id != DJ_URI).collect();
+    merge_recents(local, remote, RECENTS_MAX)
 }
 
 /// Starts Spotify's DJ; when the Web API refuses it, opens it in the Spotify app instead.

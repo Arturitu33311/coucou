@@ -447,7 +447,8 @@ export function buildPlayerView(actions: ViewActions, env: { userAgent?: string 
     paintIdle();
   }
 
-  const djShown = () => source() !== "ytmusic";
+  // Spotify's DJ can't be started through its public API (it is the mobile app's): hidden until it can.
+  const djShown = () => false;
 
   function paintIdle() {
     djRow.style.display = djShown() ? "" : "none";

@@ -94,7 +94,7 @@ function buildPanels() {
   // the front cover's album lists its songs in the results
   flowView = buildFlow(slots[1], albumSource, (album) => searchView?.showAlbum(album), flat);
   searchView = buildSearch(slots[2], feedback);
-  barView = buildPlayerBar(slots[3], feedback, () => {
+  barView = buildPlayerBar(slots[3], () => {
     lyricsOn = !lyricsOn;
     barView?.setLyrics(lyricsOn);
     paintLyric();

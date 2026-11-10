@@ -780,10 +780,6 @@ body {
   display: flex;
   gap: 4px;
 }
-.dp-btn-dj {
-  font: 700 13px Inter, sans-serif;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .dp-art,
   .dp-wash,
