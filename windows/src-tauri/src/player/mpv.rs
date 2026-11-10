@@ -176,8 +176,8 @@ fn launch_video_mpv(sock: &Path, wid: u64) -> io::Result<()> {
         .arg("--input-vo-keyboard=no")
         .arg("--input-cursor=no")
         .arg("--cursor-autohide=no")
-        .arg("--background=color")
-        .arg("--background-color=#000000")
+        // mpv 0.37 takes the colour itself (newer ones split it into --background=color + --background-color)
+        .arg("--background=#000000")
         .arg(format!("--input-ipc-server={}", sock.display()))
         .arg("--ytdl-format=bestvideo[height<=?720][vcodec^=avc1]/bestvideo[height<=?720]/best[height<=?720]");
     if let Some(opt) = ytdl_opt(home.as_deref()) {
