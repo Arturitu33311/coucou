@@ -114,3 +114,43 @@ Fase B · Visual del escritorio
 Fase C · Verificación
 11. Capturas antes/después en el espacio vacío; CPU/RAM antes/después (objetivo: <10 % CPU en reposo con música).
 12. Probar en vivo con Alan; luego integrar a `unify/monorepo`.
+
+## 5. Análisis del video de referencia (aestheticmac.com/media/clips/hero, 13,8 s, 1600×900)
+
+Cuadro a cuadro (2 fps) más acercamientos a resolución completa:
+
+- **Dos modos** que se alternan con un botón redondo (icono ↘↖) sobre la barra:
+  - *Explorar* (0–4 s): cover flow de los álbumes del artista al centro (5 portadas de cristal, la central más
+    grande, cada una con su pie "Drip Harder · 2018 · Album" en cristal esmerilado), barra ancha "Search Apple Music"
+    y la barra de reproducción. El video de fondo va atenuado.
+  - *Inmersivo* (5 s en adelante): desaparecen el cover flow y la búsqueda (se desvanecen y encogen); el video queda
+    a plena luz y la letra ocupa el centro.
+- **Fondo = video musical de la canción**, nítido y a pantalla completa. Al cambiar de canción (9 s) hace fundido al
+  video nuevo, y la letra arranca con el título y el artista ("25k jacket / Gunna").
+- **Letra cinética al centro**: serif negrita con itálicas, 2–3 líneas apiladas y centradas, palabra por palabra
+  (karaoke). Una palabra de acento sale en amarillo o naranja ("mornin", "pushin'"), y las palabras entran y salen
+  con fundido y desenfoque.
+- **Columna izquierda = la cola/contexto, no el historial**. Encabezado "Continue Playing ⌄" con miniportadas
+  apiladas, subtítulo del contexto ("Songs like LIKE ME…") y botón ⟳. La actual va en tarjeta de cristal clara con
+  ecualizador animado; las demás son miniatura + texto sin caja, giradas hacia el centro, desvaneciéndose. La lista
+  avanza con la cola (12–13 s).
+- **Reloj**: condensado y muy alto, de trazo fino, gris translúcido metálico; fecha pequeña arriba ("Fri Sep 25").
+  La lista se monta sobre la parte baja del reloj.
+- **Barra**: compacta y oscura, abajo al centro sobre el dock. Lleva aleatorio, anterior, pausa, siguiente,
+  repetir, miniportada, título, "Artista — Álbum", una línea de avance finísima, ⋯, letra (activa), cola y volumen.
+  Encima, a la derecha, tres botones redondos de cristal: buscar, (visualizador/modo) y alternar modo.
+- **Borde**: resplandor neón grueso amarillo-verde→cian que late con la música (cambia de intensidad cuadro a
+  cuadro), con chispas pequeñas cerca del borde.
+- Sin medidor de batería ni red.
+
+### Propuesta (orden)
+1. Dos modos (Explorar / Inmersivo) con botón de alternar; por defecto inmersivo cuando suena algo.
+2. Letra cinética al centro (Fraunces u otra serif OFL empaquetada; palabra por palabra repartiendo el tiempo de
+   la línea de lrclib; acento con el color de la portada).
+3. Fondo nítido: la portada a pantalla completa ya; luego el video (ver 6).
+4. Columna = cola/contexto con ecualizador en la actual; filas sin caja.
+5. Barra compacta + 3 botones redondos; búsqueda detrás de la lupa; reloj delgado.
+6. Video de fondo: mpv aparte (sin sonido, 720p, decodificación por hardware) en una ventana de escritorio
+   debajo de la de Coucou, que pasa a ser transparente. Para Spotify se busca el video en YouTube por
+   "artista título". WebKit sin compositing no puede reproducir video barato, por eso no se hace dentro de la página.
+7. Borde neón que late con los graves (franjas delgadas, ~15 fps, medido).
