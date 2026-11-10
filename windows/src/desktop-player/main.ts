@@ -164,6 +164,7 @@ function updatePanels() {
   barView?.setTrack(track, artData, source);
   recentsView?.setTrack(track, artData, source);
   syncProgress();
+  syncVideoPlay();
   // the play state, a seek or the cover arriving: the lists stay as they are
   if (songLists.changed(trackKey)) void refreshLists();
 }
@@ -206,9 +207,45 @@ function showWantedArt(key: string) {
   }
 }
 
+// ── Background video ──────────────────────────────────────────────────────────
+
+const videoGate = new QueryGate();
+let videoPaused: boolean | null = null;
+
+/** Asks for the song's music video (once per song); the page's own scene stays until it shows. */
+async function syncVideo(t: MusicTrack | null) {
+  const seq = videoGate.next();
+  videoPaused = null;
+  if (!t) {
+    setVideo(false);
+    void Bridge.desktopVideo("", "", 0);
+    return;
+  }
+  const elapsed = t.status === "Playing" ? Date.now() - t.positionAt : 0;
+  const shown = await Bridge.desktopVideo(t.title, t.artists.join(" "), Math.max(0, (t.positionMs + elapsed) / 1000));
+  if (!videoGate.isCurrent(seq)) return;
+  setVideo(!!shown);
+  syncVideoPlay();
+}
+
+function setVideo(on: boolean) {
+  root.classList.toggle("has-video", on);
+  document.documentElement.classList.toggle("has-video", on);
+}
+
+/** The video plays while the song plays and the page is seen. */
+function syncVideoPlay() {
+  if (!root.classList.contains("has-video")) return;
+  const paused = !(track?.status === "Playing" && !document.hidden);
+  if (paused === videoPaused) return;
+  videoPaused = paused;
+  void Bridge.desktopVideoPause(paused);
+}
+
 function applyTrack(t: MusicTrack | null) {
   // a player with no title is idle: the hour's scene again
   if (!t || !t.title) {
+    if (track) void syncVideo(null);
     track = null;
     trackKey = "";
     artUrl = "";
@@ -231,6 +268,7 @@ function applyTrack(t: MusicTrack | null) {
     // from the last read; the next one (once per song) may find it
     played = playedMatch(t.player, t.title, recents);
     void loadLyrics(key);
+    void syncVideo(t);
   }
   if (newSong || t.artUrl !== artUrl) {
     artUrl = t.artUrl;
@@ -474,6 +512,7 @@ function syncProgress() {
 
 function wake() {
   syncProgress();
+  syncVideoPlay();
   if (document.hidden) {
     if (minuteTimer != null) window.clearTimeout(minuteTimer);
     if (lyricTimer != null) window.clearTimeout(lyricTimer);

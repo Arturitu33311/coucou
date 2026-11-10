@@ -364,6 +364,10 @@ export const Bridge = {
     }
   },
   playerSpotifyConnected: () => call<boolean>("player_spotify_connected"),
+  /** The desktop player's background video for a song ("" stops it); true once it shows. */
+  desktopVideo: (title: string, artist: string, positionS: number) =>
+    call<boolean>("desktop_video", { title, artist, positionS }),
+  desktopVideoPause: (paused: boolean) => call<void>("desktop_video_pause", { paused }),
 
   // ── Phone link (Coucou for Android) ───────────────────────────────────────
   phoneLinkStatus: () => call<PhoneLinkStatus>("phone_link_status"),

@@ -37,6 +37,23 @@ body {
   overflow: hidden;
 }
 
+/* The song's music video plays in a window under this one (desktop_player/video.rs): the page's own
+   scene fades out and the page lets it show through; the floor and the edge light stay over it. */
+html.has-video,
+html.has-video body {
+  background: transparent;
+}
+.dp-scene,
+.dp-halo {
+  transition: opacity 0.8s ease;
+}
+html.has-video #dp .dp-scene,
+html.has-video #dp .dp-art,
+html.has-video #dp .dp-wash,
+html.has-video #dp .dp-halo {
+  opacity: 0;
+}
+
 /* ── Scene ─────────────────────────────────────────────────────────────────── */
 
 .dp-scene {

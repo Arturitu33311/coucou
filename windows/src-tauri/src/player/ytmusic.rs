@@ -73,6 +73,11 @@ pub async fn album(id: &str) -> Result<Vec<Item>, String> {
     run_helper("album", id).await
 }
 
+/// The music video for `query` ("artist title"): its video id, if YouTube Music has one.
+pub async fn video(query: &str) -> Result<Option<String>, String> {
+    Ok(run_helper("video", query).await?.into_iter().next().map(|i| i.id))
+}
+
 /// The songs YouTube Music would play after `video_id` (its radio), without it.
 pub async fn radio(video_id: &str) -> Result<Vec<Item>, String> {
     run_helper("radio", video_id).await

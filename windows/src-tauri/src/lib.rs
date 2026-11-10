@@ -1618,6 +1618,8 @@ pub fn run() {
             desktop_player::desktop_player_focus,
             desktop_player::desktop_player_geometry,
             desktop_player::desktop_player_shown,
+            desktop_player::video::desktop_video,
+            desktop_player::video::desktop_video_pause,
             sounds::custom_sounds,
             sounds::custom_sound,
             sounds::reveal_sounds_folder,

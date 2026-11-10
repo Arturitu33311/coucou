@@ -98,7 +98,14 @@ async fn play_at(
     video_id: &str,
     settle: Duration,
 ) -> Result<(), String> {
-    let stream = match UnixStream::connect(sock).await {
+    let stream = connect_or_launch(sock, launcher).await?;
+    let url = format!("https://music.youtube.com/watch?v={video_id}");
+    send(stream, &["loadfile", &url, "replace"], Some(settle)).await
+}
+
+/// A connection to the mpv on `sock`, starting it with `launcher` when none answers.
+async fn connect_or_launch(sock: &Path, launcher: impl Fn() -> io::Result<()>) -> Result<UnixStream, String> {
+    Ok(match UnixStream::connect(sock).await {
         Ok(s) => s,
         Err(_) => {
             let _ = std::fs::remove_file(sock);
@@ -115,9 +122,82 @@ async fn play_at(
                 }
             }
         }
-    };
-    let url = format!("https://music.youtube.com/watch?v={video_id}");
-    send(stream, &["loadfile", &url, "replace"], Some(settle)).await
+    })
+}
+
+// ── The desktop player's video ────────────────────────────────────────────────
+
+/// A music video can take yt-dlp several seconds to resolve.
+const VIDEO_SETTLE: Duration = Duration::from_secs(15);
+
+fn video_socket_path() -> PathBuf {
+    socket_path().with_file_name("coucou-video.sock")
+}
+
+/// Plays the music video `video_id` without sound, looping, in the X window `wid` (the desktop
+/// player's video window), from `start_s` seconds in. Returns once it shows (or failed).
+pub async fn play_video(video_id: &str, wid: u64, start_s: u64) -> Result<(), String> {
+    let sock = video_socket_path();
+    let s2 = sock.clone();
+    let stream = connect_or_launch(&sock, move || launch_video_mpv(&s2, wid)).await?;
+    let url = format!("https://www.youtube.com/watch?v={video_id}");
+    let opts = format!("start={start_s}");
+    send(stream, &["loadfile", &url, "replace", &opts], Some(VIDEO_SETTLE)).await
+}
+
+/// Pauses or resumes the video (the song paused, the desktop covered). Nothing when no video mpv runs.
+pub async fn video_pause(paused: bool) {
+    if let Ok(s) = UnixStream::connect(video_socket_path()).await {
+        let _ = send(s, &["set_property", "pause", if paused { "yes" } else { "no" }], None).await;
+    }
+}
+
+/// Stops the video (no song, or none found): the mpv stays, idle.
+pub async fn video_stop() {
+    if let Ok(s) = UnixStream::connect(video_socket_path()).await {
+        let _ = send(s, &["stop"], None).await;
+    }
+}
+
+/// The video mpv: no sound, hardware decoding, at most 720p (H.264 first, what VA-API decodes),
+/// filling the window (cropped, never letterboxed), no on-screen controls, no input of its own.
+fn launch_video_mpv(sock: &Path, wid: u64) -> io::Result<()> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut cmd = Command::new("mpv");
+    cmd.arg(format!("--wid={wid}"))
+        .arg("--no-audio")
+        .arg("--idle=yes")
+        .arg("--loop-file=inf")
+        .arg("--hwdec=auto-safe")
+        .arg("--panscan=1.0")
+        .arg("--osc=no")
+        .arg("--osd-level=0")
+        .arg("--input-default-bindings=no")
+        .arg("--input-vo-keyboard=no")
+        .arg("--input-cursor=no")
+        .arg("--cursor-autohide=no")
+        .arg("--background=color")
+        .arg("--background-color=#000000")
+        .arg(format!("--input-ipc-server={}", sock.display()))
+        .arg("--ytdl-format=bestvideo[height<=?720][vcodec^=avc1]/bestvideo[height<=?720]/best[height<=?720]");
+    if let Some(opt) = ytdl_opt(home.as_deref()) {
+        cmd.arg(opt);
+    }
+    if let Some(opt) = ytdl_config_opt(home.as_deref()) {
+        cmd.arg(opt);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 async fn pause_at(sock: &Path) -> Result<(), String> {
