@@ -55,6 +55,8 @@ pub struct Device {
 pub enum PlayTarget {
     Track(String),
     Context(String),
+    /// A track started inside a context (its album): the songs after it follow.
+    TrackIn { track: String, context: String },
 }
 
 /// `spotify:<kind>:<id>` for an item's kind (`Context` has no URI of its own: the id is already one).
@@ -96,12 +98,24 @@ fn item(kind: Kind, v: &Value, subtitle: String, art_url: String) -> Option<Item
         title: v["name"].as_str()?.to_string(),
         subtitle,
         art_url,
+        context: None,
     })
 }
 
 fn track_item(v: &Value, art: Option<String>) -> Option<Item> {
     let art = art.unwrap_or_else(|| pick_art(&v["album"]["images"]));
-    item(Kind::Track, v, artist_names(&v["artists"]), art)
+    let mut it = item(Kind::Track, v, artist_names(&v["artists"]), art)?;
+    it.context = album_context(&v["album"]);
+    Some(it)
+}
+
+/// `spotify:album:<id>` for an album object, or None (no id, or not an album).
+fn album_context(album: &Value) -> Option<String> {
+    let id = album["id"].as_str().filter(|id| !id.is_empty())?;
+    match album["type"].as_str() {
+        Some(t) if t != "album" => None,
+        _ => Some(uri(Kind::Album, id)),
+    }
 }
 
 fn items(page: &Value) -> &[Value] {
@@ -128,7 +142,17 @@ pub fn parse_artist_albums(json: &Value) -> Vec<Item> {
 /// Accepts the album object (with its `tracks` page) or a bare tracks page.
 pub fn parse_album_tracks(json: &Value, album_art: &str) -> Vec<Item> {
     let page = if json["tracks"].is_object() { &json["tracks"] } else { json };
-    items(page).iter().filter_map(|t| track_item(t, Some(album_art.to_string()))).collect()
+    let album = album_context(json);
+    items(page)
+        .iter()
+        .filter_map(|t| track_item(t, Some(album_art.to_string())))
+        .map(|mut i| {
+            if i.context.is_none() {
+                i.context = album.clone();
+            }
+            i
+        })
+        .collect()
 }
 
 pub fn parse_devices(json: &Value) -> Vec<Device> {
@@ -302,6 +326,7 @@ where
     let body = match target {
         PlayTarget::Track(u) => json!({ "uris": [u] }),
         PlayTarget::Context(u) => json!({ "context_uri": u }),
+        PlayTarget::TrackIn { track, context } => json!({ "context_uri": context, "offset": { "uri": track } }),
     };
     let path = format!("/me/player/play?device_id={}", pct_encode(device_id));
     call(base, tokens, reqwest::Method::PUT, &path, Some(body)).await.map(drop)
@@ -391,6 +416,7 @@ mod tests {
         // Smallest image that is at least 64 px wide.
         assert_eq!(t.art_url, "https://i.scdn.co/image/ab67616d00004851c8b4-64");
         assert_eq!(items[1].subtitle, "Radiohead, A. Guest");
+        assert_eq!(t.context.as_deref(), Some("spotify:album:6dVIqQ8qmQ5GBnJ9shOYGE"), "a track plays on with its album");
         let a = &items[2];
         assert_eq!((a.kind, a.title.as_str()), (Kind::Artist, "Radiohead"));
         assert_eq!(a.id, "4Z8W4fKeB5YxbusRsdQVPb");
@@ -599,6 +625,15 @@ mod tests {
         assert!(seen[0].starts_with("PUT /me/player/play?device_id=dev%201 "), "{}", seen[0]);
         assert!(seen[0].ends_with(r#"{"uris":["spotify:track:abc"]}"#), "{}", seen[0]);
         assert!(seen[1].ends_with(r#"{"context_uri":"spotify:album:xyz"}"#), "{}", seen[1]);
+    }
+
+    #[tokio::test]
+    async fn play_a_track_inside_its_album_so_the_next_songs_follow() {
+        let srv = fake(vec![("204 No Content", "", String::new())]);
+        let target = PlayTarget::TrackIn { track: "spotify:track:abc".into(), context: "spotify:album:xyz".into() };
+        play_at(&srv.base, &tokens(Arc::default()), "d", &target).await.unwrap();
+        let seen = srv.seen.lock().unwrap();
+        assert!(seen[0].ends_with(r#"{"context_uri":"spotify:album:xyz","offset":{"uri":"spotify:track:abc"}}"#), "{}", seen[0]);
     }
 
     #[tokio::test]

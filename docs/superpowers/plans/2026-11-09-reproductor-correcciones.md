@@ -63,7 +63,28 @@ Contra el boceto v5 y la referencia iBaila. Registro: superficie ambiental tipo 
 **Notch**: sin captura (el atajo no abrió el panel en 2 s durante la prueba; puede ser el foco de la terminal).
 Pendiente de lo que Alan haya notado.
 
-## 3. Plan (orden propuesto)
+## 3. Lo que notó Alan en el uso (2026-11-09) — manda sobre el orden de abajo
+
+1. **Al terminar una canción se queda en silencio.** Causa: Spotify recibía `uris:[una pista]` y mpv `loadfile …
+   replace` de un solo video; nada en cola. **Arreglado** (rama `worktree-player-visual-optim`): una pista de Spotify
+   se reproduce dentro de su álbum (`context_uri` + `offset`, luego el autoplay de la app); en YT Music, al empezar,
+   se encola en segundo plano el resto del álbum o la radio de YouTube Music (≤25), cada una entra al historial al
+   sonar (portada y fuente correctas), y una reproducción nueva descarta la cola vieja.
+2. **Tarda bastante en iniciar** (YT Music ~10 s, casi todo yt-dlp). → Fase A, paso 5: resolver la URL de audio antes.
+3. **A veces la portada y el fondo no coinciden.** Portada de mpv buscada por título en el historial; el fondo se
+   tiñe de otra fuente. → unificar: el fondo se tiñe de la misma portada que muestra la tarjeta.
+4. **La columna izquierda gira al revés**: apunta hacia afuera, debe apuntar al centro. → invertir el signo de
+   `flatTurn` (y revisar el lado que se acerca).
+5. **La letra casi no se ve y le falta personalidad.** → más tamaño/contraste, línea actual destacada con la del
+   antes/después tenue, entrada animada (subida + desenfoque), color del acento de la portada.
+6. **Los videos de las canciones no se muestran** (Canvas de Spotify / video de YT). → investigar: Canvas no está en la
+   API pública de Spotify; YT sí tiene video (mpv `--no-video` hoy). Decidir fuente.
+7. **Al minimizar una ventana para ver el fondo se traba y se ve el fondo viejo del carro** (Hidamari /
+   `linux-wallpaper`) antes del reproductor. → mostrar la ventana de escritorio antes (precargada y pintada), no apagar
+   y prender Hidamari en cada cambio; medir.
+8. **Faltan animaciones**: tarjetas que se levantan al pasar el mouse; un **vinilo que sale de la portada** con hover.
+
+## 4. Plan (orden propuesto)
 
 Fase A · Optimización (impacto mayor, poco visible)
 1. Confirmar la hipótesis de la voz (medir con/sin música).

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use history::HistoryEntry;
 use spotify_api::{ApiError, PlayTarget};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod history;
 #[cfg(target_os = "linux")]
@@ -42,6 +43,10 @@ pub struct Item {
     pub title: String,
     pub subtitle: String,
     pub art_url: String,
+    /// For a Spotify track: its album (`spotify:album:…`), so playing it carries on with the album
+    /// (and the app's autoplay after it) instead of stopping when the song ends. Older history has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 // ── Tauri commands (src/core/bridge.ts, shapes in src/core/player.ts) ─────────
@@ -270,6 +275,60 @@ async fn one_at_a_time<F: Future>(f: F) -> F::Output {
 /// Serialises load → push → save so two plays never lose each other's entry.
 static HISTORY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Bumped by every play: background work for an older play checks it and gives up.
+static PLAY_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Most songs queued after a YT Music play.
+#[cfg(target_os = "linux")]
+const QUEUE_MAX: usize = 25;
+
+/// Queues what follows a YT Music song in mpv (`rest`, or else its radio) so the music goes on when
+/// it ends, and records each queued song in the history when mpv starts it: its cover and source
+/// are found there, as for a song the user picked. Runs in the background; a newer play stops it.
+#[cfg(target_os = "linux")]
+fn queue_after(seq: u64, first: String, rest: Option<Vec<Item>>) {
+    tauri::async_runtime::spawn(async move {
+        let next = match rest {
+            Some(list) => list,
+            None => match ytmusic::radio(&first).await {
+                Ok(list) => list,
+                Err(e) => {
+                    eprintln!("player: no radio after {first}: {e}");
+                    return;
+                }
+            },
+        };
+        let next: Vec<Item> =
+            next.into_iter().filter(|i| i.kind == Kind::Track && i.id != first).take(QUEUE_MAX).collect();
+        if next.is_empty() {
+            return;
+        }
+        let current = move || PLAY_SEQ.load(Ordering::SeqCst) == seq;
+        {
+            // Plays run under this lock and bump PLAY_SEQ inside it: no play slips in mid-queue.
+            let _guard = PLAY_LOCK.lock().await;
+            let ids: Vec<String> = next.iter().map(|i| i.id.clone()).collect();
+            if let Err(e) = mpv::append_ytmusic(&ids, current).await {
+                eprintln!("player: could not queue the next songs: {e}");
+                return;
+            }
+        }
+        mpv::watch_position(|pos| {
+            if !current() {
+                return false;
+            }
+            if let Some(item) = usize::try_from(pos).ok().and_then(|p| p.checked_sub(1)).and_then(|i| next.get(i)) {
+                remember(item.clone());
+            }
+            true
+        })
+        .await;
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn queue_after(_seq: u64, _first: String, _rest: Option<Vec<Item>>) {}
+
 /// Adds a played item to the local history. A disk problem is logged, never a failed play.
 fn remember(item: Item) {
     let _guard = HISTORY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -288,6 +347,7 @@ fn dj_item() -> Item {
         title: "DJ".into(),
         subtitle: "Spotify".into(),
         art_url: String::new(),
+        context: None,
     }
 }
 
@@ -341,11 +401,19 @@ async fn play_item(item: Item) -> Result<PlayResult, PlayerError> {
     if item.source == Source::Spotify && item.id == DJ_URI {
         return start_dj().await; // replayed from the recents: keep the DJ's app fallback
     }
+    // Every play counts, so a queue still being built for an older YT Music song is dropped.
+    let seq = PLAY_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
     let fallback_used = match item.source {
         Source::Spotify => {
             pause_ytmusic().await;
             let target = match item.kind {
-                Kind::Track => PlayTarget::Track(spotify_api::uri(Kind::Track, &item.id)),
+                Kind::Track => {
+                    let track = spotify_api::uri(Kind::Track, &item.id);
+                    match &item.context {
+                        Some(context) => PlayTarget::TrackIn { track, context: context.clone() },
+                        None => PlayTarget::Track(track),
+                    }
+                }
                 kind => PlayTarget::Context(spotify_api::uri(kind, &item.id)),
             };
             play_spotify(&target).await?
@@ -353,18 +421,20 @@ async fn play_item(item: Item) -> Result<PlayResult, PlayerError> {
         Source::Ytmusic => {
             // mpv plays one video id: an album starts at its first song. It is found before
             // Spotify is paused, so a failed lookup leaves what plays alone.
-            let video_id = match item.kind {
-                Kind::Track => item.id.clone(),
-                Kind::Album => yt_album(&item.id)
-                    .await?
-                    .into_iter()
-                    .find(|i| i.kind == Kind::Track)
-                    .map(|i| i.id)
-                    .ok_or_else(|| crate::i18n::t("Couldn't play this"))?,
+            // What follows it: the rest of the album, or for a song YouTube Music's radio (fetched
+            // after the song starts, so it never slows the start).
+            let (video_id, rest) = match item.kind {
+                Kind::Track => (item.id.clone(), None),
+                Kind::Album => {
+                    let mut tracks = yt_album(&item.id).await?.into_iter().filter(|i| i.kind == Kind::Track);
+                    let first = tracks.next().ok_or_else(|| crate::i18n::t("Couldn't play this"))?;
+                    (first.id, Some(tracks.collect::<Vec<_>>()))
+                }
                 Kind::Artist | Kind::Context => return Err(crate::i18n::t("Couldn't play this").into()),
             };
             pause_spotify().await;
             yt_play(&video_id).await?;
+            queue_after(seq, video_id, rest);
             false
         }
     };
@@ -442,7 +512,7 @@ mod tests {
     use super::*;
 
     fn item(source: Source, id: &str) -> Item {
-        Item { source, kind: Kind::Track, id: id.into(), title: id.into(), subtitle: String::new(), art_url: String::new() }
+        Item { source, kind: Kind::Track, id: id.into(), title: id.into(), subtitle: String::new(), art_url: String::new(), context: None }
     }
 
     fn at(source: Source, id: &str, at_ms: i64) -> HistoryEntry {

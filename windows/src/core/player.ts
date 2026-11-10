@@ -16,6 +16,8 @@ export interface PlayerItem {
   subtitle: string;
   /** A web URL, or "" when there is none. */
   artUrl: string;
+  /** A Spotify track's album ("spotify:album:…"): playing the track carries on with it. */
+  context?: string;
 }
 
 /** One source failed; the other's results are still there. */

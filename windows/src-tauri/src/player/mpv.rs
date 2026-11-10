@@ -127,6 +127,46 @@ async fn pause_at(sock: &Path) -> Result<(), String> {
     }
 }
 
+/// Queues songs after the one playing (`loadfile … append`), so mpv goes on to them instead of
+/// falling silent. `still_wanted` is asked before each one: a newer play stops the queueing.
+pub async fn append_ytmusic(video_ids: &[String], still_wanted: impl Fn() -> bool) -> Result<(), String> {
+    let sock = socket_path();
+    for id in video_ids {
+        if !still_wanted() {
+            break;
+        }
+        let stream = UnixStream::connect(&sock)
+            .await
+            .map_err(|e| tf("Couldn't talk to mpv: {error}", &[("error", &e.to_string())]))?;
+        let url = format!("https://music.youtube.com/watch?v={id}");
+        send(stream, &["loadfile", &url, "append"], None).await?;
+    }
+    Ok(())
+}
+
+/// Hands every change of mpv's playlist position to `on_pos` (-1 = nothing), until it returns false
+/// or mpv goes away.
+pub async fn watch_position(mut on_pos: impl FnMut(i64) -> bool) {
+    let Ok(stream) = UnixStream::connect(socket_path()).await else { return };
+    let (r, mut w) = stream.into_split();
+    if w.write_all(command_json_observe("playlist-pos").as_bytes()).await.is_err() {
+        return;
+    }
+    let mut lines = BufReader::new(r).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if v["event"].as_str() == Some("property-change") && v["name"].as_str() == Some("playlist-pos") {
+            if !on_pos(v["data"].as_i64().unwrap_or(-1)) {
+                return;
+            }
+        }
+    }
+}
+
+fn command_json_observe(property: &str) -> String {
+    format!("{}\n", serde_json::json!({ "command": ["observe_property", 1, property] }))
+}
+
 pub async fn play_ytmusic(video_id: &str) -> Result<(), String> {
     let sock = socket_path();
     let s2 = sock.clone();
