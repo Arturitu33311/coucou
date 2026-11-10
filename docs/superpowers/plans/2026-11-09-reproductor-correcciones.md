@@ -83,6 +83,14 @@ Pendiente de lo que Alan haya notado.
    `linux-wallpaper`) antes del reproductor. → mostrar la ventana de escritorio antes (precargada y pintada), no apagar
    y prender Hidamari en cada cambio; medir.
 8. **Faltan animaciones**: tarjetas que se levantan al pasar el mouse; un **vinilo que sale de la portada** con hover.
+9. **El DJ no funciona.** Coucou no tiene sesión de Spotify (`Spotify login needed` en coucou.err) y, aun con ella, el
+   DJ no se puede iniciar por la API pública (es de la app móvil). **Quitado** (8cb91523): ni en el notch, ni botón en
+   la barra, ni en recientes.
+10. **Las luces del borde no reaccionan a la canción.** Nunca se conectaron: `.dp-edge` es un `box-shadow` fijo que
+    solo cambia de color. Para que reaccionen: mandar `music-bars` (cava, hoy solo a la isla) también a la ventana del
+    escritorio y modular la intensidad con graves/volumen. Ojo con el costo: WebKit corre sin compositing, así que
+    repintar un resplandor de pantalla completa a 30 fps es caro → franjas delgadas por borde, ~15 fps, con medición
+    de CPU antes/después.
 
 ## 4. Plan (orden propuesto)
 
