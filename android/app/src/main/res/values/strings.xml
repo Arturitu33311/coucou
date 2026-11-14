@@ -699,4 +699,9 @@
     <string name="glance_style_mochi">Mochi</string>
     <string name="glance_style_ring">Ring and padlock</string>
     <string name="glance_card_note">Android does not say whether a phone was opened with PIN, fingerprint or face, so the pill only says \"unlocked\". Needs a screen lock. The padlock badge is used when this is off.</string>
+    <string name="coucou_wp_saver_title">Wallpapers in battery saver: simplify</string>
+    <string name="coucou_wp_saver_desc">With the Android battery saver on (or a nearly flat battery, 15 or less and not charging), the Coucou wallpapers become one still, simple picture with no animation, tilt, particles or lyrics, redrawn only when the song or the minute changes. Back to normal when it ends.</string>
+    <string name="coucou_wp_saver_auto">Automatic</string>
+    <string name="coucou_wp_saver_always">Always</string>
+    <string name="coucou_wp_saver_never">Never</string>
 </resources>

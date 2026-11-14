@@ -59,6 +59,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import com.agupta07505.smartisland.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -185,6 +188,35 @@ internal fun Setup(modifier: Modifier = Modifier) {
                     if (!it) com.agupta07505.smartisland.coucou.Lyrics.clear()
                 },
             )
+        }
+        SectionCard(
+            title = stringResource(R.string.coucou_wp_saver_title),
+            subtitle = stringResource(R.string.coucou_wp_saver_desc),
+        ) {
+            var choice by remember { mutableStateOf(with(PhoneSettings) { context.wallpaperSaver }) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val options = listOf(
+                    "auto" to R.string.coucou_wp_saver_auto,
+                    "always" to R.string.coucou_wp_saver_always,
+                    "never" to R.string.coucou_wp_saver_never,
+                )
+                for ((id, label) in options) {
+                    val on = choice == id
+                    Text(
+                        stringResource(label),
+                        color = if (on) CoucouColors.Text else CoucouColors.TextSecondary,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(if (on) CoucouColors.AccentSoft else CoucouColors.SurfaceHigh)
+                            .border(1.5.dp, if (on) CoucouColors.Accent else Color.Transparent, RoundedCornerShape(16.dp))
+                            .clickable { choice = id; with(PhoneSettings) { context.wallpaperSaver = id } }
+                            .padding(vertical = 12.dp),
+                    )
+                }
+            }
         }
         SectionCard(
             title = "Copiar al laptop sin pulsar (experimental)",

@@ -92,4 +92,9 @@
     <string name="glance_style_mochi">Mochi</string>
     <string name="glance_style_ring">Anillo y candado</string>
     <string name="glance_card_note">Android no dice si el teléfono se abrió con PIN, huella o rostro, así que la píldora solo dice «desbloqueado». Requiere bloqueo de pantalla. Con esto apagado se usa el candado de siempre.</string>
+    <string name="coucou_wp_saver_title">Wallpapers en ahorro de batería: simplificar</string>
+    <string name="coucou_wp_saver_desc">Con el ahorro de batería de Android activo (o la batería casi vacía, 15 o menos sin cargar), los wallpapers de Coucou pasan a una imagen fija y sencilla, sin animación, inclinación, partículas ni letra, que solo se redibuja al cambiar la canción o el minuto. Vuelven a la normalidad al salir del modo.</string>
+    <string name="coucou_wp_saver_auto">Automático</string>
+    <string name="coucou_wp_saver_always">Siempre</string>
+    <string name="coucou_wp_saver_never">Nunca</string>
 </resources>

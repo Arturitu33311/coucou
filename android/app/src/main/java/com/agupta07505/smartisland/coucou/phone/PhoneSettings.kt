@@ -75,6 +75,11 @@ object PhoneSettings {
         get() = prefs(this).getString("mochiOutfit", "auto") ?: "auto"
         set(v) = prefs(this).edit().putString("mochiOutfit", v).apply()
 
+    /** Animated wallpapers in battery-saver: "auto" (Android's saver or a nearly flat battery), "always" or "never". See WallpaperPowerGate. */
+    var Context.wallpaperSaver: String
+        get() = prefs(this).getString("wallpaperSaver", "auto") ?: "auto"
+        set(v) = prefs(this).edit().putString("wallpaperSaver", v).apply()
+
     /** Keep Mochi in the island, with the tasks (on by default). */
     var Context.showDesk: Boolean
         get() = prefs(this).getBoolean("showDesk", true)

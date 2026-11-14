@@ -15,6 +15,8 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.SweepGradient
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.service.wallpaper.WallpaperService
 import android.text.StaticLayout
@@ -46,6 +48,26 @@ open class CoverLiveWallpaperService : WallpaperService() {
 
     private inner class CoverEngine : Engine(), Choreographer.FrameCallback {
         private val choreographer: Choreographer by lazy { Choreographer.getInstance() }
+        private val handler = Handler(Looper.getMainLooper())
+
+        /**
+         * Saver mode (Android's battery saver, a nearly flat battery, or the user's switch): ONE still frame, redrawn only when
+         * the song, its cover or the minute changes. No frame loop, no motion sensor, no motes, record, blur, shadows or lyrics.
+         */
+        private var saver = false
+        private var saverDraws = 0
+        private val gate = WallpaperPowerGate.Watcher(this@CoverLiveWallpaperService) { onSaverChanged(it) }
+        private val saverMinute = object : Runnable {
+            override fun run() { if (visible && saver) { drawSaver(); scheduleMinute() } }
+        }
+        private var drawnSig = ""
+        private fun busSig(): String = CoverBus.current().let { "${it.key}|${it.playing}|${CoverBus.signature(it.cover)}" }
+        // publishes arrive for every progress tick: redraw only when the song, its play state or its picture really changed
+        private val saverRetry = Runnable { if (visible && saver) drawSaver() }
+        private val saverRedraw = Runnable { if (visible && saver && busSig() != drawnSig) drawSaver() }
+        private val busListener: () -> Unit = {
+            if (visible && saver) { handler.removeCallbacks(saverRedraw); handler.postDelayed(saverRedraw, 400L) }
+        }
         private val t0 = SystemClock.uptimeMillis()
         private var visible = false
         private var w = 0
@@ -167,26 +189,80 @@ open class CoverLiveWallpaperService : WallpaperService() {
             draw((SystemClock.uptimeMillis() - t0) / 1000f)
         }
 
+        override fun onCreate(surfaceHolder: SurfaceHolder) {
+            super.onCreate(surfaceHolder)
+            gate.start()
+            saver = gate.saver
+            applyPaints()
+            CoverBus.addListener(busListener)
+        }
+
         override fun onVisibilityChanged(v: Boolean) {
             visible = v
+            startLoop()
+        }
+
+        /** (Re)starts whatever drives the drawing for the current mode; with the wallpaper hidden nothing runs at all. */
+        private fun startLoop() {
             choreographer.removeFrameCallback(this)
-            if (v) {
+            handler.removeCallbacks(saverMinute); handler.removeCallbacks(saverRedraw); handler.removeCallbacks(saverRetry)
+            if (!visible) { stopTilt(); return }
+            if (saver) {
+                stopTilt()
+                drawSaver(); scheduleMinute()
+            } else {
                 startTilt()
                 statSince = 0L; statFrames = 0; statDrawNs = 0; statWorstNs = 0
                 choreographer.postFrameCallback(this)
-            } else stopTilt()
+            }
+        }
+
+        private fun onSaverChanged(now: Boolean) {
+            Log.i("WallpaperGate", "saver=$now (was $saver) visible=$visible car=$carMode home=$homeMode")
+            saver = now
+            applyPaints()
+            startLoop()
+        }
+
+        /** Text shadows are blur passes: off in saver mode (the layouts are rebuilt without them). */
+        private fun applyPaints() {
+            if (saver) { npPaint.clearShadowLayer(); lyricPaint.clearShadowLayer(); infoPaint.clearShadowLayer() }
+            else {
+                npPaint.setShadowLayer(8f, 0f, 2f, Color.argb(170, 0, 0, 0))
+                lyricPaint.setShadowLayer(10f, 0f, 2f, Color.argb(170, 0, 0, 0))
+                infoPaint.setShadowLayer(6f, 0f, 2f, Color.argb(150, 0, 0, 0))
+            }
+            npKey = ""; lyricW = 0
+            if (saver) { tiltX = 0f; tiltY = 0f; tiltLive = false; spinSpeed = 0f }
+        }
+
+        private fun scheduleMinute() {
+            handler.postDelayed(saverMinute, 60_000L - System.currentTimeMillis() % 60_000L + 150L)
+        }
+
+        private fun drawSaver() {
+            saverDraws++
+            drawnSig = busSig()
+            Log.d("CoverSaver", "still frame #$saverDraws car=$carMode home=$homeMode ${w}x$h")
+            draw(0f)
+            // a new track whose cover has not arrived yet is given 6 s (see [refresh]); look again after that
+            if (noCoverSince != 0L) { handler.removeCallbacks(saverRetry); handler.postDelayed(saverRetry, 6500L) }
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
             visible = false
             stopTilt()
             choreographer.removeFrameCallback(this)
+            handler.removeCallbacks(saverMinute); handler.removeCallbacks(saverRedraw); handler.removeCallbacks(saverRetry)
         }
 
         override fun onDestroy() {
             visible = false
             stopTilt()
             choreographer.removeFrameCallback(this)
+            handler.removeCallbacksAndMessages(null)
+            CoverBus.removeListener(busListener)
+            gate.stop()
             clockFillBmp?.recycle(); clockEchoBmp?.recycle()
             super.onDestroy()
         }
@@ -211,7 +287,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val dt = (t - lastFadeT).coerceIn(0f, 0.1f)
             lastFadeT = t
             if (w == 0 || (dispA == targetA && dispB == targetB)) return
-            val k = minOf(1f, dt * 3f)
+            val k = if (saver) 1f else minOf(1f, dt * 3f)
             fun near(a: Int, b: Int) = kotlin.math.abs(Color.red(a) - Color.red(b)) + kotlin.math.abs(Color.green(a) - Color.green(b)) + kotlin.math.abs(Color.blue(a) - Color.blue(b)) < 6
             dispA = if (near(dispA, targetA)) targetA else ColorUtils.blendARGB(dispA, targetA, k)
             dispB = if (near(dispB, targetB)) targetB else ColorUtils.blendARGB(dispB, targetB, k)
@@ -349,9 +425,9 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val dt = (t - lastT).coerceIn(0f, 0.1f)
             lastT = t
             val playing = CoverBus.current().playing
-            val beat = if (playing) 1f + 0.06f * sin(t * 1.6f) else 1f     // the lights breathe a little with music
-            val px = tiltX * w * 0.045f + (0.5f - pageX) * w * 0.12f
-            val py = tiltY * w * 0.035f
+            val beat = if (playing && !saver) 1f + 0.06f * sin(t * 1.6f) else 1f     // the lights breathe a little with music
+            val px = if (saver) 0f else tiltX * w * 0.045f + (0.5f - pageX) * w * 0.12f
+            val py = if (saver) 0f else tiltY * w * 0.035f
             blob1.alpha = 215; blob2.alpha = 195
             c.save()
             c.translate(w * (0.30f + 0.22f * sin(t / 9f)) + px, h * (0.26f + 0.12f * cos(t / 11f)) + py)
@@ -363,7 +439,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             c.scale(beat, beat)
             c.drawCircle(0f, 0f, w * 0.75f, blob2)
             c.restore()
-            for (i in 0 until nDots) {
+            if (!saver) for (i in 0 until nDots) {
                 val y = (((dy[i] - t * dv[i] * 0.7f) % 1f) + 1f) % 1f * h + py * (0.4f + dr[i] / 8f)
                 val x = (dx[i] + 0.03f * sin(t * 0.3f + dp[i])) * w + px * (0.4f + dr[i] / 8f)
                 dot.color = dotColor[i]
@@ -384,7 +460,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val fb = homeClockFill
             val ex = (w - (fb?.width ?: 0)) / 2f + px * 0.6f
             val ey = h * 0.105f + py * 0.6f
-            homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
+            if (!saver) homeClockEcho?.let { c.drawBitmap(it, ex - tiltX * 12f, ey - tiltY * 8f + 7f, bmp) }
             fb?.let { c.drawBitmap(it, ex, ey, bmp); clockHit.set(ex, ey, ex + it.width, ey + it.height) }
             // the cover is centred too and starts a little above the clock's bottom edge, covering its lower part
             drawInfoRow(c, px)
@@ -461,8 +537,14 @@ open class CoverLiveWallpaperService : WallpaperService() {
             // visible while playing, and (dimmer) for 90 s after pausing, so it can be tapped to resume
             val cur = CoverBus.current()
             val target = if (sq == null) 0f else if (cur.playing) 1f else if (System.currentTimeMillis() - cur.at < 90_000L) 0.7f else 0f
-            homeCoverMix += (target - homeCoverMix) * minOf(1f, dt * 2.5f)
+            homeCoverMix = if (saver) (if (target > 0f) 1f else 0f) else homeCoverMix + (target - homeCoverMix) * minOf(1f, dt * 2.5f)
             if (sq == null || homeCoverMix < 0.02f) return
+            if (saver) {
+                val cx = w * 0.5f; val cy = top + w * 0.23f; val half = w * 0.23f
+                drawSaverCover(c, cx, cy, half)
+                coverHit.set(cx - half * 1.1f, cy - half * 1.1f, cx + half * 1.1f, cy + half * 1.1f)
+                return
+            }
             // a tap on the cover answers with a small slide (next: to the left, previous: to the right) or a press (play / pause);
             // a new track comes in from the side it was asked from
             val n = (t - nudgeAt) / 0.45f
@@ -611,7 +693,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
         private fun drawNowPlaying(c: Canvas, t: Float, dt: Float, px: Float) {
             val now = CoverBus.current()
             val npTarget = if (now.playing) 1f else if (System.currentTimeMillis() - now.at < 90_000L && now.key.isNotEmpty()) 0.7f else 0f
-            npMix += (npTarget - npMix) * minOf(1f, dt * 2.5f)
+            npMix = if (saver) npTarget.let { if (it > 0f) 1f else 0f } else npMix + (npTarget - npMix) * minOf(1f, dt * 2.5f)
             if (npMix < 0.02f) return
             val width = (w * 0.86f).toInt()
             if (now.key != npKey || width != npW) {
@@ -621,7 +703,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
                 npArtist = parts.getOrNull(2)?.takeIf { it.isNotBlank() }?.let { oneLine(it, w * 0.034f, width) }
                 npLyricFor = null
             }
-            val ly = Lyrics.lines
+            val ly = if (saver) emptyList() else Lyrics.lines
             val idx = if (ly.isEmpty()) -1 else Lyrics.indexAt(ly, Lyrics.positionMs())
             if (ly !== npLyricFor || idx != npLyricIdx) {
                 npLyricFor = ly; npLyricIdx = idx; npLyricAt = t
@@ -660,6 +742,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             if (w == 0 || h == 0) return
             c.drawColor(Color.rgb(7, 19, 17))
             if (homeMode) { drawHome(c, t); return }
+            if (saver) { drawSaverPlain(c); return }
             if (carMode) { drawCarBehind(c, t); drawLockStatus(c) }
 
             // blurred copy drifting slowly (Ken Burns)
@@ -773,6 +856,41 @@ open class CoverLiveWallpaperService : WallpaperService() {
             c.restore()
             if (ly.isNotEmpty()) drawLyrics(c, ly, t, cx + side * 0.825f + w * 0.025f, cy)
             c.restore() // the lean of the whole group
+        }
+
+        // ---- saver mode: flat, still, cheap ---------------------------------------------------------------------------
+
+        /** The cover as a flat rounded square with a thin outline: no record, shadow, lean or breathing. */
+        private fun drawSaverCover(c: Canvas, cx: Float, cy: Float, half: Float) {
+            val sq = square ?: return
+            rectA.set(cx - half, cy - half, cx + half, cy + half)
+            val r = half * 0.14f
+            clip.reset(); clip.addRoundRect(rectA, r, r, Path.Direction.CW)
+            c.save(); c.clipPath(clip)
+            srcA.set(0, 0, sq.width, sq.height)
+            c.drawBitmap(sq, srcA, rectA, bmp)
+            c.restore()
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = 2f; paint.color = accent
+            c.drawRoundRect(rectA, r, r, paint)
+            paint.style = Paint.Style.FILL
+        }
+
+        /** Cover and car variants in saver mode: a vertical gradient in the cover's colours (Mochi teal when idle) and the cover. */
+        private fun drawSaverPlain(c: Canvas) {
+            if (carMode) {
+                drawCarBehind(c, 0f)
+                drawLockStatus(c)
+                drawSaverCover(c, w * 0.36f, h * 0.735f, w * 0.19f)
+                return
+            }
+            val base = Color.rgb(7, 19, 17)
+            paint.shader = LinearGradient(
+                0f, 0f, 0f, h.toFloat(),
+                ColorUtils.blendARGB(base, c1, 0.42f), ColorUtils.blendARGB(base, c2, 0.22f), Shader.TileMode.CLAMP,
+            )
+            c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), paint)
+            paint.shader = null
+            drawSaverCover(c, w * 0.5f, h * 0.5f, w * 0.32f)
         }
 
         // ---- lyrics beside the record ---------------------------------------------------------------------------
@@ -939,7 +1057,7 @@ open class CoverLiveWallpaperService : WallpaperService() {
             val k = w * 1.06f / bg.width
             val ox = (w - bg.width * k) / 2f
             val oy = h - bg.height * k
-            val sway = if (tiltLive) 0f else 1f   // no sensor: a very slow idle sway keeps the depth readable
+            val sway = if (tiltLive || saver) 0f else 1f   // no sensor: a very slow idle sway keeps the depth readable
             val tx = tiltX + sway * 0.35f * sin(t / 5f)
             val ty = tiltY + sway * 0.20f * cos(t / 6f)
 

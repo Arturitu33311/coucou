@@ -14,11 +14,18 @@ object CoverBus {
 
     private val ref = AtomicReference(Now(null, false, ""))
 
+    private val listeners = java.util.concurrent.CopyOnWriteArraySet<() -> Unit>()
+
+    /** Told (from whatever thread published) whenever something is published: a still wallpaper redraws on this and nothing else. */
+    fun addListener(l: () -> Unit) { listeners.add(l) }
+    fun removeListener(l: () -> Unit) { listeners.remove(l) }
+
     fun publish(cover: Bitmap?, playing: Boolean, key: String) {
         val prev = ref.get()
         val changed = prev.playing != playing || prev.key != key
         // keep the last cover while paused so the wallpaper does not flash empty
         ref.set(Now(cover ?: prev.cover.takeIf { key == prev.key }, playing, key, if (changed) System.currentTimeMillis() else prev.at))
+        listeners.forEach { it() }
     }
 
     fun current(): Now = ref.get()
