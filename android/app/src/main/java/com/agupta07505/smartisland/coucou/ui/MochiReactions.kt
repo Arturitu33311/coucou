@@ -344,7 +344,14 @@ fun rememberMochiScene(): MochiScene {
     // Every unlock re-opens the hello (same moment the padlock badge shows)…
     val unlockMs = rememberUnlockMs()
     LaunchedEffect(unlockMs) {
-        if (unlockMs > 0) greetedUntil = MochiReactions.latchGreeting(greetedUntil, unlockMs)
+        // The unlock pill (with Mochi inside it) says hello when it owns this unlock: not twice.
+        val ctx = app
+        val quiet = GlanceUnlockLogic.bubbleStaysQuiet(
+            GlanceSettings.mode(ctx), GlanceSettings.style(ctx),
+            ctx.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true,
+            GlanceUnlockLogic.faceConfigured(ctx),
+        )
+        if (unlockMs > 0 && !quiet) greetedUntil = MochiReactions.latchGreeting(greetedUntil, unlockMs)
     }
     // …and it too closes by itself.
     LaunchedEffect(greetedUntil) {

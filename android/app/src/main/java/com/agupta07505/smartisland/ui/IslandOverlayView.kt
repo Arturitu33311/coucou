@@ -53,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -977,6 +978,7 @@ fun IslandOverlayView(
             // The unlock padlock: one classic opening over the main pill per unlock, then gone.
             // (Mochi says hello beside it from his bubble.) Keyed by unlock so every unlock replays.
             val unlockMs = com.agupta07505.smartisland.coucou.ui.rememberUnlockMs()
+            val glancePrefs = com.agupta07505.smartisland.coucou.ui.rememberGlancePrefs()
             var showUnlock by remember { mutableStateOf(false) }
             LaunchedEffect(unlockMs) {
                 if (unlockMs > 0) {
@@ -985,7 +987,8 @@ fun IslandOverlayView(
                     showUnlock = false
                 }
             }
-            if (showUnlock && !isHiding) {
+            // Glance owns the unlock effect whenever its switch is on (one effect per unlock, not padlock + pill).
+            if (showUnlock && !isHiding && glancePrefs.first == com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF) {
                 key(unlockMs) {
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -1000,9 +1003,55 @@ fun IslandOverlayView(
             }
         }
 
+        // The Glance-style unlock pill (see GlanceUnlockPill): a real unlock, or a debug request, widens the pill over
+        // the main one. Collapsed island only; the expanded card is never covered.
+        val gContext = LocalContext.current
+        val (gMode, gStyle) = com.agupta07505.smartisland.coucou.ui.rememberGlancePrefs()
+        var gRequest by remember { mutableStateOf<com.agupta07505.smartisland.coucou.ui.GlanceBus.Request?>(null) }
+        var gLast by remember { mutableLongStateOf(0L) }
+        val gUnlockMs = com.agupta07505.smartisland.coucou.ui.rememberUnlockMs()
+        LaunchedEffect(gUnlockMs) {
+            if (gUnlockMs > 0 && com.agupta07505.smartisland.coucou.ui.GlanceUnlockLogic.shouldShow(
+                    gMode, !isHiding, gContext.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true,
+                    com.agupta07505.smartisland.coucou.ui.GlanceUnlockLogic.faceConfigured(gContext), gUnlockMs, gLast,
+                )
+            ) {
+                gLast = gUnlockMs
+                gRequest = com.agupta07505.smartisland.coucou.ui.GlanceBus.Request(gUnlockMs, com.agupta07505.smartisland.coucou.ui.GlanceKind.SUCCESS)
+            }
+        }
+        val gBus by com.agupta07505.smartisland.coucou.ui.GlanceBus.requests.collectAsState()
+        LaunchedEffect(gBus) {
+            val r = gBus ?: return@LaunchedEffect
+            // The bus remembers its last request; a stale one (island restarted) must not replay.
+            if (System.nanoTime() - r.id < 1_500_000_000L && gMode != com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF) gRequest = r
+        }
+        val shown = gRequest
+        if (shown != null && !currentExpanded && !isHiding) {
+            key(shown.id) {
+                com.agupta07505.smartisland.coucou.ui.GlanceUnlockPill(
+                    kind = shown.kind,
+                    style = gStyle,
+                    baseWidth = safeWidth,
+                    height = safeHeight,
+                    shape = mainShape,
+                    color = pillBackgroundColor,
+                    onDone = { gRequest = null },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .graphicsLayer {
+                            translationX = animatedXOffset.toPx()
+                            translationY = yOffset.toPx()
+                        },
+                )
+            }
+        }
+
         // Mochi's home: always the secondary bubble. Tapping him opens his desk (tasks).
         // Collapsed it is his circle; expanded it grows into his mini-pill with the count.
-        if (mochiSecondary && secondaryAlpha > 0f) {
+        // While the unlock pill is up, his bubble steps aside (he is the pill's star, and the pill widens over his spot).
+        val bubbleHide by animateFloatAsState(if (shown != null) 0f else 1f, tween(140), label = "bubbleHide")
+        if (mochiSecondary && secondaryAlpha * bubbleHide > 0f) {
             Box(
                 modifier = Modifier
                     .absoluteOffset {
@@ -1014,7 +1063,7 @@ fun IslandOverlayView(
                     .width(secondaryBubbleWidth)
                     .height(circleSize)
                     .graphicsLayer {
-                        alpha = secondaryAlpha
+                        alpha = secondaryAlpha * bubbleHide
                         scaleX = secondaryScale * switchScaleAnim.value
                         scaleY = secondaryScale * switchScaleAnim.value
                     }

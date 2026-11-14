@@ -161,6 +161,8 @@ fun CustomizationsSection(
             .animateContentSize(),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        GlanceUnlockCard()
+
         // 1. Transparency & Pill Appearance
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -599,4 +601,54 @@ internal fun RgbColorPickerDialog(
             }
         }
     )
+}
+
+
+/** Unlock animation: when it shows (off / always / only phones with face unlock) and who stars in it. */
+@Composable
+private fun GlanceUnlockCard() {
+    val context = LocalContext.current
+    val (mode, style) = com.agupta07505.smartisland.coucou.ui.rememberGlancePrefs()
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.glance_card_title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            val modes = listOf(
+                com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF to R.string.glance_mode_off,
+                com.agupta07505.smartisland.coucou.ui.GlanceMode.ALWAYS to R.string.glance_mode_always,
+                com.agupta07505.smartisland.coucou.ui.GlanceMode.FACE_PHONES to R.string.glance_mode_face,
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                modes.forEach { (m, label) ->
+                    androidx.compose.foundation.layout.Row(
+                        Modifier.fillMaxWidth().clickable { com.agupta07505.smartisland.coucou.ui.GlanceSettings.setMode(context, m) }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.RadioButton(selected = mode == m, onClick = { com.agupta07505.smartisland.coucou.ui.GlanceSettings.setMode(context, m) })
+                        Text(stringResource(label), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            if (mode != com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF) {
+                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    androidx.compose.material3.FilterChip(
+                        selected = style == com.agupta07505.smartisland.coucou.ui.GlanceStyle.MOCHI,
+                        onClick = { com.agupta07505.smartisland.coucou.ui.GlanceSettings.setStyle(context, com.agupta07505.smartisland.coucou.ui.GlanceStyle.MOCHI) },
+                        label = { Text(stringResource(R.string.glance_style_mochi)) },
+                    )
+                    androidx.compose.material3.FilterChip(
+                        selected = style == com.agupta07505.smartisland.coucou.ui.GlanceStyle.RING,
+                        onClick = { com.agupta07505.smartisland.coucou.ui.GlanceSettings.setStyle(context, com.agupta07505.smartisland.coucou.ui.GlanceStyle.RING) },
+                        label = { Text(stringResource(R.string.glance_style_ring)) },
+                    )
+                }
+            }
+            Text(stringResource(R.string.glance_card_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }

@@ -83,4 +83,13 @@
     <string name="coucou_handoff_failed">No se pasó: %1$s</string>
     <string name="coucou_handoff_connect">Conecta %1$s a este celular</string>
     <string name="coucou_handoff_ready">Abierto. Dale play cuando tengas los audífonos</string>
+
+    <!-- Animación de desbloqueo (píldora estilo Glance) -->
+    <string name="glance_card_title">Animación al desbloquear</string>
+    <string name="glance_mode_off">Apagada</string>
+    <string name="glance_mode_always">Siempre</string>
+    <string name="glance_mode_face">Solo si el teléfono tiene rostro configurado</string>
+    <string name="glance_style_mochi">Mochi</string>
+    <string name="glance_style_ring">Anillo y candado</string>
+    <string name="glance_card_note">Android no dice si el teléfono se abrió con PIN, huella o rostro, así que la píldora solo dice «desbloqueado». Requiere bloqueo de pantalla. Con esto apagado se usa el candado de siempre.</string>
 </resources>
