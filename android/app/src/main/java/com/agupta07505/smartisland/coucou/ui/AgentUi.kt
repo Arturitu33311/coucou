@@ -296,6 +296,10 @@ object ApprovalReview {
     /** The laptop sends at most this many characters of a command and ends a longer one with "…". */
     private const val LAPTOP_LIMIT = 300
 
+    /** Taps on Allow in the first moments after a request drops are ignored: the island moves under the thumb. */
+    const val TAP_GUARD_MS = 600L
+    fun tooSoon(shownAt: Long, now: Long): Boolean = now - shownAt < TAP_GUARD_MS
+
     /** The laptop cut this command: its tail cannot be reviewed here, so it is not allowed from here. */
     fun shortenedByLaptop(detail: String): Boolean = detail.length >= LAPTOP_LIMIT - 10 && detail.endsWith("…")
 }
@@ -310,6 +314,8 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
     var armed by remember(notification?.key) { mutableStateOf(false) }
     val secure = remember { ConfirmActivity.available(context) }
     var message by remember(notification?.key) { mutableStateOf<String?>(null) }
+    val shownAt = remember(notification?.key) { System.currentTimeMillis() }
+    val jinx = p?.agent == "hermes"
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 18.dp).padding(top = 6.dp, bottom = bottomPadding),
@@ -351,7 +357,7 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
                 .padding(8.dp),
         )
         if (shortenedByLaptop) {
-            Text("Too long to check here: answer it in the terminal", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+            Text(if (jinx) "Too long to check here: answer it in Telegram" else "Too long to check here: answer it in the terminal", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
         } else if (tooLongToFit && !read) {
             Text("Tap the command to read all of it before allowing", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
         }
@@ -359,15 +365,16 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
         Spacer(Modifier.size(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Pill("Deny", Modifier.weight(1f), Red) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answer(it.id, "deny"))) message = "No link to the laptop" else onCollapse() }
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.answer(it.id, "deny"))) message = "No link" else onCollapse() }
             }
-            Pill("Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.decline(it.id))) message = "No link to the laptop" else onCollapse() }
+            Pill(if (jinx) "Telegram" else "Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.decline(it.id))) message = "No link" else onCollapse() }
             }
             Pill(if (armed) "Tap to allow" else "Allow", Modifier.weight(1f), Green) {
                 val req = p ?: return@Pill
+                if (ApprovalReview.tooSoon(shownAt, System.currentTimeMillis())) return@Pill
                 if (shortenedByLaptop) {
-                    message = "Too long to check here: use Terminal"
+                    message = if (jinx) "Too long to check here: use Telegram" else "Too long to check here: use Terminal"
                     return@Pill
                 }
                 if (tooLongToFit && !read) {
@@ -375,11 +382,11 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
                     return@Pill
                 }
                 val send = {
-                    if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answer(req.id, "allow"))) message = "No link to the laptop" else onCollapse()
+                    if (!CoucouRuntime.sendForRequest(req.id, RemoteProtocol.answer(req.id, "allow"))) message = "No link" else onCollapse()
                 }
                 when {
                     // The whole command (the laptop sends at most 300 characters), not a cut of it.
-                    secure -> ConfirmActivity.ask(context, "Allow on the laptop?", "${req.tool}: ${req.detail}") { ok -> if (ok) send() else message = "Not confirmed" }
+                    secure -> ConfirmActivity.ask(context, if (jinx) "Allow Jinx?" else "Allow on the laptop?", "${req.tool}: ${req.detail}") { ok -> if (ok) send() else message = "Not confirmed" }
                     armed -> send()
                     else -> armed = true
                 }
@@ -405,7 +412,7 @@ fun QuestionExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
     fun finish(all: Map<String, List<String>>) {
         val req = p ?: return
         val multi = questions.filter { it.multi }.map { it.question }.toSet()
-        if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answerQuestion(req.id, all, multi))) message = "No link to the laptop" else onCollapse()
+        if (!CoucouRuntime.sendForRequest(req.id, RemoteProtocol.answerQuestion(req.id, all, multi))) message = "No link" else onCollapse()
     }
 
     fun next(chosen: List<String>) {
@@ -446,7 +453,7 @@ fun QuestionExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
         Spacer(Modifier.size(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Pill("Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.decline(it.id))) message = "No link to the laptop" else onCollapse() }
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.decline(it.id))) message = "No link" else onCollapse() }
             }
             if (q?.multi == true) Pill("Send", Modifier.weight(1f), Green) { if (picked.isNotEmpty()) next(picked) else message = "Pick at least one" }
         }

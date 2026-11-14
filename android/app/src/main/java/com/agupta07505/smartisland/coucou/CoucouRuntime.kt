@@ -50,6 +50,11 @@ object CoucouRuntime {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var agents: AgentRemote? = null
     private var agentsWatch: Job? = null
+    private var jinxLink: AgentRemote? = null
+    private var jinxWatch: Job? = null
+    private var mergeWatch: Job? = null
+    private val laptopUi = MutableStateFlow(AgentUi())
+    private val jinxUi = MutableStateFlow(AgentUi())
     private var jinxLoop: Job? = null
     private var deskJob: Job? = null
     private var deskWatch: Job? = null
@@ -63,6 +68,29 @@ object CoucouRuntime {
 
     /** Sends a line to the laptop (an answer to a request on screen). False if there is no link. */
     fun sendToLaptop(line: String): Boolean = agents?.send(line) ?: false
+
+    /** Answers a request on the link it came from: Jinx's server for hers, the laptop for Claude Code's. */
+    fun sendForRequest(id: String, line: String): Boolean {
+        val j = jinxLink
+        return when {
+            j != null && j.owns(id) -> j.send(line)
+            // Jinx's request that is already settled: an answer that comes late goes nowhere (not to the laptop).
+            j != null && j.knew(id) -> false
+            else -> agents?.send(line) ?: false
+        }
+    }
+
+    /** What the island and Home see of both links: sessions and requests together, the laptop's state as the headline. */
+    internal fun mergeUi(l: AgentUi, j: AgentUi): AgentUi {
+        val onlyJinx = l.status == AgentUi.Status.Off && j.status != AgentUi.Status.Off
+        return AgentUi(
+            status = if (onlyJinx) j.status else l.status,
+            detail = if (onlyJinx) j.detail else l.detail,
+            sessions = l.sessions + j.sessions,
+            pending = (l.pending + j.pending).sortedBy { it.receivedAt },
+            failedAt = maxOf(l.failedAt, j.failedAt),
+        )
+    }
 
     /** Starts (or stops) each part according to the switches. Called at start and when a switch changes. */
     @Synchronized
@@ -96,25 +124,42 @@ object CoucouRuntime {
             }
         }
 
-        // Claude Code on the laptop
+        // Claude Code on the laptop, and Jinx's own permission requests from the server: two links, one island
         if (app.followClaude && agents == null) {
             val a = AgentRemote(app, scope)
             agents = a
             a.start()
-            agentsWatch = scope.launch {
-                var posted = emptySet<String>()
-                a.ui.collect { ui ->
-                    _agentUi.value = ui
-                    posted = IslandAgents.publish(app, ui, posted)
-                }
-            }
+            agentsWatch = scope.launch { a.ui.collect { laptopUi.value = it } }
         } else if (!app.followClaude && agents != null) {
             agents?.stop()
             agentsWatch?.cancel()
-            IslandAgents.clear(app)
             agents = null
-            _agentUi.value = AgentUi()
+            laptopUi.value = AgentUi()
         }
+        if (app.followClaude && jinxLink == null) {
+            val j = AgentRemote(app, scope, PhoneSettings.SERVER, "jinx-aprobaciones", full = false)
+            jinxLink = j
+            j.start()
+            jinxWatch = scope.launch { j.ui.collect { jinxUi.value = it } }
+        } else if (!app.followClaude && jinxLink != null) {
+            jinxLink?.stop()
+            jinxWatch?.cancel()
+            jinxLink = null
+            jinxUi.value = AgentUi()
+        }
+        if (mergeWatch == null) {
+            mergeWatch = scope.launch {
+                var posted = emptySet<String>()
+                var notified = emptySet<String>()
+                combine(laptopUi, jinxUi) { l, j -> mergeUi(l, j) }.collect { ui ->
+                    _agentUi.value = ui
+                    posted = IslandAgents.publish(app, ui, posted)
+                    // Jinx's requests also as a system notification when the phone is locked or its screen is off.
+                    notified = com.agupta07505.smartisland.coucou.agents.RequestNotifier.sync(app, ui.pending, notified)
+                }
+            }
+        }
+        if (!app.followClaude) IslandAgents.clear(app)
 
         // The laptop's sound through the headphones kept on this phone
         if (app.audioLink) AudioLinkService.start(app) else AudioLinkService.stop(app)

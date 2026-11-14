@@ -5,5 +5,9 @@
         <receiver
             android:name="com.agupta07505.smartisland.coucou.DebugNowPlayingReceiver"
             android:exported="true" />
+        <!-- debug builds only, emulator only: drives the laptop/Jinx links from adb (see DebugJinxLinkReceiver) -->
+        <receiver
+            android:name="com.agupta07505.smartisland.coucou.DebugJinxLinkReceiver"
+            android:exported="true" />
     </application>
 </manifest>
