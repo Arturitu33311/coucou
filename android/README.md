@@ -289,3 +289,7 @@ Contributions are warmly welcomed! Please read [CONTRIBUTING.md](CONTRIBUTING.md
 Smart Island is licensed under the [GNU General Public License v3.0](LICENSE).  
 Copyright (C) 2026 **Animesh Gupta**.
 
+
+
+## Unlock animation
+Settings > Customizations > "Unlock animation": off / always / only if the phone has face unlock, and Mochi or ring-and-padlock style. Android cannot tell how the phone was opened, so it says "unlocked", never "recognised". Look and timings inspired by [Glance](https://github.com/jonnyoo/glance) (MIT), see NOTICE-glance.md. Debug builds only: `adb shell am broadcast -n com.agupta07505.smartisland/.coucou.DebugGlanceReceiver --es state scan|success|failure`.

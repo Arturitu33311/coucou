@@ -690,4 +690,13 @@
     <string name="coucou_handoff_failed">Not moved: %1$s</string>
     <string name="coucou_handoff_connect">Connect %1$s to this phone</string>
     <string name="coucou_handoff_ready">Opened. Press play when the headphones are on</string>
+
+    <!-- Unlock animation (Glance-style pill) -->
+    <string name="glance_card_title">Unlock animation</string>
+    <string name="glance_mode_off">Off</string>
+    <string name="glance_mode_always">Always</string>
+    <string name="glance_mode_face">Only if the phone has face unlock</string>
+    <string name="glance_style_mochi">Mochi</string>
+    <string name="glance_style_ring">Ring and padlock</string>
+    <string name="glance_card_note">Android does not say whether a phone was opened with PIN, fingerprint or face, so the pill only says \"unlocked\". Needs a screen lock. The padlock badge is used when this is off.</string>
 </resources>
