@@ -133,6 +133,8 @@ private fun bubbleMood(lookDir: Float): BubbleMood {
         celebrating -> MochiMood.Celebrating
         overdue -> MochiMood.Alert
         scene.batteryLow -> MochiMood.Tired
+        // News first: it is usually why the phone was unlocked, and the 4 s hello would hide the 2 s pop completely.
+        MochiReactions.surpriseOverGreeting(scene) -> MochiMood.Surprised
         scene.greeted -> MochiMood.Happy
         // Jinx is speaking: it is her mood he wears (and nothing of Claude Code's: that has its own card).
         scene.jinxMood != null -> scene.jinxMood

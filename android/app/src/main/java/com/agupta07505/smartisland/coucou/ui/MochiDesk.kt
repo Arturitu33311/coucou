@@ -165,6 +165,8 @@ fun MochiDesk(onReplyStateChanged: (Boolean) -> Unit, modifier: Modifier = Modif
         smileUntil > now -> MochiMood.Celebrating
         overdue > 0 -> MochiMood.Alert
         scene.batteryLow -> MochiMood.Tired
+        // News first: it is usually why the phone was unlocked, and the 4 s hello would hide the 2 s pop completely.
+        MochiReactions.surpriseOverGreeting(scene) -> MochiMood.Surprised
         scene.greeted -> MochiMood.Happy
         scene.jinxMood != null -> scene.jinxMood
         scene.surprised -> MochiMood.Surprised
