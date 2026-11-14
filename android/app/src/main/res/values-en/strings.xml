@@ -690,4 +690,9 @@
     <string name="coucou_handoff_failed">Not moved: %1$s</string>
     <string name="coucou_handoff_connect">Connect %1$s to this phone</string>
     <string name="coucou_handoff_ready">Opened. Press play when the headphones are on</string>
+    <string name="coucou_wp_saver_title">Wallpapers in battery saver: simplify</string>
+    <string name="coucou_wp_saver_desc">With the Android battery saver on (or a nearly flat battery, 15 or less and not charging), the Coucou wallpapers become one still, simple picture with no animation, tilt, particles or lyrics, redrawn only when the song or the minute changes. Back to normal when it ends.</string>
+    <string name="coucou_wp_saver_auto">Automatic</string>
+    <string name="coucou_wp_saver_always">Always</string>
+    <string name="coucou_wp_saver_never">Never</string>
 </resources>

@@ -83,4 +83,9 @@
     <string name="coucou_handoff_failed">No se pasó: %1$s</string>
     <string name="coucou_handoff_connect">Conecta %1$s a este celular</string>
     <string name="coucou_handoff_ready">Abierto. Dale play cuando tengas los audífonos</string>
+    <string name="coucou_wp_saver_title">Wallpapers en ahorro de batería: simplificar</string>
+    <string name="coucou_wp_saver_desc">Con el ahorro de batería de Android activo (o la batería casi vacía, 15 o menos sin cargar), los wallpapers de Coucou pasan a una imagen fija y sencilla, sin animación, inclinación, partículas ni letra, que solo se redibuja al cambiar la canción o el minuto. Vuelven a la normalidad al salir del modo.</string>
+    <string name="coucou_wp_saver_auto">Automático</string>
+    <string name="coucou_wp_saver_always">Siempre</string>
+    <string name="coucou_wp_saver_never">Nunca</string>
 </resources>

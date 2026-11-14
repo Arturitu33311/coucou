@@ -22,6 +22,9 @@ import android.graphics.Shader
 class DebugNowPlayingReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         context.getExternalFilesDir("car")
+        // `--es saver auto|always|never` sets the wallpaper-saver switch (for tests on an emulator)
+        intent.getStringExtra("saver")?.let { with(com.agupta07505.smartisland.coucou.phone.PhoneSettings) { context.wallpaperSaver = it } }
+        if (intent.hasExtra("saver") && !intent.hasExtra("title")) return
         val title = intent.getStringExtra("title") ?: "Test song"
         val playing = intent.getBooleanExtra("playing", true)
         val hue = intent.getFloatExtra("hue", (title.hashCode() and 0x7fffffff) % 360.toFloat())
