@@ -240,7 +240,10 @@ function wrap(text, font, maxW) {
   return lines;
 }
 /* wraps in maxW; needing more than `good` lines the type shrinks (to 62 %) before anything is cut */
+const fitMemo = new Map();
 function fit(text, base, maxW, good, weight = '500') {
+  const mk = `${text}|${base}|${maxW}|${good}|${weight}`, hit = fitMemo.get(mk);
+  if (hit) return hit;
   const face = '"Inter","Roboto","DejaVu Sans",sans-serif';
   let s = base, lines;
   for (;;) {
@@ -248,7 +251,10 @@ function fit(text, base, maxW, good, weight = '500') {
     if (lines.length <= good || s <= base * .62) break;
     s *= .92;
   }
-  return { lines, size: s, font: `${weight} ${s}px ${face}`, lh: s * 1.25 };
+  if (fitMemo.size > 200) fitMemo.clear();
+  const out = { lines, size: s, font: `${weight} ${s}px ${face}`, lh: s * 1.25 };
+  fitMemo.set(mk, out);
+  return out;
 }
 function drawBlock(b, x, y, align, color, alpha) {
   ctx.font = b.font; ctx.textAlign = align; ctx.textBaseline = 'top'; ctx.fillStyle = rgb(color, alpha);
@@ -301,7 +307,12 @@ function drawGauge(cx, cy, d) {
     ctx.font = `bold ${d * .34}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = low ? 'rgb(255,130,130)' : ink;
     ctx.fillText(String(bat.pct), cx + (bat.charging ? d * .06 : 0), cy - d * .06);
-    if (bat.charging) { ctx.font = `bold ${d * .17}px sans-serif`; ctx.fillStyle = rgb(col); ctx.fillText('⚡', cx - d * .27, cy - d * .07); }
+    if (bat.charging) {
+      const bx = cx - d * .27, by = cy - d * .07, u = d * .17;
+      ctx.fillStyle = rgb(col); ctx.beginPath();
+      [[.12, -.5], [-.34, .08], [-.02, .08], [-.12, .5], [.34, -.1], [.02, -.1]].forEach(([px, py], i) => ctx[i ? 'lineTo' : 'moveTo'](bx + px * u, by + py * u));
+      ctx.closePath(); ctx.fill();
+    }
   }
   const gy = cy + r * .62;
   if (wf && wf.wired) {
@@ -324,10 +335,14 @@ function drawGauge(cx, cy, d) {
 /* ---------- car layout ---------- */
 // frosted glass: what is behind the panel, blurred (drawn tiny and scaled back up), lightened, with a soft top
 // highlight and a thin bright edge
-const blurC = document.createElement('canvas'), blurX = blurC.getContext('2d');
-function glass(x, y, w, h, r, alpha = .10) {
-  blurC.width = Math.max(8, w * .06 | 0); blurC.height = Math.max(8, h * .06 | 0);
-  blurX.drawImage(cv, x, y, w, h, 0, 0, blurC.width, blurC.height);
+const blurs = {};
+function glass(id, x, y, w, h, r, alpha = .10) {
+  const bw = Math.max(8, w * .06 | 0), bh = Math.max(8, h * .06 | 0), nowMs = performance.now();
+  const B = blurs[id] || (blurs[id] = { c: document.createElement('canvas'), at: -1e9 }), blurC = B.c;
+  if (blurC.width !== bw || blurC.height !== bh || nowMs - B.at > 120) {
+    blurC.width = bw; blurC.height = bh; B.at = nowMs;
+    blurC.getContext('2d').drawImage(cv, x, y, w, h, 0, 0, bw, bh);
+  }
   ctx.save(); ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.clip();
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(blurC, 0, 0, blurC.width, blurC.height, x, y, w, h);
@@ -451,11 +466,11 @@ function drawCarScene(now, t, p, recent, playing, pos) {
     const N = 32, vw = carBox.w * .84, bw = vw / N * .42, y0 = base + H * .07, maxH = H * .055, col = mix(tint(), [255, 255, 255], .35);
     ctx.save(); ctx.translate(x0, y0);
     ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round'; ctx.lineWidth = bw;
-    ctx.shadowColor = rgb(dispA, .7); ctx.shadowBlur = 12;
-    for (let i = 0; i < N; i++) {
+    for (let pass = 0; pass < 2; pass++) for (let i = 0; i < N; i++) {      // pass 0: the soft glow (wide, faint), pass 1: the bar
       const b = bars[Math.min(N - 1, Math.floor(Math.abs(i - (N - 1) / 2) * 2))];
       const hgt = (.035 + .965 * Math.pow(b, .8)) * maxH, vx = (i - (N - 1) / 2) * (vw / (N - 1));
-      ctx.strokeStyle = rgb(mix(dispA, col, b), .4 + .45 * b);
+      ctx.lineWidth = pass ? bw : bw * 3;
+      ctx.strokeStyle = pass ? rgb(mix(dispA, col, b), .4 + .45 * b) : rgb(dispA, .04 + .14 * b);
       ctx.beginPath(); ctx.moveTo(vx, -hgt / 2); ctx.lineTo(vx, hgt / 2); ctx.stroke();
     }
     ctx.restore();
@@ -468,7 +483,7 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   ctx.save(); ctx.globalAlpha = a;
     cardHit = { x: cardX, y: cardY, w: cardW, h: cardH, coverBottom: cardY + pad + inner * .38 + inner * .35 + 10 };
   hoverMix += ((cardHover ? 1 : 0) - hoverMix) * .2;                     // the card brightens a little under the pointer
-  glass(cardX, cardY, cardW, cardH, 30, .09 + .07 * hoverMix);
+  glass('card', cardX, cardY, cardW, cardH, 30, .09 + .07 * hoverMix);
   const en = clamp((now - enterAt) / 600, 0, 1), ee = 1 - Math.pow(1 - en, 3);
   // cover with the record sliding out from behind it, as on the phone's lock screen; the pair turns a few degrees together
   const side = inner * .70 * (.94 + .06 * ee) * (1 + .035 * bassS), mx = cardX + cardW / 2, my = cardY + pad + inner * .38;
@@ -546,10 +561,12 @@ function drawCarScene(now, t, p, recent, playing, pos) {
   ctx.restore();
 }
 
+const lightC = document.createElement('canvas'), lightX = lightC.getContext('2d');
 let lastFrame = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  if (document.hidden || now - lastFrame < 30) return;       // ~30 fps: a wallpaper is mostly looked past
+  const quiet = !(st && st.player && st.player.status === 'Playing') && coverMix < .02;
+  if (document.hidden || now - lastFrame < (quiet ? 48 : 30)) return;   // ~30 fps (~20 when nothing plays): a wallpaper is mostly looked past
   const dt = Math.min(.1, (now - lastFrame) / 1000); lastFrame = now;
   const t = now / 1000;
 
@@ -579,15 +596,19 @@ function frame(now) {
   const bT = playing ? (spec.bass || 0) : 0; bassS += (bT - bassS) * (bT > bassS ? .5 : .12);
 
   // base, lights, motes
-  ctx.fillStyle = '#071311'; ctx.fillRect(0, 0, W, H);
+  // the lights are smooth, so they are painted at a quarter of the size and scaled up: the costliest part of a frame, for free
+  const LS = 4, lw = Math.ceil(W / LS), lh = Math.ceil(H / LS);
+  if (lightC.width !== lw || lightC.height !== lh) { lightC.width = lw; lightC.height = lh; }
   const R = Math.max(W, H) * .62, beat = playing ? 1 + .06 * Math.sin(t * 1.6) + .10 * bassS : 1;
+  lightX.fillStyle = '#071311'; lightX.fillRect(0, 0, lw, lh);
   const light = (x, y, c, a) => {
-    const g = ctx.createRadialGradient(x, y, 0, x, y, R * beat);
+    const g = lightX.createRadialGradient(x / LS, y / LS, 0, x / LS, y / LS, R * beat / LS);
     g.addColorStop(0, rgb(c, a)); g.addColorStop(1, rgb(c, 0));
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    lightX.fillStyle = g; lightX.fillRect(0, 0, lw, lh);
   };
   light(W * (.30 + .22 * Math.sin(t / 9)), H * (.30 + .14 * Math.cos(t / 11)), dispA, .85);
   light(W * (.72 + .18 * Math.cos(t / 10)), H * (.72 + .12 * Math.sin(t / 12)), dispB, .75);
+  ctx.imageSmoothingEnabled = true; ctx.drawImage(lightC, 0, 0, lw * LS, lh * LS);
   for (const d of dots) {
     const y = (((d.y - t * d.v * .7) % 1) + 1) % 1 * H, x = (d.x + .03 * Math.sin(t * .3 + d.p)) * W;
     ctx.fillStyle = rgb(mix(d.c ? dispA : accent, [255, 255, 255], .35), d.a * .6 * (.6 + .4 * Math.sin(t * 1.1 + d.p)));
@@ -599,15 +620,16 @@ function frame(now) {
   if (carImg && WANT_CAR) {                                  // the car layout
     drawCarScene(now, t, p, recent, playing, pos);
     const d = H * .07, gx = W - H * .085, gy = H * .07;
-    glass(gx - d * .72, gy - d * .72, d * 1.44, d * 1.44, d * .72, .08);
+    glass('gauge', gx - d * .72, gy - d * .72, d * 1.44, d * 1.44, d * .72, .08);
     drawGauge(gx, gy, d);
     return;
   }
 
   // clock, centre of the left half
   ensureClock();
+  const cx0 = W * .30, ey = H * .09, sway = Math.sin(t / 5);
   if (clockBox && clockEcho && clockFill) {
-    const cx0 = W * .30, ey = H * .09, ex = cx0 - clockBox.w / 2, sway = Math.sin(t / 5);
+    const ex = cx0 - clockBox.w / 2;
     ctx.drawImage(clockEcho, ex - 5 + sway * 4, ey + 6);
     ctx.drawImage(clockFill, ex, ey);
   }
