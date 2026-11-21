@@ -67,6 +67,15 @@ _DIAS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domin
 _MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre")
 
 
+def jinx_completa_caida(path=os.path.expanduser("~/.hermes/state/venice_watchdog.json")):
+    """True solo si el vigilante de Venice dice «critico» (sin saldo o tope de la clave). Sin dato = disponible."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("estado") == "critico"
+    except (OSError, ValueError):
+        return False
+
+
 def ahora_texto(ts):
     t = time.localtime(ts)
     return "Ahora: %s %d de %s de %d, %02d:%02d." % (_DIAS[t.tm_wday], t.tm_mday, _MESES[t.tm_mon - 1], t.tm_year, t.tm_hour, t.tm_min)
@@ -427,8 +436,9 @@ class Lite:
                     return self._verified_volume(result, service, eid, before, data)
                 return self._verified(result, service, eid)
             if name == "pasar_a_jinx":
-                if getattr(self.llm, "degraded", lambda: False)():
-                    return ("la Jinx completa no está disponible ahora (sin OpenRouter): dile a Alan que eso lo intente en un rato; "
+                # La Jinx completa corre en Venice (no en OpenRouter): su disponibilidad la dice venice_watchdog, no self.llm.
+                if jinx_completa_caida():
+                    return ("la Jinx completa no está disponible ahora (Venice sin saldo): dile a Alan que eso lo intente en un rato; "
                             "NO digas que lo pasaste")
                 return self.handoff(str(args.get("peticion", ""))[:1000])
             return "herramienta desconocida"
