@@ -34,13 +34,18 @@ class Loc2:
 try:
     L.FallbackLLM(Prim(True), Loc2(), now=now).chat(hist, []); raise SystemExit("MAL: no subió el error")
 except L.LiteError: pass
-# 5) pasar_a_jinx con OpenRouter caído no encola nada
+# 5) pasar_a_jinx: con OpenRouter caído SÍ encola (la completa va por Venice); con Venice en «critico» no (2026-11-21)
 class H:  # HA falso
     pass
 calls = []
 lite = L.Lite(L.FallbackLLM(Prim(True), Loc(), now=now), H(), lambda x: calls.append(x) or "pasado")
 lite.llm.chat([{"role": "system", "content": "x"}, {"role": "user", "content": "y"}], [])     # abre el modo degradado
+_orig = L.jinx_completa_caida
+L.jinx_completa_caida = lambda: False
+assert lite._tool("pasar_a_jinx", {"peticion": "agenda mañana"}) == "pasado" and calls == ["agenda mañana"]
+calls.clear(); L.jinx_completa_caida = lambda: True
 assert "no está disponible" in lite._tool("pasar_a_jinx", {"peticion": "agenda mañana"}) and not calls
+L.jinx_completa_caida = _orig
 lite2 = L.Lite(L.FallbackLLM(Prim(False), Loc(), now=now), H(), lambda x: calls.append(x) or "pasado")
 assert lite2._tool("pasar_a_jinx", {"peticion": "agenda"}) == "pasado" and calls == ["agenda"]
 # 6) el texto de error del gateway no pasa por respuesta de Jinx
