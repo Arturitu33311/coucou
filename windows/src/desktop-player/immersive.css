@@ -1,0 +1,67 @@
+/* Full-screen mode (immersive.ts): #dp gets the `immersive` class and the chrome fades away; the
+   background (the music video under the page, or the scene) and the lyric line stay. Visibility flips
+   after the fade, so nothing hidden can be reached by keyboard or pointer. */
+
+.dp-btn-immersive[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+#dp-recents,
+#dp-flow,
+#dp-search,
+#dp-bar,
+.dp-time,
+.dp-gauge {
+  transition: opacity 0.6s ease, visibility 0s linear 0s;
+}
+#dp.immersive #dp-recents,
+#dp.immersive #dp-flow,
+#dp.immersive #dp-search,
+#dp.immersive #dp-bar,
+#dp.immersive .dp-time,
+#dp.immersive .dp-gauge {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.6s ease, visibility 0s linear 0.6s;
+}
+#dp.immersive {
+  cursor: none;
+}
+
+/* the lyric line moves to the middle, larger, with a shadow that keeps it readable over a video */
+.dp-lyric {
+  transition: opacity 0.35s ease, top 0.6s ease, left 0.6s ease, width 0.6s ease, font-size 0.6s ease;
+}
+#dp.immersive .dp-lyric {
+  left: 160px;
+  top: 440px;
+  width: 1600px;
+  max-height: 220px;
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #fff;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6), 0 4px 40px rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #dp-recents,
+  #dp-flow,
+  #dp-search,
+  #dp-bar,
+  .dp-time,
+  .dp-gauge,
+  #dp.immersive #dp-recents,
+  #dp.immersive #dp-flow,
+  #dp.immersive #dp-search,
+  #dp.immersive #dp-bar,
+  #dp.immersive .dp-time,
+  #dp.immersive .dp-gauge,
+  .dp-lyric {
+    transition: none;
+  }
+}
