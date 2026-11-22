@@ -12,7 +12,8 @@ import type { PlayerItem } from "../core/player";
 import { coverflowTransform } from "../views/coverflow";
 import { QueryGate } from "../views/player";
 import { t } from "../i18n/i18n";
-import { turnTransform } from "./tilt";
+import { replay, staggerDelay } from "./motion";
+import { flatTurn } from "./tilt";
 
 /** The first of a subtitle's artists ("Daft Punk, Pharrell Williams" → "Daft Punk"). */
 export function firstArtist(subtitle: string): string {
@@ -54,6 +55,29 @@ export function flowTransform(i: number, center: number) {
     zIndex: 10 - Math.abs(i - center),
     opacity: p.opacity,
   };
+}
+
+/**
+ * Where cover `i` sits as a move of a cover laid out once at the centre (COVER px, CENTER_X): `dx` to the right,
+ * `scale` of the front cover's size. Moving a cover is then a change of `transform` (it eases, desktop.css),
+ * never of left, top, width or height.
+ */
+export function flowPlacement(i: number, center: number): { dx: number; scale: number } {
+  const tf = flowTransform(i, center);
+  return { dx: tf.left + tf.size / 2 - CENTER_X, scale: tf.size / COVER };
+}
+
+/** The cover's transform: moved, turned (3D, or its 2D likeness) and scaled; the same functions in the same order always. */
+export function flowCoverTransform(i: number, center: number, flat: boolean): string {
+  const tf = flowTransform(i, center);
+  const p = flowPlacement(i, center);
+  const dx = Math.round(p.dx * 100) / 100;
+  const sc = Math.round(p.scale * 1000) / 1000;
+  if (flat) {
+    const f = flatTurn(tf.rotateY);
+    return `translateX(${dx}px) scaleX(${f.scaleX}) skewY(${f.skewY}deg) scale(${sc})`;
+  }
+  return `translateX(${dx}px) translateZ(${Math.round(tf.z * 100) / 100}px) rotateY(${tf.rotateY}deg) scale(${sc})`;
 }
 
 /**
@@ -162,10 +186,13 @@ export function buildFlow(
   let activeArtist: string | null | undefined = undefined;
   let albums: PlayerItem[] = [];
   let centerIndex = 0;
+  let covers: HTMLElement[] = [];
   const artCache = new Map<string, string>();
 
-  function renderCovers() {
+  /** The covers of the current albums, built once per artist: moving the flow only changes their transforms. */
+  function buildCovers() {
     stage.replaceChildren();
+    covers = [];
     if (albums.length === 0) {
       container.style.display = "none";
       caption.style.display = "none";
@@ -174,21 +201,20 @@ export function buildFlow(
     container.style.display = "block";
 
     albums.forEach((item, i) => {
-      const tf = flowTransform(i, centerIndex);
       const cover = document.createElement("div");
-      cover.className = "cover dp-flow-cover";
+      cover.className = "cover dp-flow-cover dp-flow-in";
       cover.title = item.title;
       cover.style.position = "absolute";
-      cover.style.left = `${tf.left}px`;
-      cover.style.top = `${tf.top}px`;
-      cover.style.width = `${tf.size}px`;
-      cover.style.height = `${tf.size}px`;
-      // 3D: the stage's perspective (desktop.css); flat: the 2D likeness (tilt.ts)
-      cover.style.transform = turnTransform(tf.rotateY, flat, { z: tf.z });
-      cover.classList.toggle("side", i !== centerIndex);
-      cover.style.zIndex = String(tf.zIndex);
-      cover.style.opacity = String(tf.opacity);
-      cover.style.pointerEvents = tf.opacity > 0 ? "auto" : "none";
+      // laid out once at the centre; layoutCovers() moves it
+      cover.style.left = `${CENTER_X - COVER / 2}px`;
+      cover.style.top = `${CENTER_Y - COVER / 2}px`;
+      cover.style.width = `${COVER}px`;
+      cover.style.height = `${COVER}px`;
+      cover.style.animationDelay = `${staggerDelay(Math.abs(i - centerIndex), 45, 6)}ms`;
+      // the accent glow of the front cover: painted once, shown by opacity
+      const glow = document.createElement("span");
+      glow.className = "dp-flow-glow";
+      cover.append(glow);
 
       const cached = item.artUrl ? artCache.get(item.artUrl) : null;
       if (cached) {
@@ -210,18 +236,37 @@ export function buildFlow(
           if (onPickAlbum) onPickAlbum(item);
         } else {
           centerIndex = i;
-          renderCovers();
+          layoutCovers(true);
         }
       });
 
+      covers.push(cover);
       stage.append(cover);
     });
+    layoutCovers(false);
+  }
 
+  /** Puts every cover where it belongs for `centerIndex` (they ease there) and the caption under the front one. */
+  function layoutCovers(animate: boolean) {
+    covers.forEach((cover, i) => {
+      const tf = flowTransform(i, centerIndex);
+      cover.style.transform = flowCoverTransform(i, centerIndex, flat);
+      cover.classList.toggle("side", i !== centerIndex);
+      cover.classList.toggle("center", i === centerIndex);
+      cover.style.zIndex = String(tf.zIndex);
+      cover.style.opacity = String(tf.opacity);
+      cover.style.pointerEvents = tf.opacity > 0 ? "auto" : "none";
+    });
     const curr = albums[centerIndex];
+    if (!curr) return;
     caption.style.display = "flex";
     capTitle.textContent = curr.title;
     capTitle.title = curr.title;
     capSub.textContent = `${albumByline(curr, activeArtist ?? null)} · ${t("Album")}`;
+    if (animate) {
+      replay(capTitle, "dp-swap");
+      replay(capSub, "dp-swap");
+    }
   }
 
   container.addEventListener("wheel", (e) => {
@@ -230,12 +275,12 @@ export function buildFlow(
     if (e.deltaY > 0 || e.deltaX > 0) {
       if (centerIndex < albums.length - 1) {
         centerIndex++;
-        renderCovers();
+        layoutCovers(true);
       }
     } else if (e.deltaY < 0 || e.deltaX < 0) {
       if (centerIndex > 0) {
         centerIndex--;
-        renderCovers();
+        layoutCovers(true);
       }
     }
   }, { passive: false });
@@ -245,19 +290,19 @@ export function buildFlow(
     activeArtist = artist;
     if (!artist) {
       albums = [];
-      renderCovers();
+      buildCovers();
       return;
     }
     const found = await source.albumsFor(artist);
     if (found === null || activeArtist !== artist) return; // another artist meanwhile
     albums = found;
     centerIndex = albums.length > 0 ? Math.floor(albums.length / 2) : 0;
-    renderCovers();
+    buildCovers();
   }
 
   return {
     root: container,
     update,
-    relabel: renderCovers,
+    relabel: () => layoutCovers(false),
   };
 }

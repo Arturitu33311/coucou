@@ -6,6 +6,7 @@
 // player sizes it to the mockup's slot (top left, above "Continue listening").
 
 import type { RGB } from "./scene";
+import { replay } from "./motion";
 import { css, mix } from "./scene";
 
 /** The wallpaper's clock face. */
@@ -34,6 +35,8 @@ export function msToNextMinute(d: Date): number {
  */
 export class Clock {
   private key = "";
+  /** The text last drawn: when it changes (the minute), the digits fade in instead of snapping. */
+  private shown = "";
   private readonly canvas: HTMLCanvasElement;
   private readonly glyphH: number;
 
@@ -49,6 +52,8 @@ export class Clock {
     const g = this.canvas.getContext("2d");
     if (!probe || !g) return;
     this.key = key;
+    const changed = this.shown !== "" && this.shown !== text;
+    this.shown = text;
 
     // the size that makes the digits glyphH tall once stretched
     probe.font = `bold 100px ${CLOCK_FACE}`;
@@ -95,6 +100,7 @@ export class Clock {
     // the echo first, behind; then the digits
     paint(0, ECHO_DY, false);
     paint(-ECHO_DX, 0, true);
+    if (changed) replay(this.canvas, "dp-tick");
   }
 
   /** Forget the last drawing, so the next `draw` paints again (fonts loaded late). */

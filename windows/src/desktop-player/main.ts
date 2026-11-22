@@ -33,6 +33,7 @@ import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
 import { buildImmersive, type ImmersiveView } from "./immersive";
 import { buildKinetic } from "./kinetic";
+import { initMotion } from "./motion";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -51,6 +52,7 @@ function div(cls: string, id = ""): HTMLDivElement {
 }
 
 const root = document.getElementById("dp")!;
+const motion = initMotion(root);
 const scene = div("dp-scene");
 // The cover behind everything, blurred once per song into a small canvas the browser enlarges smoothly
 // (bakeArt). A CSS blur(70px) was re-run over the whole screen on every repaint above it, with no
@@ -627,6 +629,7 @@ async function main() {
   // in the user's language from the start (the labels are relabelled on each change)
   buildPanels();
   updatePanels();
+  motion.enter();
 
   void onEvent<Settings>("settings-changed", (s) => {
     setLanguage(resolveLanguage(s.language, systemLanguages()));
