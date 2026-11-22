@@ -14,6 +14,7 @@
 // and both stop while the page is hidden.
 
 import "./desktop.css";
+import "./immersive.css";
 import { Bridge, onEvent } from "../core/bridge";
 import type { LyricLine, MusicInfo, MusicTrack, Settings, SysInfo } from "../core/state";
 import { averageColor, lyricIndex, musicPosition } from "../island/music";
@@ -29,6 +30,7 @@ import { Feedback } from "./feedback";
 import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel, videoKeyOf } from "./logic";
 import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
+import { buildImmersive, type ImmersiveView } from "./immersive";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -83,6 +85,7 @@ let recentsView: RecentsView | null = null;
 let flowView: FlowView | null = null;
 let searchView: SearchView | null = null;
 let barView: PlayerBarView | null = null;
+let immersiveView: ImmersiveView | null = null;
 const albumSource = new AlbumSource(fetchArtistAlbums);
 /** Whether the line being sung is shown (the bar's lyrics button). */
 let lyricsOn = true;
@@ -104,6 +107,9 @@ function buildPanels() {
     paintLyric();
   });
   barView.setLyrics(lyricsOn);
+  // full screen (immersive.ts): its button joins the bar's actions
+  immersiveView = buildImmersive({ root, isPlaying: () => track?.status === "Playing", hasTrack: () => !!track });
+  barView.root.querySelector(".dp-bar-actions")?.prepend(immersiveView.button);
 }
 
 function relabelPanels() {
@@ -111,6 +117,7 @@ function relabelPanels() {
   flowView?.relabel();
   searchView?.relabel();
   barView?.relabel();
+  immersiveView?.relabel();
 }
 
 stage.append(halo, time, gauge.root, ...slots, lyric);
@@ -165,6 +172,7 @@ function updatePanels() {
   recentsView?.setTrack(track, artData, source);
   syncProgress();
   syncVideoPlay();
+  immersiveView?.sync();
   // the play state, a seek or the cover arriving: the lists stay as they are
   if (songLists.changed(trackKey)) void refreshLists();
 }
