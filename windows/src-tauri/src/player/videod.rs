@@ -61,10 +61,12 @@ pub fn video_of(answer: &Value) -> Result<Option<Video>, String> {
     }
 }
 
-pub fn request_line(id: u64, title: &str, artists: &[String], length_s: f64) -> String {
+/// `fresh`: the cached stream URL just failed, resolve a new one.
+pub fn request_line(id: u64, title: &str, artists: &[String], length_s: f64, fresh: bool) -> String {
     format!(
         "{}\n",
-        serde_json::json!({ "id": id, "title": title, "artists": artists, "length": length_s.round() as i64 })
+        serde_json::json!({ "id": id, "title": title, "artists": artists, "length": length_s.round() as i64,
+                            "fresh": fresh })
     )
 }
 
@@ -152,8 +154,8 @@ async fn ask(line: impl FnOnce(u64) -> String) -> Result<Value, String> {
 
 /// The official music video of `title` by `artists` that runs on the song's timeline (`length_s`: the song's
 /// length, 0 = unknown), or None when there is none.
-pub async fn find(title: &str, artists: &[String], length_s: f64) -> Result<Option<Video>, String> {
-    video_of(&ask(|id| request_line(id, title, artists, length_s)).await?)
+pub async fn find(title: &str, artists: &[String], length_s: f64, fresh: bool) -> Result<Option<Video>, String> {
+    video_of(&ask(|id| request_line(id, title, artists, length_s, fresh)).await?)
 }
 
 /// The measured offset of a video found with `measured: false`; None when it does not line up.
@@ -193,11 +195,12 @@ mod tests {
 
     #[test]
     fn request_is_one_json_line() {
-        let l = request_line(9, "Houdini", &["Dua Lipa".into()], 186.4);
+        let l = request_line(9, "Houdini", &["Dua Lipa".into()], 186.4, true);
         assert!(l.ends_with('\n') && !l[..l.len() - 1].contains('\n'));
         let v: Value = serde_json::from_str(&l).unwrap();
         assert_eq!(v["id"], 9);
         assert_eq!(v["length"], 186);
         assert_eq!(v["artists"][0], "Dua Lipa");
+        assert_eq!(v["fresh"], true);
     }
 }

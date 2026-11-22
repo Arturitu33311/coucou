@@ -23,8 +23,32 @@ static OFFSET: AtomicU64 = AtomicU64::new(0);
 /// The smoothed drift (f64 bits, s; + = the video is behind), NaN until the first reading after a load or seek.
 static DRIFT: AtomicU64 = AtomicU64::new(0x7FF8_0000_0000_0000);
 
+/// A stream that fails (YouTube answers the odd stream URL with 403, or drops it mid-song) is resolved again
+/// and reloaded where the song is, this many times per song.
+pub const RETRIES: u32 = 2;
+
+/// The song a video plays for, kept to reload it when its stream fails, and where the song was last seen.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Clone)]
+struct Playing {
+    seq: u64,
+    title: String,
+    artists: Vec<String>,
+    length: f64,
+    retries: u32,
+    /// The song's position at the last sync, and when it was read (to tell where it is now).
+    pos_s: f64,
+    at: std::time::Instant,
+    playing: bool,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+static PLAYING: std::sync::Mutex<Option<Playing>> = std::sync::Mutex::new(None);
+
 /// Told to the page when the video went away on its own (the stream failed): it shows its scene again.
 pub const GONE_EVENT: &str = "desktop-video-gone";
+/// Told to the page when a dropped video is playing again: it lets it show through.
+pub const BACK_EVENT: &str = "desktop-video-back";
 
 /// Players report their position in jumps (Sonora's MPRIS position is ±0.7 s off between reads), so a single
 /// reading is never acted on: the drift is smoothed, small drifts are closed by playing the video a little
@@ -132,6 +156,12 @@ mod imp {
         }
     }
 
+    /// Where the song is now, from the last sync (or the request).
+    fn song_now() -> Option<(f64, bool)> {
+        let p = PLAYING.lock().ok()?.clone()?;
+        Some((position_now(p.pos_s, p.playing, p.at), p.playing))
+    }
+
     pub async fn play(
         app: AppHandle,
         title: String,
@@ -151,7 +181,7 @@ mod imp {
             return false;
         }
         let length = if length_s.is_finite() { length_s.max(0.0) } else { 0.0 };
-        let found = match videod::find(title.trim(), &artists, length).await {
+        let found = match videod::find(title.trim(), &artists, length, false).await {
             Ok(v) => v,
             Err(e) => {
                 crate::log::line(format!("desktop video: {title}: {e}"));
@@ -168,8 +198,33 @@ mod imp {
         let Some(wid) = window_xid(&app) else { return false };
         store(&OFFSET, video.offset);
         store(&DRIFT, f64::NAN);
+        if let Ok(mut p) = PLAYING.lock() {
+            *p = Some(Playing {
+                seq,
+                title: title.trim().to_string(),
+                artists: artists.clone(),
+                length,
+                retries: 0,
+                pos_s: position_s,
+                at: asked,
+                playing,
+            });
+        }
         let start = video_time_for(position_now(position_s, playing, asked), video.offset) + SEEK_LEAD_S;
-        match mpv::play_video(&video.url, wid, start).await {
+        let mut video = video;
+        let mut opened = mpv::play_video(&video.url, wid, start).await;
+        if opened.is_err() && current() {
+            // the stream URL did not open (a 403 now and then): resolve a new one, once
+            crate::log::line(format!("desktop video: {title}: the stream did not open, resolving it again"));
+            if let Ok(Some(v)) = videod::find(title.trim(), &artists, length, true).await {
+                if current() {
+                    let start = video_time_for(position_now(position_s, playing, asked), v.offset) + SEEK_LEAD_S;
+                    opened = mpv::play_video(&v.url, wid, start).await;
+                    video = v;
+                }
+            }
+        }
+        match opened {
             Ok(()) if current() => {
                 mpv::video_speed(1.0).await;
                 if !playing {
@@ -205,12 +260,44 @@ mod imp {
 
     /// Hides the window and tells the page when the video fails on its own, so it never sits there black.
     async fn watch(app: AppHandle, seq: u64) {
-        let wanted = move || SEQ.load(Ordering::SeqCst) == seq && ACTIVE.load(Ordering::SeqCst);
-        if mpv::video_gone(wanted).await && SEQ.load(Ordering::SeqCst) == seq {
-            crate::log::line("desktop video: the stream stopped, back to the scene");
+        let current = move || SEQ.load(Ordering::SeqCst) == seq;
+        loop {
+            let wanted = move || current() && ACTIVE.load(Ordering::SeqCst);
+            if !mpv::video_gone(wanted).await || !current() {
+                return;
+            }
             ACTIVE.store(false, Ordering::SeqCst);
             show_window(&app, false);
             let _ = app.emit(GONE_EVENT, ());
+            // a dropped stream: resolve it again and carry on where the song is (the scene meanwhile)
+            let Some(p) = PLAYING.lock().ok().and_then(|g| g.clone()).filter(|p| p.seq == seq) else { return };
+            if p.retries >= RETRIES {
+                crate::log::line("desktop video: the stream stopped again, the scene stays");
+                return;
+            }
+            if let Ok(mut g) = PLAYING.lock() {
+                if let Some(q) = g.as_mut().filter(|q| q.seq == seq) {
+                    q.retries += 1;
+                }
+            }
+            crate::log::line(format!("desktop video: {}: the stream stopped, resolving it again", p.title));
+            let Ok(Some(v)) = videod::find(&p.title, &p.artists, p.length, true).await else { return };
+            let Some(wid) = window_xid(&app) else { return };
+            let Some((pos, playing)) = song_now() else { return };
+            if !current() {
+                return;
+            }
+            store(&OFFSET, v.offset);
+            store(&DRIFT, f64::NAN);
+            if mpv::play_video(&v.url, wid, video_time_for(pos, v.offset) + SEEK_LEAD_S).await.is_err() || !current() {
+                return;
+            }
+            if !playing {
+                mpv::video_pause(true).await;
+            }
+            ACTIVE.store(true, Ordering::SeqCst);
+            show_window(&app, crate::desktop_player::window::is_shown());
+            let _ = app.emit(BACK_EVENT, ());
         }
     }
 
@@ -221,7 +308,17 @@ mod imp {
     }
 
     pub async fn sync(position_s: f64) {
-        if !ACTIVE.load(Ordering::SeqCst) || !position_s.is_finite() {
+        if !position_s.is_finite() {
+            return;
+        }
+        if let Ok(mut g) = PLAYING.lock() {
+            if let Some(p) = g.as_mut() {
+                p.pos_s = position_s;
+                p.at = std::time::Instant::now();
+                p.playing = true;
+            }
+        }
+        if !ACTIVE.load(Ordering::SeqCst) {
             return;
         }
         let Some(at) = mpv::video_time().await else { return };

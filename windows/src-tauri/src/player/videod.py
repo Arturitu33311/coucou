@@ -426,6 +426,10 @@ class Resolver:
         found = self.pick(req.get("title") or "", req.get("artists") or [], req.get("length") or 0)
         if not found:
             return None
+        if req.get("fresh"):
+            # the cached URL just failed in mpv (YouTube answers the odd stream URL with 403): a new one
+            with self.lock:
+                self.cache["urls"].pop(found["id"], None)
         return dict(found, url=self.stream(found["id"]))
 
 

@@ -622,6 +622,14 @@ async function main() {
     setVideo(false);
     syncVideoTimer();
   });
+  // the dropped stream was resolved again and plays where the song is
+  void onEvent("desktop-video-back", () => {
+    if (!track) return;
+    setVideo(true);
+    videoPaused = null;
+    syncVideoPlay();
+    syncVideoPosition();
+  });
 
   const boot = await Bridge.boot();
   setLanguage(resolveLanguage(boot?.settings.language, systemLanguages()));
