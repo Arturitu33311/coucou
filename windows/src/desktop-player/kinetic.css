@@ -1,0 +1,141 @@
+/* Full-screen lyrics (kinetic.ts). Hidden until #dp is immersive; there they replace the one-line lyric.
+   Only opacity and transform animate: WebKit paints this page on the CPU. */
+
+.dp-kinetic {
+  position: absolute;
+  left: 120px;
+  right: 120px;
+  top: 0;
+  bottom: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+#dp.immersive .dp-kinetic {
+  display: flex;
+}
+#dp.immersive .dp-kinetic.on {
+  opacity: 1;
+}
+#dp.immersive .dp-lyric {
+  opacity: 0 !important;
+}
+
+.k-stage {
+  position: relative;
+  width: 100%;
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.k-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  font-size: 68px;
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.42);
+  text-shadow: 0 3px 10px rgba(0, 0, 0, 0.55), 0 6px 48px rgba(0, 0, 0, 0.45);
+  animation: k-breathe 5.5s ease-in-out infinite;
+}
+.k-line.out {
+  animation: k-out 0.7s cubic-bezier(0.55, 0, 0.75, 0) forwards;
+}
+
+.k-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(34px) scale(0.92);
+  animation:
+    k-in 0.62s cubic-bezier(0.2, 1.3, 0.35, 1) var(--enter) forwards,
+    k-lit 0.45s ease-out var(--lit) forwards;
+}
+
+.k-next {
+  margin-top: 26px;
+  max-width: 1400px;
+  font-size: 30px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.38);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translateY(10px);
+}
+.k-next.in {
+  animation: k-next-in 0.9s ease-out 0.35s forwards;
+}
+
+.dp-kinetic.paused .k-line,
+.dp-kinetic.paused .k-word,
+.dp-kinetic.paused .k-next {
+  animation-play-state: paused;
+}
+
+@keyframes k-in {
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* the word being sung: bright, in the album's colour, with a short lift */
+@keyframes k-lit {
+  0% {
+    color: inherit;
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    color: #fff;
+    transform: translateY(-6px) scale(1.08);
+    text-shadow: 0 0 28px var(--accent-glow, rgba(255, 255, 255, 0.6)), 0 3px 10px rgba(0, 0, 0, 0.55);
+  }
+  100% {
+    color: #fff;
+    transform: translateY(0) scale(1);
+    text-shadow: 0 0 18px var(--accent-glow, rgba(255, 255, 255, 0.4)), 0 3px 10px rgba(0, 0, 0, 0.55);
+  }
+}
+@keyframes k-out {
+  to {
+    opacity: 0;
+    transform: translateY(-90px) scale(0.9);
+  }
+}
+@keyframes k-next-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes k-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-line,
+  .k-line.out,
+  .k-word,
+  .k-next.in {
+    animation: none;
+  }
+  .k-word,
+  .k-next {
+    opacity: 1;
+    transform: none;
+    color: #fff;
+  }
+}

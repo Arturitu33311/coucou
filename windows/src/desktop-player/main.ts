@@ -15,6 +15,7 @@
 
 import "./desktop.css";
 import "./immersive.css";
+import "./kinetic.css";
 import { Bridge, onEvent } from "../core/bridge";
 import type { LyricLine, MusicInfo, MusicTrack, Settings, SysInfo } from "../core/state";
 import { averageColor, lyricIndex, musicPosition } from "../island/music";
@@ -31,6 +32,7 @@ import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWante
 import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
 import { buildImmersive, type ImmersiveView } from "./immersive";
+import { buildKinetic } from "./kinetic";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -76,6 +78,8 @@ time.append(date, clockCanvas);
 const gauge = buildGauge();
 const lyric = div("dp-lyric");
 lyric.setAttribute("aria-live", "off");
+/** The same lyrics in full screen, word by word (kinetic.ts). */
+const kinetic = buildKinetic();
 
 // the slots the next panels fill, at the mockup's places
 const slots = ["dp-recents", "dp-flow", "dp-search", "dp-bar"].map((id) => div("", id));
@@ -108,7 +112,12 @@ function buildPanels() {
   });
   barView.setLyrics(lyricsOn);
   // full screen (immersive.ts): its button joins the bar's actions
-  immersiveView = buildImmersive({ root, isPlaying: () => track?.status === "Playing", hasTrack: () => !!track });
+  immersiveView = buildImmersive({
+    root,
+    isPlaying: () => track?.status === "Playing",
+    hasTrack: () => !!track,
+    log: (m) => void Bridge.log(m),
+  });
   barView.root.querySelector(".dp-bar-actions")?.prepend(immersiveView.button);
 }
 
@@ -120,7 +129,7 @@ function relabelPanels() {
   immersiveView?.relabel();
 }
 
-stage.append(halo, time, gauge.root, ...slots, lyric);
+stage.append(halo, time, gauge.root, ...slots, lyric, kinetic.root);
 root.append(scene, art, wash, floor, stage, edge);
 
 const clock = new Clock(clockCanvas, CLOCK_GLYPH_H);
@@ -515,11 +524,15 @@ function paintLyric() {
   const t = track;
   const lines = lyrics;
   let text = "";
+  let nextText = "";
+  let lineMs = 4000;
   if (t && lines) {
     const pos = musicPosition(t as MusicInfo);
     const idx = lyricIndex(lines, pos);
     text = idx >= 0 ? lines[idx].text.trim() : "";
     const next = lines[idx + 1];
+    nextText = next ? next.text.trim() : "";
+    if (next) lineMs = next.t - Math.max(pos, idx >= 0 ? lines[idx].t : 0);
     if (t.status === "Playing" && !document.hidden && next) {
       lyricTimer = window.setTimeout(() => {
         lyricTimer = null;
@@ -532,6 +545,9 @@ function paintLyric() {
     if (text) lyric.textContent = text;
   }
   lyric.classList.toggle("on", lyricShown(text, lyricsOn));
+  kinetic.show(text, nextText, lineMs);
+  kinetic.setOn(lyricShown(text, lyricsOn));
+  kinetic.setPlaying(t?.status === "Playing" && !document.hidden);
 }
 
 // ── Gauge ─────────────────────────────────────────────────────────────────────

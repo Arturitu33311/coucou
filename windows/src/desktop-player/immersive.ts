@@ -43,6 +43,8 @@ export interface ImmersiveHost {
 
 export class Immersive {
   on = false;
+  /** Why the last change happened (the log). */
+  why = "";
   private last: number;
   private timer: number | null = null;
   private enteredAt = 0;
@@ -62,7 +64,10 @@ export class Immersive {
   /** The song, the page's visibility or the keyboard focus changed: arm, disarm or leave. */
   sync() {
     if (this.on) {
-      if (!this.host.hasTrack()) this.leave();
+      if (!this.host.hasTrack()) {
+        this.why = "no song";
+        this.leave();
+      }
       return;
     }
     if (this.host.playing()) this.arm();
@@ -72,8 +77,16 @@ export class Immersive {
   /** The pointer moved to (x, y), in page pixels. True when it left full screen. */
   move(x: number, y: number): boolean {
     if (this.on) {
+      // A pointer resting on the page since it loaded was never seen: its first (synthetic, a layout change
+      // under it) move is where it rests, not a move. WebKit sends one each time the lyric changes.
+      if (Number.isNaN(this.x)) {
+        this.x = x;
+        this.y = y;
+        return false;
+      }
       const still = this.host.now() - this.enteredAt < GRACE_MS || Math.hypot(x - this.x, y - this.y) < MOVE_PX;
       if (still) return false;
+      this.why = `pointer moved ${Math.round(Math.hypot(x - this.x, y - this.y))} px`;
       this.leave();
       return true;
     }
@@ -86,6 +99,7 @@ export class Immersive {
   /** A press, key or wheel. True when it left full screen: swallow it. */
   press(): boolean {
     if (this.on) {
+      this.why = "press";
       this.leave();
       return true;
     }
@@ -100,6 +114,7 @@ export class Immersive {
 
   /** The button. */
   toggle() {
+    this.why = "button";
     if (this.on) this.leave();
     else if (this.host.hasTrack()) this.enter();
   }
@@ -148,7 +163,10 @@ export class Immersive {
     if (this.on || !this.host.playing()) return;
     if (this.last + this.idleMs - this.host.now() > 0) return this.arm(); // activity since: wait out the rest
     // A field with the keyboard blocks it; its blur calls touch(), which arms the next period.
-    if (!this.host.typing()) this.enter();
+    if (!this.host.typing()) {
+      this.why = "idle";
+      this.enter();
+    }
   }
 }
 
@@ -161,6 +179,8 @@ export interface ImmersiveOptions {
   isPlaying(): boolean;
   /** A song is loaded. */
   hasTrack(): boolean;
+  /** Writes a line to Coucou's log (entering and leaving, for diagnosis). */
+  log?(message: string): void;
 }
 
 export interface ImmersiveView {
@@ -197,8 +217,14 @@ export function buildImmersive(o: ImmersiveOptions): ImmersiveView {
     playing: () => o.isPlaying() && !document.hidden,
     hasTrack: o.hasTrack,
     typing: () => isField(document.activeElement),
-    changed: () => relabel(),
+    changed: (on) => {
+      relabel();
+      o.log?.(`desktop player: full screen ${on ? "on" : "off"} (${ctl.why})`);
+      kept = 0;
+    },
   });
+  /** Pointer moves that did not leave full screen since it was entered (logged once). */
+  let kept = 0;
 
   function relabel() {
     const label = ctl.on ? t("Exit full screen") : t("Full screen");
@@ -218,7 +244,11 @@ export function buildImmersive(o: ImmersiveOptions): ImmersiveView {
   const onRelease = (e: Event) => {
     if (ctl.swallow()) stop(e);
   };
-  const onMove = (e: MouseEvent) => void ctl.move(e.clientX, e.clientY);
+  const onMove = (e: MouseEvent) => {
+    if (!ctl.move(e.clientX, e.clientY) && ctl.on && ++kept === 1) {
+      o.log?.(`desktop player: full screen kept a pointer move (${e.type} ${e.clientX},${e.clientY})`);
+    }
+  };
   window.addEventListener("pointermove", onMove, true);
   window.addEventListener("mousemove", onMove, true);
   for (const type of ["pointerdown", "mousedown", "touchstart", "keydown"]) window.addEventListener(type, onPress, true);
