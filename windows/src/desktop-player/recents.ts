@@ -13,6 +13,7 @@ import type { PlayerItem } from "../core/player";
 import type { MusicTrack } from "../core/state";
 import { t } from "../i18n/i18n";
 import type { Feedback } from "./feedback";
+import { freshFlags, replay, songChanged, staggerDelay, trackKey } from "./motion";
 import { ROW_PERSPECTIVE, ROW_TURN, turnTransform } from "./tilt";
 
 /**
@@ -82,13 +83,22 @@ export function buildRecents(scroller: HTMLElement, feedback: Feedback, flat = f
   let currentArt: string | null = null;
   let currentSource: string | undefined;
   let items: PlayerItem[] = [];
+  /** What the "now" card shows, so a repeated report repaints nothing (and the equalizer keeps its phase). */
+  let nowSig = "";
+  /** The rows already on screen: only new ones slide in. */
+  let seenRows = new Set<string>();
 
-  function renderNow() {
+  function renderNow(force = false) {
     if (!currentTrack || !currentTrack.title) {
       nowCard.style.display = "none";
       nowCard.innerHTML = "";
+      nowSig = "";
       return;
     }
+    const sig = [trackKey(currentTrack), currentTrack.status, currentArt ?? "", currentSource ?? currentTrack.player ?? ""].join("|");
+    if (!force && sig === nowSig && nowCard.firstChild) return;
+    const swap = songChanged(nowSig.split("|")[0], sig.split("|")[0]);
+    nowSig = sig;
     nowCard.style.display = "flex";
     const isPlaying = currentTrack.status === "Playing";
     const artBg = currentArt ? `url('${currentArt}') center/cover` : "rgba(255, 255, 255, 0.12)";
@@ -101,12 +111,20 @@ export function buildRecents(scroller: HTMLElement, feedback: Feedback, flat = f
         <span class="dp-now-title" title="${escapeHtml(currentTrack.title)}">${escapeHtml(currentTrack.title)}</span>
         <span class="dp-now-sub">${escapeHtml(artist)} · ${escapeHtml(src)}</span>
       </div>
+      <span class="dp-eq" aria-hidden="true"><i></i><i></i><i></i></span>
       <button type="button" class="dp-now-play" aria-label="${isPlaying ? t("Pause") : t("Play")}">
         ${isPlaying
           ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>'
           : '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z"></path></svg>'}
       </button>
     `;
+
+    // the equalizer moves only while the song plays (desktop.css pauses it otherwise and while the page is hidden)
+    nowCard.classList.toggle("is-playing", isPlaying);
+    if (swap) {
+      replay(nowCard.querySelector(".dp-now-cover"), "dp-swap");
+      replay(nowCard.querySelector(".dp-now-info"), "dp-swap");
+    }
 
     const playBtn = nowCard.querySelector<HTMLButtonElement>(".dp-now-play");
     if (playBtn) {
@@ -118,12 +136,21 @@ export function buildRecents(scroller: HTMLElement, feedback: Feedback, flat = f
 
   function renderRows() {
     rowsContainer.innerHTML = "";
+    // the rows not shown before slide in one after the other; the ones already there stay still
+    const keys = items.map((it) => `${it.source}:${it.id}`);
+    const fresh = freshFlags(seenRows, keys);
+    seenRows = new Set(keys);
+    let order = 0;
     // all of them (the history keeps 20): the older ones are a scroll away
-    items.forEach((item) => {
+    items.forEach((item, idx) => {
       const row = document.createElement("div");
       row.className = "lg tilt dp-recent-row";
       row.style.transform = tilt.transform;
       row.style.opacity = String(tilt.opacity);
+      if (fresh[idx]) {
+        row.classList.add("dp-row-in");
+        row.style.animationDelay = `${staggerDelay(order++)}ms`;
+      }
 
       const badgeColor = item.source === "spotify" ? "#1ed760" : "#ff5c5c";
       const sourceName = item.source === "spotify" ? "Spotify" : "YT Music";
@@ -156,7 +183,7 @@ export function buildRecents(scroller: HTMLElement, feedback: Feedback, flat = f
 
   function relabel() {
     headerTitle.textContent = t("Continue listening");
-    renderNow();
+    renderNow(true);
   }
   relabel();
 

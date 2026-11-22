@@ -7,6 +7,7 @@ import { Bridge } from "../core/bridge";
 import type { MusicInfo, MusicTrack } from "../core/state";
 import { musicPosition } from "../island/music";
 import { t } from "../i18n/i18n";
+import { replay, songChanged, trackKey } from "./motion";
 
 export interface PlayerBarView {
   root: HTMLElement;
@@ -37,8 +38,11 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
         </svg>
       </button>
       <button type="button" class="dp-bar-play-btn">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg class="ic-play" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M7 4l13 8-13 8z"></path>
+        </svg>
+        <svg class="ic-pause" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect>
         </svg>
       </button>
       <button type="button" class="dp-bar-btn dp-btn-next">
@@ -55,7 +59,7 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
         <span class="dp-bar-time">0:00 / 0:00</span>
       </div>
       <div class="dp-bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-        <div class="dp-bar-fill" style="width: 0%;"></div>
+        <div class="dp-bar-fill" style="transform: scaleX(0);"></div>
       </div>
       <span class="dp-bar-sub">Coucou</span>
     </div>
@@ -82,6 +86,7 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
   let currentTrack: MusicTrack | null = null;
   let currentArt: string | null = null;
   let currentSource: string | undefined;
+  let shownKey = "";
 
   prevBtn.addEventListener("click", () => void Bridge.musicControl("previous"));
   playBtn.addEventListener("click", () => void Bridge.musicControl("playpause"));
@@ -99,14 +104,15 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
   function updateProgress() {
     if (!currentTrack || currentTrack.lengthMs <= 0) {
       timeEl.textContent = "0:00 / 0:00";
-      fillEl.style.width = "0%";
+      fillEl.style.transform = "scaleX(0)";
       return;
     }
     const pos = musicPosition(currentTrack as MusicInfo);
     const len = currentTrack.lengthMs;
     const pct = Math.max(0, Math.min(100, (pos / len) * 100));
     timeEl.textContent = `${formatTime(pos)} / ${formatTime(len)}`;
-    fillEl.style.width = `${pct}%`;
+    // transform, not width: a small element's transform costs no layout
+    fillEl.style.transform = `scaleX(${(pct / 100).toFixed(4)})`;
     trackEl.setAttribute("aria-valuenow", String(Math.round(pct)));
   }
 
@@ -117,9 +123,8 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
 
     const isPlaying = tInfo?.status === "Playing";
     playBtn.setAttribute("aria-label", isPlaying ? t("Pause") : t("Play"));
-    playBtn.innerHTML = isPlaying
-      ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>'
-      : '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z"></path></svg>';
+    // both icons stay in the button: the state class cross-fades and turns them (desktop.css)
+    playBtn.classList.toggle("playing", isPlaying);
 
     if (tInfo && tInfo.title) {
       titleEl.textContent = tInfo.title;
@@ -141,6 +146,15 @@ export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): Pl
     } else {
       coverEl.style.background = "linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05))";
     }
+
+    // a new song: the title, the artist line and the cover fade in (once; never on the first song)
+    const key = trackKey(tInfo);
+    if (songChanged(shownKey, key)) {
+      replay(titleEl, "dp-swap");
+      replay(subEl, "dp-swap");
+      replay(coverEl, "dp-swap");
+    }
+    shownKey = key;
 
     updateProgress();
   }
