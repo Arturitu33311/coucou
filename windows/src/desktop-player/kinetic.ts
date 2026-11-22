@@ -1,8 +1,9 @@
 // Full-screen lyrics (shown only while #dp is `immersive`, kinetic.css): the line being sung, word by word.
 // Each new line rises in a word at a time; the words light up in the album's accent as the line goes by
 // (karaoke-style, paced on the line's length); the line before drifts up and away, the next one waits
-// dimly underneath. Only opacity and transforms move (WebKit runs here without GPU compositing), and every
-// motion is a CSS animation with a delay: no timers. Paused song, paused animations.
+// dimly underneath. Only single words move, briefly (WebKit paints this page on the CPU: a full-line
+// "breathe" and animated glows made it stutter live), and every motion is a CSS animation with a delay:
+// no timers. Paused song, paused animations.
 
 /** The words of a line, with when each one enters and lights up (ms after the line starts). */
 export interface WordPlan {
@@ -32,8 +33,8 @@ export interface KineticView {
   setOn(on: boolean): void;
 }
 
-/** How long the old line takes to leave (kinetic.css `k-out`). */
-const OUT_MS = 700;
+/** How long the old line takes to leave (kinetic.css `k-out`); the new line's words wait for it. */
+export const OUT_MS = 300;
 
 export function buildKinetic(): KineticView {
   const root = document.createElement("div");
@@ -53,21 +54,23 @@ export function buildKinetic(): KineticView {
       return;
     }
     shown = line;
+    // the old line leaves first; the new one's words start once it is gone (no overlap)
+    const wait = current ? OUT_MS : 0;
     if (current) {
       const old = current;
       old.classList.add("out");
-      window.setTimeout(() => old.remove(), OUT_MS);
+      window.setTimeout(() => old.remove(), OUT_MS + 50);
     }
     current = null;
     if (line) {
       const el = document.createElement("div");
       el.className = "k-line";
-      for (const w of planWords(line, lineMs)) {
+      for (const w of planWords(line, lineMs - wait)) {
         const span = document.createElement("span");
         span.className = "k-word";
         span.textContent = w.text;
-        span.style.setProperty("--enter", `${w.enterMs}ms`);
-        span.style.setProperty("--lit", `${w.litMs}ms`);
+        span.style.setProperty("--enter", `${wait + w.enterMs}ms`);
+        span.style.setProperty("--lit", `${wait + w.litMs}ms`);
         el.append(span, " ");
       }
       stage.append(el);
