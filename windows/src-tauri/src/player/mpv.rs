@@ -127,22 +127,27 @@ async fn connect_or_launch(sock: &Path, launcher: impl Fn() -> io::Result<()>) -
 
 // ── The desktop player's video ────────────────────────────────────────────────
 
-/// A music video can take yt-dlp several seconds to resolve.
-const VIDEO_SETTLE: Duration = Duration::from_secs(15);
+/// The stream URL is already resolved (videod), so mpv only has to open it.
+const VIDEO_SETTLE: Duration = Duration::from_secs(10);
 
 fn video_socket_path() -> PathBuf {
     socket_path().with_file_name("coucou-video.sock")
 }
 
-/// Plays the music video `video_id` without sound, looping, in the X window `wid` (the desktop
-/// player's video window), from `start_s` seconds in. Returns once it shows (or failed).
-pub async fn play_video(video_id: &str, wid: u64, start_s: u64) -> Result<(), String> {
+/// One launch at a time: two requests that both found no video mpv would start two, in the same window.
+static VIDEO_LAUNCH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Plays the picture stream `url` without sound, looping, in the X window `wid` (the desktop player's video
+/// window), from `start_s` seconds in. Returns once it shows (or failed).
+pub async fn play_video(url: &str, wid: u64, start_s: f64) -> Result<(), String> {
     let sock = video_socket_path();
-    let s2 = sock.clone();
-    let stream = connect_or_launch(&sock, move || launch_video_mpv(&s2, wid)).await?;
-    let url = format!("https://www.youtube.com/watch?v={video_id}");
-    let opts = format!("start={start_s}");
-    send(stream, &["loadfile", &url, "replace", &opts], Some(VIDEO_SETTLE)).await
+    let stream = {
+        let _one = VIDEO_LAUNCH.lock().await;
+        let s2 = sock.clone();
+        connect_or_launch(&sock, move || launch_video_mpv(&s2, wid)).await?
+    };
+    let opts = format!("start={:.2}", start_s.max(0.0));
+    send(stream, &["loadfile", url, "replace", &opts], Some(VIDEO_SETTLE)).await
 }
 
 /// Pauses or resumes the video (the song paused, the desktop covered). Nothing when no video mpv runs.
@@ -159,12 +164,86 @@ pub async fn video_stop() {
     }
 }
 
-/// The video mpv: no sound, hardware decoding, at most 720p (H.264 first, what VA-API decodes),
-/// filling the window (cropped, never letterboxed), no on-screen controls, no input of its own.
+/// Where the video is (seconds), None while nothing plays.
+pub async fn video_time() -> Option<f64> {
+    let s = UnixStream::connect(video_socket_path()).await.ok()?;
+    query(s, &["get_property", "time-pos"]).await.ok()?.as_f64()
+}
+
+/// Jumps the video to `t` seconds.
+pub async fn video_seek(t: f64) {
+    if let Ok(s) = UnixStream::connect(video_socket_path()).await {
+        let to = format!("{:.3}", t.max(0.0));
+        let _ = send(s, &["seek", &to, "absolute"], None).await;
+    }
+}
+
+/// Waits until the video mpv stops showing a picture on its own (the stream failed, or it fell idle), or
+/// `still_wanted` says the video changed. True when it went away while still wanted.
+pub async fn video_gone(still_wanted: impl Fn() -> bool) -> bool {
+    let Ok(stream) = UnixStream::connect(video_socket_path()).await else { return still_wanted() };
+    let (r, mut w) = stream.into_split();
+    if w.write_all(command_json_observe("idle-active").as_bytes()).await.is_err() {
+        return still_wanted();
+    }
+    let mut lines = BufReader::new(r).lines();
+    loop {
+        let line = match tokio::time::timeout(Duration::from_secs(5), lines.next_line()).await {
+            Ok(Ok(Some(line))) => line,
+            Ok(_) => return still_wanted(),
+            Err(_) if still_wanted() => continue,
+            Err(_) => return false,
+        };
+        if !still_wanted() {
+            return false;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if video_went_away(&v) {
+            return true;
+        }
+    }
+}
+
+/// An mpv event that leaves the video window without a picture.
+fn video_went_away(v: &Value) -> bool {
+    (v["event"].as_str() == Some("property-change") && v["name"].as_str() == Some("idle-active") && v["data"] == true)
+        || (v["event"].as_str() == Some("end-file") && v["reason"].as_str() == Some("error"))
+}
+
+/// Sends one command and returns mpv's `data`.
+async fn query(stream: UnixStream, args: &[&str]) -> Result<Value, String> {
+    let (r, mut w) = stream.into_split();
+    w.write_all(command_json(args).as_bytes()).await.map_err(|e| e.to_string())?;
+    let mut lines = BufReader::new(r).lines();
+    let by = tokio::time::Instant::now() + REPLY_TIMEOUT;
+    loop {
+        let line = match tokio::time::timeout_at(by, lines.next_line()).await {
+            Ok(Ok(Some(l))) => l,
+            _ => return Err(t("mpv didn't answer in time")),
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if let Some(err) = v.get("error") {
+            return if err.as_str() == Some("success") { Ok(v["data"].clone()) } else { Err(err.to_string()) };
+        }
+    }
+}
+
+/// The video mpv: no sound, hardware decoding, filling the window (cropped, never letterboxed), no
+/// on-screen controls, no input of its own. It plays URLs videod already resolved.
 fn launch_video_mpv(sock: &Path, wid: u64) -> io::Result<()> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    // An older video mpv whose socket went away would keep drawing into the same window.
+    let _ = Command::new("pkill")
+        .args(["-f", "--", &format!("--input-ipc-server={}", sock.display())])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let mut cmd = Command::new("mpv");
     cmd.arg(format!("--wid={wid}"))
+        // No user/system scripts: /etc/mpv/scripts/mpris.so (mpv-mpris) would put this silent copy on
+        // MPRIS as a second "song", which the pill, the wallpaper and play/pause then took for the real one.
+        .arg("--load-scripts=no")
+        .arg("--ytdl=no")
         .arg("--no-audio")
         .arg("--idle=yes")
         .arg("--loop-file=inf")
@@ -178,14 +257,7 @@ fn launch_video_mpv(sock: &Path, wid: u64) -> io::Result<()> {
         .arg("--cursor-autohide=no")
         // mpv 0.37 takes the colour itself (newer ones split it into --background=color + --background-color)
         .arg("--background=#000000")
-        .arg(format!("--input-ipc-server={}", sock.display()))
-        .arg("--ytdl-format=bestvideo[height<=?720][vcodec^=avc1]/bestvideo[height<=?720]/best[height<=?720]");
-    if let Some(opt) = ytdl_opt(home.as_deref()) {
-        cmd.arg(opt);
-    }
-    if let Some(opt) = ytdl_config_opt(home.as_deref()) {
-        cmd.arg(opt);
-    }
+        .arg(format!("--input-ipc-server={}", sock.display()));
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     unsafe {
         cmd.pre_exec(|| {
@@ -424,6 +496,15 @@ mod tests {
         let at = Instant::now();
         play_at(&sock, || panic!("must not launch"), "slow", settle).await.unwrap();
         assert!(at.elapsed() >= settle);
+    }
+
+    #[test]
+    fn notices_the_video_going_away() {
+        let j = |s: &str| serde_json::from_str::<Value>(s).unwrap();
+        assert!(video_went_away(&j(r#"{"event":"property-change","id":1,"name":"idle-active","data":true}"#)));
+        assert!(!video_went_away(&j(r#"{"event":"property-change","id":1,"name":"idle-active","data":false}"#)));
+        assert!(video_went_away(&j(r#"{"event":"end-file","reason":"error"}"#)));
+        assert!(!video_went_away(&j(r#"{"event":"end-file","reason":"stop"}"#)), "replaced by the next song");
     }
 
     #[test]

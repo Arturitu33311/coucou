@@ -1620,6 +1620,7 @@ pub fn run() {
             desktop_player::desktop_player_shown,
             desktop_player::video::desktop_video,
             desktop_player::video::desktop_video_pause,
+            desktop_player::video::desktop_video_sync,
             sounds::custom_sounds,
             sounds::custom_sound,
             sounds::reveal_sounds_folder,

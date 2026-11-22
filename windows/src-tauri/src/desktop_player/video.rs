@@ -1,28 +1,87 @@
-// The desktop player's background video: the playing song's music video (found on YouTube Music by
-// "artist title"), played without sound by a second mpv inside a window of our own that sits at desktop
+// The desktop player's background video: the playing song's official music video (found and resolved by
+// player::videod), played without sound by a second mpv inside a window of our own that sits at desktop
 // level just under the desktop player's window. That window is transparent where the page shows no
 // scene (class `has-video`), so GNOME's compositor lays the page over the video: WebKit (run without
 // compositing) never decodes or repaints a frame of it.
-use std::sync::atomic::{AtomicBool, AtomicU64};
+//
+// The video follows the song's clock: it starts where the song is when it is ready (not where the song was
+// when it was asked for), shifted by the video's own intro (`offset`), and the page asks it to catch up every
+// few seconds (`desktop_video_sync`). It only shows once it plays; while it loads, or if it fails, the page
+// keeps its own scene — never a black window.
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 /// Bumped by every request: an older one that finishes late changes nothing.
 static SEQ: AtomicU64 = AtomicU64::new(0);
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-/// A video is loaded in the video mpv (the window may be shown with the desktop player).
+/// A video is playing in the video mpv (the window may be shown with the desktop player).
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// The playing video's intro (f64 bits): video time = song time + offset.
+static OFFSET: AtomicU64 = AtomicU64::new(0);
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// How far ahead to seek (f64 bits, s), learnt from how late the video lands after a seek.
+static LEAD: AtomicU64 = AtomicU64::new(0);
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// The last sync seeked: its leftover teaches LEAD.
+static JUST_SEEKED: AtomicBool = AtomicBool::new(false);
 
-/// Shows the music video for `title` by `artist`, from `position_s` seconds in; false when there is
-/// none (or `title` is empty: the video stops). The page shows its own scene while this is false.
+/// Told to the page when the video went away on its own (the stream failed): it shows its scene again.
+pub const GONE_EVENT: &str = "desktop-video-gone";
+
+/// Off by less than this, the video is left alone (a seek costs a visible hitch).
+pub const IN_SYNC_S: f64 = 0.25;
+const MAX_LEAD_S: f64 = 1.5;
+
+fn load(a: &AtomicU64) -> f64 {
+    f64::from_bits(a.load(Ordering::SeqCst))
+}
+
+fn store(a: &AtomicU64, v: f64) {
+    a.store(v.to_bits(), Ordering::SeqCst)
+}
+
+/// Where the video should be for the song at `song_s`, given the video's intro.
+pub fn video_time_for(song_s: f64, offset_s: f64) -> f64 {
+    (song_s + offset_s).max(0.0)
+}
+
+/// The seek target when the video at `video_s` is off from `want_s` by more than IN_SYNC_S, aimed `lead_s`
+/// ahead (a seek lands that late); None when it is close enough.
+pub fn correction(video_s: f64, want_s: f64, lead_s: f64) -> Option<f64> {
+    ((want_s - video_s).abs() > IN_SYNC_S).then(|| want_s + lead_s)
+}
+
+/// The next lead after a seek left the video `behind_s` behind (negative: ahead).
+pub fn learn_lead(lead_s: f64, behind_s: f64) -> f64 {
+    (lead_s + behind_s * 0.7).clamp(0.0, MAX_LEAD_S)
+}
+
+/// Shows the song's music video, from where the song is (`position_s` when asked, plus the time it took
+/// while `playing`); false when there is none (or `title` is empty: the video stops). `length_s` is the
+/// song's length (0 = unknown): a video that does not run on the song's timeline is not used.
 #[tauri::command]
-pub async fn desktop_video(app: tauri::AppHandle, title: String, artist: String, position_s: f64) -> bool {
-    imp::play(app, title, artist, position_s).await
+pub async fn desktop_video(
+    app: tauri::AppHandle,
+    title: String,
+    artists: Vec<String>,
+    length_s: f64,
+    position_s: f64,
+    playing: bool,
+) -> bool {
+    imp::play(app, title, artists, length_s, position_s, playing).await
 }
 
 /// Pauses or resumes the video: the song paused, or the desktop player covered.
 #[tauri::command]
 pub async fn desktop_video_pause(paused: bool) {
     imp::pause(paused).await
+}
+
+/// The song is at `position_s`: the video catches up if it drifted (a pause, a seek, a late start).
+#[tauri::command]
+pub async fn desktop_video_sync(position_s: f64) {
+    imp::sync(position_s).await
 }
 
 /// The desktop player was shown (true) or hidden: the video window goes with it.
@@ -32,78 +91,113 @@ pub fn follow_desktop(app: &tauri::AppHandle, shown: bool) {
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use super::{ACTIVE, SEQ};
-    use crate::player::{mpv, ytmusic};
+    use super::*;
+    use crate::player::{mpv, videod};
     use gtk::prelude::*;
     use std::cell::RefCell;
-    use std::collections::HashMap;
-    use std::sync::atomic::Ordering;
-    use std::sync::Mutex;
-    use tauri::AppHandle;
+    use tauri::{AppHandle, Emitter};
 
     thread_local! {
         /// The video window (GTK: main thread only), made on first use and kept for the session.
         static WINDOW: RefCell<Option<gtk::Window>> = const { RefCell::new(None) };
     }
 
-    /// "artist title" → its video id (None: YouTube Music has none), for the session.
-    static FOUND: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
-
-    async fn find(query: &str) -> Option<String> {
-        if let Some(hit) = FOUND.lock().ok()?.get_or_insert_with(HashMap::new).get(query) {
-            return hit.clone();
+    fn position_now(position_s: f64, playing: bool, asked: std::time::Instant) -> f64 {
+        let p = if position_s.is_finite() { position_s.max(0.0) } else { 0.0 };
+        if playing {
+            p + asked.elapsed().as_secs_f64()
+        } else {
+            p
         }
-        // A failure (no network) is not remembered: the next song asks again.
-        let id = ytmusic::video(query).await.map_err(|e| eprintln!("desktop video: search failed: {e}")).ok()?;
-        FOUND.lock().ok()?.get_or_insert_with(HashMap::new).insert(query.to_string(), id.clone());
-        id
     }
 
-    pub async fn play(app: AppHandle, title: String, artist: String, position_s: f64) -> bool {
+    pub async fn play(
+        app: AppHandle,
+        title: String,
+        artists: Vec<String>,
+        length_s: f64,
+        position_s: f64,
+        playing: bool,
+    ) -> bool {
+        let asked = std::time::Instant::now();
         let seq = SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-        let current = || SEQ.load(Ordering::SeqCst) == seq;
-        let stop = |app: &AppHandle| {
-            ACTIVE.store(false, Ordering::SeqCst);
-            show_window(app, false);
-        };
+        let current = move || SEQ.load(Ordering::SeqCst) == seq;
+        // The old song's video goes at once: the page's scene stands in until the new one plays.
+        ACTIVE.store(false, Ordering::SeqCst);
+        show_window(&app, false);
         if title.trim().is_empty() {
-            stop(&app);
             mpv::video_stop().await;
             return false;
         }
-        let query = format!("{} {}", artist.trim(), title.trim());
-        let Some(id) = find(&query).await else {
-            if current() {
-                stop(&app);
-                mpv::video_stop().await;
+        let length = if length_s.is_finite() { length_s.max(0.0) } else { 0.0 };
+        let found = match videod::find(title.trim(), &artists, length).await {
+            Ok(v) => v,
+            Err(e) => {
+                crate::log::line(format!("desktop video: {title}: {e}"));
+                None
             }
-            return false;
         };
         if !current() {
             return false;
         }
+        let Some(video) = found else {
+            mpv::video_stop().await;
+            return false;
+        };
         let Some(wid) = window_xid(&app) else { return false };
-        let start = if position_s.is_finite() && position_s > 0.0 { position_s as u64 } else { 0 };
-        match mpv::play_video(&id, wid, start).await {
+        store(&OFFSET, video.offset);
+        JUST_SEEKED.store(false, Ordering::SeqCst);
+        let start = video_time_for(position_now(position_s, playing, asked), video.offset) + load(&LEAD);
+        match mpv::play_video(&video.url, wid, start).await {
             Ok(()) if current() => {
+                if !playing {
+                    mpv::video_pause(true).await;
+                }
                 ACTIVE.store(true, Ordering::SeqCst);
                 show_window(&app, crate::desktop_player::window::is_shown());
+                tauri::async_runtime::spawn(watch(app, seq));
                 true
             }
             Ok(()) => false,
             Err(e) => {
-                crate::log::line(format!("desktop video: {query}: {e}"));
+                crate::log::line(format!("desktop video: {title}: {e}"));
                 if current() {
-                    stop(&app);
+                    mpv::video_stop().await;
                 }
                 false
             }
         }
     }
 
+    /// Hides the window and tells the page when the video fails on its own, so it never sits there black.
+    async fn watch(app: AppHandle, seq: u64) {
+        let wanted = move || SEQ.load(Ordering::SeqCst) == seq && ACTIVE.load(Ordering::SeqCst);
+        if mpv::video_gone(wanted).await && SEQ.load(Ordering::SeqCst) == seq {
+            crate::log::line("desktop video: the stream stopped, back to the scene");
+            ACTIVE.store(false, Ordering::SeqCst);
+            show_window(&app, false);
+            let _ = app.emit(GONE_EVENT, ());
+        }
+    }
+
     pub async fn pause(paused: bool) {
         if ACTIVE.load(Ordering::SeqCst) {
             mpv::video_pause(paused).await;
+        }
+    }
+
+    pub async fn sync(position_s: f64) {
+        if !ACTIVE.load(Ordering::SeqCst) || !position_s.is_finite() {
+            return;
+        }
+        let Some(at) = mpv::video_time().await else { return };
+        let want = video_time_for(position_s, load(&OFFSET));
+        if JUST_SEEKED.swap(false, Ordering::SeqCst) {
+            store(&LEAD, learn_lead(load(&LEAD), want - at));
+        }
+        if let Some(to) = correction(at, want, load(&LEAD)) {
+            JUST_SEEKED.store(true, Ordering::SeqCst);
+            mpv::video_seek(to).await;
         }
     }
 
@@ -121,6 +215,7 @@ mod imp {
     fn window_xid(app: &AppHandle) -> Option<u64> {
         let geo = crate::desktop_player::window::primary_geometry(app)?;
         let (tx, rx) = std::sync::mpsc::channel();
+        let app2 = app.clone();
         app.run_on_main_thread(move || {
             let xid = WINDOW.with(|cell| {
                 let mut slot = cell.borrow_mut();
@@ -135,6 +230,13 @@ mod imp {
                     w.set_app_paintable(true);
                     w.move_(geo.x as i32, geo.y as i32);
                     w.set_default_size(geo.w as i32, geo.h as i32);
+                    // GNOME stacks a window that maps above the desktop-level ones already there: once this
+                    // one is really mapped, the player goes back over it (raising before that loses the race).
+                    let app3 = app2.clone();
+                    w.connect_map_event(move |_, _| {
+                        crate::desktop_player::window::raise(&app3);
+                        gtk::glib::Propagation::Proceed
+                    });
                     w.realize();
                     w
                 });
@@ -143,7 +245,10 @@ mod imp {
             let _ = tx.send(xid);
         })
         .ok()?;
-        rx.recv_timeout(std::time::Duration::from_secs(3)).ok().flatten()
+        let xid = rx.recv_timeout(std::time::Duration::from_secs(3)).ok().flatten()?;
+        // The stacking watcher must know it: the video window may never stay above the player.
+        crate::desktop_player::visibility::set_video_xid(xid as u32);
+        Some(xid)
     }
 
     /// Shows the video window under the desktop player (then raises the player over it), or hides it.
@@ -165,9 +270,44 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
-    pub async fn play(_app: tauri::AppHandle, _title: String, _artist: String, _position_s: f64) -> bool {
+    pub async fn play(
+        _app: tauri::AppHandle,
+        _title: String,
+        _artists: Vec<String>,
+        _length_s: f64,
+        _position_s: f64,
+        _playing: bool,
+    ) -> bool {
         false
     }
     pub async fn pause(_paused: bool) {}
+    pub async fn sync(_position_s: f64) {}
     pub fn follow_desktop(_app: &tauri::AppHandle, _shown: bool) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_video_runs_on_the_songs_clock_plus_its_intro() {
+        assert_eq!(video_time_for(30.0, 0.0), 30.0);
+        assert_eq!(video_time_for(30.0, 22.6), 52.6);
+        assert_eq!(video_time_for(-1.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn only_a_real_drift_seeks() {
+        assert_eq!(correction(10.0, 10.2, 0.0), None, "a fifth of a second off: left alone");
+        assert_eq!(correction(10.0, 14.0, 0.3), Some(14.3), "a late start: aimed a little ahead");
+        assert_eq!(correction(40.0, 14.0, 0.0), Some(14.0), "ahead (the song was rewound): back");
+    }
+
+    #[test]
+    fn the_lead_learns_from_late_seeks_and_stays_bounded() {
+        let l = learn_lead(0.0, 0.6);
+        assert!(l > 0.3 && l < 0.6);
+        assert_eq!(learn_lead(1.4, 3.0), MAX_LEAD_S);
+        assert_eq!(learn_lead(0.1, -1.0), 0.0);
+    }
 }

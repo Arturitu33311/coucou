@@ -26,7 +26,7 @@ import { AlbumSource, buildFlow, fetchArtistAlbums, flowArtist, type FlowView } 
 import { buildSearch, QueryGate, type SearchView } from "./search";
 import { buildPlayerBar, type PlayerBarView } from "./bar";
 import { Feedback } from "./feedback";
-import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
+import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel, videoKeyOf } from "./logic";
 import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
 
@@ -211,21 +211,47 @@ function showWantedArt(key: string) {
 
 const videoGate = new QueryGate();
 let videoPaused: boolean | null = null;
+/** The song the video was asked for: title and artists only (a player switch or a late length is the same song). */
+let videoKey = "";
+/** While a video shows and the song plays, the video is lined up with it this often. */
+const VIDEO_SYNC_MS = 4000;
+let videoSyncTimer: number | null = null;
 
-/** Asks for the song's music video (once per song); the page's own scene stays until it shows. */
+/** Asks for the song's music video (once per song); the page's own scene stays until it plays. */
 async function syncVideo(t: MusicTrack | null) {
+  const key = videoKeyOf(t);
+  if (key === videoKey) return;
+  videoKey = key;
   const seq = videoGate.next();
   videoPaused = null;
+  setVideo(false);
   if (!t) {
-    setVideo(false);
-    void Bridge.desktopVideo("", "", 0);
+    void Bridge.desktopVideo("", [], 0, 0, false);
     return;
   }
-  const elapsed = t.status === "Playing" ? Date.now() - t.positionAt : 0;
-  const shown = await Bridge.desktopVideo(t.title, t.artists.join(" "), Math.max(0, (t.positionMs + elapsed) / 1000));
+  const playing = t.status === "Playing";
+  const shown = await Bridge.desktopVideo(t.title, t.artists, t.lengthMs / 1000, musicPosition(t as MusicInfo) / 1000, playing);
   if (!videoGate.isCurrent(seq)) return;
   setVideo(!!shown);
   syncVideoPlay();
+  syncVideoPosition();
+}
+
+/** Lines the video up with where the song is now. */
+function syncVideoPosition() {
+  if (!track || !root.classList.contains("has-video")) return;
+  void Bridge.desktopVideoSync(musicPosition(track as MusicInfo) / 1000);
+}
+
+/** The periodic line-up runs while a video shows, the song plays and the page is seen. */
+function syncVideoTimer() {
+  const want = root.classList.contains("has-video") && track?.status === "Playing" && !document.hidden;
+  if (want && videoSyncTimer == null) {
+    videoSyncTimer = window.setInterval(syncVideoPosition, VIDEO_SYNC_MS);
+  } else if (!want && videoSyncTimer != null) {
+    window.clearInterval(videoSyncTimer);
+    videoSyncTimer = null;
+  }
 }
 
 function setVideo(on: boolean) {
@@ -233,14 +259,28 @@ function setVideo(on: boolean) {
   document.documentElement.classList.toggle("has-video", on);
 }
 
-/** The video plays while the song plays and the page is seen. */
+/** The video plays while the song plays and the page is seen; a seek or a resume lines it up again. */
 function syncVideoPlay() {
+  syncVideoTimer();
   if (!root.classList.contains("has-video")) return;
   const paused = !(track?.status === "Playing" && !document.hidden);
+  const at = track ? musicPosition(track as MusicInfo) : 0;
+  // a seek moves the song away from its own clock: the video follows at once
+  const now = Date.now();
+  const last = lastVideoAt;
+  const expected = last ? last.pos + (last.playing ? now - last.when : 0) : at;
+  const jumped = track != null && last != null && Math.abs(at - expected) > 1500;
+  lastVideoAt = track ? { pos: at, when: now, playing: track.status === "Playing" } : null;
+  if (jumped) syncVideoPosition();
   if (paused === videoPaused) return;
   videoPaused = paused;
-  void Bridge.desktopVideoPause(paused);
+  void Bridge.desktopVideoPause(paused).then(() => {
+    if (!paused) syncVideoPosition();
+  });
 }
+
+/** Where the song was at the last check, to tell a seek from time passing. */
+let lastVideoAt: { pos: number; when: number; playing: boolean } | null = null;
 
 function applyTrack(t: MusicTrack | null) {
   // a player with no title is idle: the hour's scene again
@@ -549,6 +589,12 @@ async function main() {
 
   void onEvent("desktop-player-search", () => {
     searchView?.focusSearch();
+  });
+
+  // the video stream stopped on its own: the page's scene again, never a black window
+  void onEvent("desktop-video-gone", () => {
+    setVideo(false);
+    syncVideoTimer();
   });
 
   const boot = await Bridge.boot();
