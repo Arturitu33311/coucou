@@ -155,6 +155,18 @@ mod imp {
                 }
                 ACTIVE.store(true, Ordering::SeqCst);
                 show_window(&app, crate::desktop_player::window::is_shown());
+                if !video.measured {
+                    // shown from the song's own time; its real offset (a short intro) arrives later and the
+                    // next sync moves the video there
+                    let (t, a, id) = (title.trim().to_string(), artists.clone(), video.id.clone());
+                    tauri::async_runtime::spawn(async move {
+                        match videod::refine(&t, &a, length, &id).await {
+                            Ok(Some(off)) if current() => store(&OFFSET, off),
+                            Ok(_) => {}
+                            Err(e) => crate::log::line(format!("desktop video: {t}: offset: {e}")),
+                        }
+                    });
+                }
                 tauri::async_runtime::spawn(watch(app, seq));
                 true
             }
