@@ -20,8 +20,9 @@ import { t } from "../i18n/i18n";
 export const IDLE_MS = 20_000;
 /** After entering, pointer jitter (and the synthetic move a layout change fires) is not "activity". */
 export const GRACE_MS = 400;
-/** A pointer move shorter than this (in px) from where it rested is jitter. */
-export const MOVE_PX = 4;
+/** A pointer move shorter than this (in px) from where it rested does not leave: live, a brush of the mouse
+ *  (8 px) took full screen away. A deliberate move, a key or a click does. */
+export const MOVE_PX = 40;
 /** After the press that leaves, its release and click are swallowed for this long. */
 export const SWALLOW_MS = 600;
 

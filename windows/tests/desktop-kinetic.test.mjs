@@ -52,6 +52,7 @@ test("a pointer resting on the page since it loaded: the lyric's synthetic moves
     assert.equal(ctl.move(1589, 676), false, `synthetic move ${i}`);
   }
   assert.equal(ctl.on, true);
+  assert.equal(ctl.move(1597, 680), false, "a brush of the mouse (8 px) stays");
   assert.equal(ctl.move(1700, 700), true, "a real move still leaves");
   assert.equal(ctl.why, "pointer moved 114 px");
   advance(IDLE_MS - 1);
