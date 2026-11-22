@@ -50,8 +50,21 @@ def has_words(words, text):
     return bool(words) and re.search(r"(^| )" + re.escape(words) + r"( |$)", text) is not None
 
 
+def views(r):
+    """YouTube Music's view count ("13M", "15K", "3.4K", "1.2B"), 0 when missing."""
+    m = re.match(r"([\d.,]+)\s*([KMB]?)", str(r.get("views") or "").strip(), re.I)
+    if not m:
+        return 0
+    try:
+        n = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return 0
+    return int(n * {"": 1, "K": 1e3, "M": 1e6, "B": 1e9}[m.group(2).upper()])
+
+
 def candidates(results, title, artists, length_s):
-    """Official music videos of the song, closest in length first, each with its extra length (s, ≥ -5)."""
+    """Official music videos of the song, most watched first (an artist also uploads lyric videos and
+    visualizers under the bare song title, with a fraction of the views), each with its extra length (s)."""
     bare = norm(re.sub(r"\(.*?\)|\[.*?\]| - .*$", "", title or "")) or norm(title)
     own = norm(title)
     wanted = {norm(a) for a in artists if norm(a)}
@@ -69,7 +82,7 @@ def candidates(results, title, artists, length_s):
         if length_s and (not d or extra < -SAME_LENGTH_S or extra > MAX_INTRO_S):
             continue
         out.append((abs(extra), extra, r))
-    out.sort(key=lambda c: c[0])
+    out.sort(key=lambda c: (-views(c[2]), c[0]))
     return [(extra, r) for _, extra, r in out]
 
 
@@ -224,7 +237,19 @@ def align(video_env, song_env, extra_s):
     return None
 
 
+def selftest_pick():
+    r = lambda vid, d, v, t="peliculiando": {"videoId": vid, "title": t, "duration_seconds": d, "views": v,
+                                            "videoType": "MUSIC_VIDEO_TYPE_OMV", "artists": [{"name": "Fuerza Regida"}]}
+    res = [r("lyric", 209, "76K"), r("mv", 210, "13M"), r("viz", 203, "3.4K"), r("long", 377, "17M"),
+           r("letra", 209, "9M", "peliculiando (Letra)")]
+    got = [x["videoId"] for _, x in candidates(res, "peliculiando", ["Fuerza Regida"], 209)]
+    assert got == ["mv", "lyric"], got  # 203 s is 6 s short, 377 s too long, "(Letra)" a lyric video
+    assert views({"views": "1.2B"}) == 1_200_000_000 and views({}) == 0 and views({"views": "15K"}) == 15000
+    print("selftest: most watched official video first: ok")
+
+
 def selftest():
+    selftest_pick()
     """No network: a smooth random feature set, and the same shifted by N frames with noise."""
     import random
 
@@ -321,21 +346,24 @@ class Resolver:
         results = self.ytm.search(" ".join([artists[0] if artists else "", title]), filter="videos", limit=20)
         found = None
         cands = candidates(results, title, artists, length)
-        # about the same length: shown at once from the song's own time; `refine` measures the few seconds
-        # it may still be off (a short intro) while it plays
+        # The most watched one is the music video. About as long as the song, it shows at once from the song's
+        # own time (`refine` measures the few seconds it may still be off while it plays); longer, it is lined
+        # up by its audio first, and if it does not line up the most watched same-length one stands in.
         same = [r for extra, r in cands if abs(extra) <= SAME_LENGTH_S]
-        if same:
-            found = {"id": same[0]["videoId"], "offset": 0.0, "measured": False}
-        else:
+        if cands and abs(cands[0][0]) <= SAME_LENGTH_S:
+            found = {"id": cands[0][1]["videoId"], "offset": 0.0, "measured": False}
+        elif cands:
             longer = [(extra, r) for extra, r in cands if extra > SAME_LENGTH_S][:2]
-            if longer:
-                sid, _ = self.song_id(title, artists)
-                if sid:
-                    try:
-                        found = self.measure(sid, longer)
-                    except Exception as e:  # a failed download: no answer now, but not remembered either
-                        print(json.dumps({"log": f"align {title}: {e}"}), file=sys.stderr, flush=True)
+            sid, _ = self.song_id(title, artists)
+            if sid:
+                try:
+                    found = self.measure(sid, longer)
+                except Exception as e:  # a failed download: no answer now, but not remembered either
+                    print(json.dumps({"log": f"align {title}: {e}"}), file=sys.stderr, flush=True)
+                    if not same:
                         return None
+            if not found and same:
+                found = {"id": same[0]["videoId"], "offset": 0.0, "measured": False}
         with self.lock:
             self.cache["picks"][key] = found
         return found

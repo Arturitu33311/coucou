@@ -170,6 +170,14 @@ pub async fn video_time() -> Option<f64> {
     query(s, &["get_property", "time-pos"]).await.ok()?.as_f64()
 }
 
+/// Plays the video at `speed` (1 = normal): small drifts are closed this way, without a visible jump.
+pub async fn video_speed(speed: f64) {
+    if let Ok(s) = UnixStream::connect(video_socket_path()).await {
+        let v = format!("{speed:.3}");
+        let _ = send(s, &["set_property", "speed", &v], None).await;
+    }
+}
+
 /// Jumps the video to `t` seconds.
 pub async fn video_seek(t: f64) {
     if let Ok(s) = UnixStream::connect(video_socket_path()).await {

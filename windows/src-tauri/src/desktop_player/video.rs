@@ -20,18 +20,22 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// The playing video's intro (f64 bits): video time = song time + offset.
 static OFFSET: AtomicU64 = AtomicU64::new(0);
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-/// How far ahead to seek (f64 bits, s), learnt from how late the video lands after a seek.
-static LEAD: AtomicU64 = AtomicU64::new(0);
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-/// The last sync seeked: its leftover teaches LEAD.
-static JUST_SEEKED: AtomicBool = AtomicBool::new(false);
+/// The smoothed drift (f64 bits, s; + = the video is behind), NaN until the first reading after a load or seek.
+static DRIFT: AtomicU64 = AtomicU64::new(0x7FF8_0000_0000_0000);
 
 /// Told to the page when the video went away on its own (the stream failed): it shows its scene again.
 pub const GONE_EVENT: &str = "desktop-video-gone";
 
-/// Off by less than this, the video is left alone (a seek costs a visible hitch).
-pub const IN_SYNC_S: f64 = 0.25;
-const MAX_LEAD_S: f64 = 1.5;
+/// Players report their position in jumps (Sonora's MPRIS position is ±0.7 s off between reads), so a single
+/// reading is never acted on: the drift is smoothed, small drifts are closed by playing the video a little
+/// faster or slower (no visible jump), and only a large one (a late start, a seek in the song) seeks.
+pub const SEEK_OVER_S: f64 = 1.2;
+/// Below this the video plays at normal speed.
+pub const NUDGE_FROM_S: f64 = 0.3;
+/// At most this much faster or slower (4 % is not seen nor, with no sound, heard).
+pub const MAX_NUDGE: f64 = 0.04;
+/// A seek on a network stream lands about this late.
+pub const SEEK_LEAD_S: f64 = 0.3;
 
 fn load(a: &AtomicU64) -> f64 {
     f64::from_bits(a.load(Ordering::SeqCst))
@@ -46,15 +50,32 @@ pub fn video_time_for(song_s: f64, offset_s: f64) -> f64 {
     (song_s + offset_s).max(0.0)
 }
 
-/// The seek target when the video at `video_s` is off from `want_s` by more than IN_SYNC_S, aimed `lead_s`
-/// ahead (a seek lands that late); None when it is close enough.
-pub fn correction(video_s: f64, want_s: f64, lead_s: f64) -> Option<f64> {
-    ((want_s - video_s).abs() > IN_SYNC_S).then(|| want_s + lead_s)
+/// The smoothed drift after a new reading `d` (NaN `prev`: the first one counts alone).
+pub fn smooth_drift(prev: f64, d: f64) -> f64 {
+    if prev.is_nan() {
+        d
+    } else {
+        0.5 * prev + 0.5 * d
+    }
 }
 
-/// The next lead after a seek left the video `behind_s` behind (negative: ahead).
-pub fn learn_lead(lead_s: f64, behind_s: f64) -> f64 {
-    (lead_s + behind_s * 0.7).clamp(0.0, MAX_LEAD_S)
+#[derive(Debug, PartialEq)]
+pub enum Fix {
+    /// Jump to this time (and play at normal speed).
+    Seek(f64),
+    /// Play at this speed.
+    Speed(f64),
+}
+
+/// What to do with the video, given this reading's drift `d`, the smoothed one and where it should be.
+pub fn fix(d: f64, smoothed: f64, want_s: f64) -> Fix {
+    if d.abs() > 2.0 * SEEK_OVER_S || smoothed.abs() > SEEK_OVER_S {
+        Fix::Seek(want_s + SEEK_LEAD_S)
+    } else if smoothed.abs() > NUDGE_FROM_S {
+        Fix::Speed(1.0 + (smoothed * 0.05).clamp(-MAX_NUDGE, MAX_NUDGE))
+    } else {
+        Fix::Speed(1.0)
+    }
 }
 
 /// Shows the song's music video, from where the song is (`position_s` when asked, plus the time it took
@@ -146,10 +167,11 @@ mod imp {
         };
         let Some(wid) = window_xid(&app) else { return false };
         store(&OFFSET, video.offset);
-        JUST_SEEKED.store(false, Ordering::SeqCst);
-        let start = video_time_for(position_now(position_s, playing, asked), video.offset) + load(&LEAD);
+        store(&DRIFT, f64::NAN);
+        let start = video_time_for(position_now(position_s, playing, asked), video.offset) + SEEK_LEAD_S;
         match mpv::play_video(&video.url, wid, start).await {
             Ok(()) if current() => {
+                mpv::video_speed(1.0).await;
                 if !playing {
                     mpv::video_pause(true).await;
                 }
@@ -204,12 +226,18 @@ mod imp {
         }
         let Some(at) = mpv::video_time().await else { return };
         let want = video_time_for(position_s, load(&OFFSET));
-        if JUST_SEEKED.swap(false, Ordering::SeqCst) {
-            store(&LEAD, learn_lead(load(&LEAD), want - at));
-        }
-        if let Some(to) = correction(at, want, load(&LEAD)) {
-            JUST_SEEKED.store(true, Ordering::SeqCst);
-            mpv::video_seek(to).await;
+        let d = want - at;
+        let smoothed = smooth_drift(load(&DRIFT), d);
+        match fix(d, smoothed, want) {
+            Fix::Seek(to) => {
+                store(&DRIFT, f64::NAN);
+                mpv::video_speed(1.0).await;
+                mpv::video_seek(to).await;
+            }
+            Fix::Speed(speed) => {
+                store(&DRIFT, smoothed);
+                mpv::video_speed(speed).await;
+            }
         }
     }
 
@@ -309,17 +337,24 @@ mod tests {
     }
 
     #[test]
-    fn only_a_real_drift_seeks() {
-        assert_eq!(correction(10.0, 10.2, 0.0), None, "a fifth of a second off: left alone");
-        assert_eq!(correction(10.0, 14.0, 0.3), Some(14.3), "a late start: aimed a little ahead");
-        assert_eq!(correction(40.0, 14.0, 0.0), Some(14.0), "ahead (the song was rewound): back");
+    fn a_late_start_or_a_seek_in_the_song_seeks() {
+        assert_eq!(fix(3.6, smooth_drift(f64::NAN, 3.6), 40.0), Fix::Seek(40.0 + SEEK_LEAD_S), "3.6 s late");
+        assert_eq!(fix(-60.0, smooth_drift(0.2, -60.0), 14.0), Fix::Seek(14.0 + SEEK_LEAD_S), "rewound");
     }
 
     #[test]
-    fn the_lead_learns_from_late_seeks_and_stays_bounded() {
-        let l = learn_lead(0.0, 0.6);
-        assert!(l > 0.3 && l < 0.6);
-        assert_eq!(learn_lead(1.4, 3.0), MAX_LEAD_S);
-        assert_eq!(learn_lead(0.1, -1.0), 0.0);
+    fn jittery_readings_never_seek_and_small_drifts_only_nudge_the_speed() {
+        // Sonora's position read live against a steady video: +0.21 +0.40 +1.09 +0.37 +0.61 -0.06 +0.26 +0.41
+        let mut s = f64::NAN;
+        for d in [-0.21, -0.40, -1.09, -0.37, -0.61, 0.06, -0.26, -0.41] {
+            s = smooth_drift(s, d);
+            match fix(d, s, 100.0) {
+                Fix::Seek(_) => panic!("a jitter of {d} s made it seek"),
+                Fix::Speed(v) => assert!((1.0 - MAX_NUDGE..=1.0 + MAX_NUDGE).contains(&v)),
+            }
+        }
+        assert_eq!(fix(0.1, 0.1, 5.0), Fix::Speed(1.0), "in sync: normal speed");
+        assert_eq!(fix(0.8, 0.8, 5.0), Fix::Speed(1.04), "behind: a little faster");
+        assert_eq!(fix(-0.5, -0.5, 5.0), Fix::Speed(0.975), "ahead: a little slower");
     }
 }
