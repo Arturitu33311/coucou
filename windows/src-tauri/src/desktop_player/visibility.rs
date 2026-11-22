@@ -115,6 +115,14 @@ pub fn foreign_action(stacking: &[Win], shown: bool, was_hidamari: bool, was_abo
     }
 }
 
+/// What "something was above" is remembered as: only what an iteration really judged with the player on
+/// screen. Live, the video window came above while the player was being shown (not judged yet); remembering
+/// it as already above swallowed the raise, and the video covered the player until another restack (8 s).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn next_above(judged: bool, is_above: bool) -> bool {
+    judged && is_above
+}
+
 /// Whether Hidamari counts as handled after this event: only an actual
 /// `StopHidamari` marks it, and only while its window is still present.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -277,19 +285,22 @@ mod linux {
             let now_above = foreign_desktop_above(&wins);
             let present = wins.iter().any(|w| w.hidamari);
             let mut taken = Action::None;
+            let mut judged = false;
             if now != last {
                 last = now;
                 publish(app, now);
             } else if now {
                 // One snapshot of "shown" per iteration: the action and the state both derive from it.
-                taken = foreign_action(&wins, window::is_shown(), hidamari, above);
+                let shown = window::is_shown();
+                judged = shown;
+                taken = foreign_action(&wins, shown, hidamari, above);
                 match taken {
                     Action::Raise => window::raise(app),
                     Action::StopHidamari => stop_hidamari(),
                     Action::None => {}
                 }
             }
-            above = now_above;
+            above = next_above(judged, now_above);
             hidamari = next_hidamari(present, hidamari, taken);
         }
     }
@@ -412,6 +423,16 @@ mod tests {
         assert!(!should_raise(true, true));
         assert!(!should_raise(true, false));
         assert!(!should_raise(false, false));
+    }
+
+    #[test]
+    fn a_video_that_came_above_while_the_player_was_being_shown_is_still_raised_over() {
+        let (player, video) = (desk(7, true), desk(9, counts_as_ours(true, 9, 9)));
+        // the iteration that showed the desktop: nothing judged, the video already listed above
+        let above = next_above(false, foreign_desktop_above(&[player.clone(), video.clone()]));
+        assert!(!above, "not remembered as already above");
+        // the next restack, the player now on screen: the raise happens
+        assert_eq!(foreign_action(&[player, video], true, false, above), Action::Raise);
     }
 
     #[test]
