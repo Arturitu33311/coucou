@@ -142,6 +142,8 @@ import com.agupta07505.smartisland.ui.sections.NotificationsAndPrivacySection
 import com.agupta07505.smartisland.ui.sections.PermissionsSection
 import com.agupta07505.smartisland.ui.sections.UpdatesAndDownloadsSection
 import com.agupta07505.smartisland.ui.sections.PositionsSection
+import androidx.compose.runtime.collectAsState
+import com.agupta07505.smartisland.ui.sections.NotasSection
 import com.agupta07505.smartisland.ui.sections.SupportSection
 import com.agupta07505.smartisland.util.SystemServiceRecovery
 import com.agupta07505.smartisland.util.runCatchingLogged
@@ -164,6 +166,7 @@ private enum class FeatureDetailSection {
     UpdatesAndDownloads,
     AboutApp,
     SupportCommunity,
+    Notas,
     DeveloperOptions
 }
 
@@ -821,7 +824,16 @@ private fun SettingsOverviewSection(
         }
 
         // Section 3: System
+        val notasGrabando = com.agupta07505.smartisland.coucou.notas.NotasBus.estado.collectAsState().value.grabando
         SettingsCategoryGroup(title = stringResource(R.string.category_system_core)) {
+            FeatureStudioNavigationCard(
+                title = stringResource(R.string.card_notas_title),
+                icon = Icons.Rounded.MusicNote,
+                statusText = if (notasGrabando) stringResource(R.string.notas_status_recording) else null,
+                statusColor = MaterialTheme.colorScheme.error,
+                onClick = { onNavigateTo(FeatureDetailSection.Notas) }
+            )
+
             FeatureStudioNavigationCard(
                 title = stringResource(R.string.card_permissions_setup_title),
                 icon = Icons.Rounded.Shield,
@@ -1066,6 +1078,7 @@ private fun DetailScreenHost(
                 FeatureDetailSection.UpdatesAndDownloads -> stringResource(R.string.detail_title_updates_downloads)
                 FeatureDetailSection.AboutApp -> stringResource(R.string.detail_title_about_app)
                 FeatureDetailSection.SupportCommunity -> stringResource(R.string.detail_title_support_community)
+                FeatureDetailSection.Notas -> stringResource(R.string.card_notas_title)
                 FeatureDetailSection.DeveloperOptions -> stringResource(R.string.detail_title_developer_options)
             }
             Text(
@@ -1145,6 +1158,9 @@ private fun DetailScreenHost(
             }
             FeatureDetailSection.SupportCommunity -> {
                 SupportSection()
+            }
+            FeatureDetailSection.Notas -> {
+                NotasSection()
             }
             FeatureDetailSection.DeveloperOptions -> {
                 DeveloperOptionsSection(settings = settings, repository = repository)

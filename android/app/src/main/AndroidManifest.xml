@@ -39,6 +39,11 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- Coucou Notas: records a class in the background and uploads it to the notes server -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <queries>
         <intent>
@@ -128,6 +133,11 @@
             android:name=".coucou.audiolink.AudioLinkService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <service
+            android:name=".coucou.notas.NotasService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <service
             android:name=".coucou.CoverLiveWallpaperService"
