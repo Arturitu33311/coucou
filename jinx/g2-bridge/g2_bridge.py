@@ -61,6 +61,22 @@ STILL_THINKING = "Sigo pensándolo; te lo mando a la isla o a Telegram cuando es
 
 # ---------- el gateway ----------
 
+
+class _ChainLLM:
+    """Prueba cada modelo en orden; LiteError solo si fallan todos (FallbackLLM decide entonces el local)."""
+    def __init__(self, llms):
+        self.llms = llms
+        self.model = llms[0].model
+
+    def chat(self, messages, tools):
+        err = None
+        for llm in self.llms:
+            try:
+                return llm.chat(messages, tools)
+            except g2_lite.LiteError as e:
+                err = e
+        raise err
+
 def gateway_call(req, cmd=GATEWAY_CMD, run=subprocess.run, timeout=540):
     """Una petición al gateway (`jinx-chat`): la lista de eventos NDJSON. Lanza OSError si no arranca."""
     r = run([cmd], input=json.dumps(req), capture_output=True, text=True, timeout=timeout)
@@ -91,6 +107,15 @@ def final_event(events):
         if ev.get("ev") in ("done", "error"):
             return ev
     return None
+
+
+def avisar_fallo(peticion, motivo, cmd=os.path.expanduser("~/.hermes/scripts/notify_alan.sh")):
+    """Aviso directo (no pasa por Jinx) de que un traspaso no se hizo. Nunca lanza."""
+    try:
+        subprocess.run([cmd, "No pude hacer lo que me pediste por voz («%s»): %s. Pídemelo otra vez en un rato."
+                        % (peticion[:120], motivo)], capture_output=True, timeout=60)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ---------- las preguntas en curso ----------
@@ -162,6 +187,9 @@ class Jobs:
                 self.gateway({"op": "deliver", "cid": cid})
             except Exception:  # noqa: BLE001 - el hilo la conserva; no se pierde
                 pass
+        elif deliver_now:
+            # Traspaso de la Jinx rápida que falló: nadie espera la respuesta, así que sin esto se perdía en silencio.
+            avisar_fallo(text, (ev or {}).get("error") or "Jinx no contestó")
 
     def wait(self, cid, seconds):
         """El estado de la pregunta; espera hasta `seconds` a que acabe. None si no existe."""
@@ -536,8 +564,12 @@ def build_lite(jobs_ref):
             persona = f.read().strip() or persona
     except OSError:
         pass
-    primary = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LLM_URL", "https://openrouter.ai/api/v1/chat/completions"),
-                                      os.environ.get("JINX_G2_MODEL", "deepseek/deepseek-v4-flash"), key)
+    _url = os.environ.get("JINX_G2_LLM_URL", "https://openrouter.ai/api/v1/chat/completions")
+    # 2026-11-20: cadena para el primario. Sin saldo en OpenRouter el de pago da 402 y, con la laptop apagada,
+    # no quedaba modelo: ahora pasa a gratuitos de dos proveedores distintos antes del qwen local.
+    _modelos = [os.environ.get("JINX_G2_MODEL", "deepseek/deepseek-v4-flash"),
+                "nvidia/nemotron-3-ultra-550b-a55b:free", "baidu/ernie-5.5-flash-preview:free"]
+    primary = _ChainLLM([g2_lite.OpenAICompatLLM(_url, m, key) for m in _modelos])
     # Sin OpenRouter (sin créditos, sin red): el Gemma de la laptop por el túnel hermes-lap-ollama (127.0.0.1:11435), con persona mínima.
     local = g2_lite.OpenAICompatLLM(os.environ.get("JINX_G2_LOCAL_URL", "http://127.0.0.1:11436/v1/chat/completions"),
                                     os.environ.get("JINX_G2_LOCAL_MODEL", "qwen3:4b-instruct-2507-q4_K_M"), lambda: "ollama",
