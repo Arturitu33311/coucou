@@ -234,4 +234,4 @@ function build(): HubHost {
   };
 }
 
-export const workspacesTool: HubTool = { id: "workspaces", label: "Workspaces", typing: true, build };
+export const workspacesTool: HubTool = { id: "workspaces", group: "focus", label: "Workspaces", typing: true, build };

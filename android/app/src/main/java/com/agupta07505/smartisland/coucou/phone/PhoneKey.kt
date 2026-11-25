@@ -67,10 +67,20 @@ object PhoneKey {
         return KeyPair(f.generatePublic(X509EncodedKeySpec(x509)), f.generatePrivate(PKCS8EncodedKeySpec(pkcs8)))
     }
 
+    /** The files of the key called [name]: "phone" (Claude Code, the server) or "audio" (the audio relay). */
+    fun fileNames(name: String): Pair<String, String> = when (name) {
+        // The Claude Code / server key keeps its original names: what is already paired keeps working.
+        "phone" -> "coucou-phone-key.enc" to "coucou-phone-key.pub"
+        "audio" -> "coucou-audio-key.enc" to "coucou-audio-key.pub"
+        else -> throw IllegalArgumentException("unknown key $name")
+    }
+
+    private fun commentOf(name: String) = if (name == "phone") "coucou-android" else "coucou-android-$name"
+
     // ── Storage (Android only) ─────────────────────────────────────────────────
 
-    private fun privateFile(c: Context) = File(c.applicationContext.filesDir, "coucou-phone-key.enc")
-    private fun publicFile(c: Context) = File(c.applicationContext.filesDir, "coucou-phone-key.pub")
+    private fun privateFile(c: Context, name: String) = File(c.applicationContext.filesDir, fileNames(name).first)
+    private fun publicFile(c: Context, name: String) = File(c.applicationContext.filesDir, fileNames(name).second)
 
     private fun wrapKey(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -86,33 +96,37 @@ object PhoneKey {
         return gen.generateKey()
     }
 
-    fun exists(context: Context) = privateFile(context).exists() && publicFile(context).exists()
+    fun exists(context: Context, name: String = "phone") =
+        privateFile(context, name).exists() && publicFile(context, name).exists()
 
     /** Makes the key (once). Returns the line to paste into authorized_keys. */
-    fun create(context: Context): String {
-        check(!exists(context)) { "The phone already has a key" }
+    fun create(context: Context, name: String = "phone"): String {
+        check(!exists(context, name)) { "The phone already has this key" }
         val pair = KeyPairGenerator.getInstance("RSA").apply { initialize(3072) }.generateKeyPair()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrapKey()) }
         val sealed = cipher.iv + cipher.doFinal(pair.private.encoded)
-        val tmp = File(privateFile(context).path + ".tmp")
+        val tmp = File(privateFile(context, name).path + ".tmp")
         tmp.writeBytes(sealed)
-        check(tmp.renameTo(privateFile(context)))
-        publicFile(context).writeBytes(pair.public.encoded)
-        return openSshPublicKey(pair.public as RSAPublicKey)
+        check(tmp.renameTo(privateFile(context, name)))
+        publicFile(context, name).writeBytes(pair.public.encoded)
+        return openSshPublicKey(pair.public as RSAPublicKey, commentOf(name))
     }
 
-    fun publicLine(context: Context): String? {
-        if (!exists(context)) return null
+    fun publicLine(context: Context, name: String = "phone"): String? {
+        if (!exists(context, name)) return null
         val f = KeyFactory.getInstance("RSA")
-        return openSshPublicKey(f.generatePublic(X509EncodedKeySpec(publicFile(context).readBytes())) as RSAPublicKey)
+        return openSshPublicKey(
+            f.generatePublic(X509EncodedKeySpec(publicFile(context, name).readBytes())) as RSAPublicKey,
+            commentOf(name),
+        )
     }
 
     /** The key pair, opened with the Keystore. Only the app's own process can do this. */
-    fun load(context: Context): KeyPair {
-        val sealed = privateFile(context).readBytes()
+    fun load(context: Context, name: String = "phone"): KeyPair {
+        val sealed = privateFile(context, name).readBytes()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
             init(Cipher.DECRYPT_MODE, wrapKey(), GCMParameterSpec(128, sealed.copyOfRange(0, 12)))
         }
-        return keyPairOf(cipher.doFinal(sealed.copyOfRange(12, sealed.size)), publicFile(context).readBytes())
+        return keyPairOf(cipher.doFinal(sealed.copyOfRange(12, sealed.size)), publicFile(context, name).readBytes())
     }
 }

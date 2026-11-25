@@ -24,7 +24,11 @@ export type IslandViewName =
   | "result"
   | "note"
   | "settings"
-  | "greeting";
+  | "greeting"
+  | "recap"
+  | "wardrobe"
+  // The glass player: what plays, a search across Spotify and YT Music, the results.
+  | "player";
 
 export type BotStateName =
   | "idle"
@@ -81,7 +85,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   question: { height: 240, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   // The full Music view: Mochi on the left, the art next to it, then the lyrics.
   music: { height: 200, botX: 62, botY: null, botDiameter: 56, agentMode: "none" },
-  tool: { height: 214, botX: 54, botY: null, botDiameter: 44, agentMode: "none" },
+  tool: { height: 232, botX: 54, botY: null, botDiameter: 44, agentMode: "none" },
   error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   finished: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   confused: { height: 160, botX: 76, botY: null, botDiameter: 66, agentMode: "column" },
@@ -97,11 +101,22 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 160, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
+  // Mac: 160. The extra 24 hold the two lines with top agent, project, busiest
+  // day, longest session, permissions and questions, which the Mac card leaves
+  // to the shared image.
+  recap: { height: 184, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
+  wardrobe: { height: 160, botX: 68, botY: null, botDiameter: 58, agentMode: "none" },
+  // The whole panel's height, and no Mochi: the now-playing row, the search and
+  // the results take the full width.
+  player: { height: 320, botX: 0, botY: null, botDiameter: 0, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually
 // dropped the whole sequence — Mochi included — is drawn by src/upload, which
 // owns its own constants (USC) straight from UploadSequenceEngine.swift.
+
+/** The question view with options to pick from: room for two rows of them. */
+export const QUESTION_PICKER_H = 200;
 
 /** Chat view grows with the conversation — IslandContainer.chatPromptHeight. */
 export function chatPromptHeight(messageCount: number): number {

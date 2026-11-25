@@ -6,8 +6,11 @@
 // timestamp in it, so the lyrics and the seek bar cost nothing while idle.
 
 import { Bridge, onEvent } from "../core/bridge";
-import { MUSIC_ID, State, type MusicInfo, type MusicTrack } from "../core/state";
+import { JINX_ID, MUSIC_ID, State, type MusicInfo, type MusicTrack } from "../core/state";
+import { pillColor } from "../core/pill-colors";
+import { pillDefinition } from "../core/pills";
 import type { Island } from "./island";
+import type { IslandMode, IslandViewName } from "../core/layout";
 
 export const MUSIC_RED = "#FA2D48";
 
@@ -16,6 +19,14 @@ let islandRef: Island | null = null;
 export function registerMusicHandlers(island: Island) {
   islandRef = island;
   void onEvent<MusicTrack | null>("music", (track) => apply(track));
+  void onEvent<boolean>("desktop-player-shown", (v) => {
+    State.desktopPlayerShown = v;
+    State.notify();
+  });
+  void Bridge.desktopPlayerShown().then((v) => {
+    State.desktopPlayerShown = v;
+    State.notify();
+  });
   void Bridge.musicState().then((track) => apply(track));
   void onEvent<{ bars: number[]; silent: boolean }>("music-bars", (p) => {
     live = { bars: p.bars, silent: p.silent, at: performance.now() };
@@ -49,6 +60,22 @@ export function setBarsWanted(wanted: boolean) {
   });
 }
 
+/**
+ * Whether bars are on screen for this view and mode: the minimised strip, the
+ * Music view, the overview while the Music pill (or Jinx carrying the music) is in
+ * focus, and the glass player. Whether cava runs also needs a track playing and
+ * the real-time visualizer chosen (island.ts).
+ */
+export function barsWantedFor(view: IslandViewName, mode: IslandMode | string): boolean {
+  if (mode === "compact") return State.musicStrip() && State.pillKind() === null;
+  if (mode !== "expanded") return false;
+  return (
+    view === "music" ||
+    view === "player" ||
+    (view === "overview" && (State.focusId === MUSIC_ID || (State.focusId === JINX_ID && State.musicHome())))
+  );
+}
+
 /** The minimised island carries the pill while a track is known: tell it. */
 function strip() {
   islandRef?.refreshMusicStrip();
@@ -63,7 +90,7 @@ export function musicSettingsChanged(island: Island) {
   // Switching the pill off and on again creates a fresh task with the default
   // colour: give it the cover's colour back.
   if (State.music) setPillColor(State.music.accent);
-  if (State.view === "music" && !State.tasks.some((t) => t.id === MUSIC_ID)) {
+  if (State.view === "music" && !State.musicHome()) {
     island.setView(State.defaultView());
   }
   // The pill may have been switched on or off: the minimised island follows.
@@ -121,11 +148,37 @@ function keyOf(t: MusicTrack): string {
 }
 
 function setPillColor(color: string) {
-  const task = State.tasks.find((t) => t.id === MUSIC_ID);
-  if (task) task.color = color;
+  // The cover paints the Music pill, or Jinx's when she carries the music (the Music pill is folded away then).
+  const own = State.tasks.find((t) => t.id === MUSIC_ID);
+  if (own) {
+    own.color = color;
+    return;
+  }
+  const jinx = State.tasks.find((t) => t.id === JINX_ID);
+  if (!jinx) return;
+  // Jinx wears the cover's colour only while the music plays: paused, stopped or with no cover (MUSIC_RED is the
+  // "no cover" reset) she is her own green again.
+  const def = pillDefinition(JINX_ID);
+  const playing = State.music?.status === "Playing";
+  jinx.color = (!playing || color === MUSIC_RED) && def ? pillColor(def.id, def.color, State.settings.pillColors) : color;
 }
 
+/**
+ * A track arrived. With Jinx carrying the music, a not-playing → playing change reveals a hidden island without the
+ * peek sound, as the Spotify pill does (SpotifyController.setPlaying) — it now covers every player.
+ */
 function apply(track: MusicTrack | null) {
+  const wasPlaying = State.music?.status === "Playing";
+  applyTrack(track);
+  // Play ↔ pause changes whether Jinx wears the cover's colour.
+  if (State.music) setPillColor(State.music.accent);
+  const jinxHome = !State.tasks.some((t) => t.id === MUSIC_ID) && State.tasks.some((t) => t.id === JINX_ID);
+  if (jinxHome && !wasPlaying && State.music?.status === "Playing" && !State.paused && State.mode === "hidden") {
+    islandRef?.revealSilently();
+  }
+}
+
+function applyTrack(track: MusicTrack | null) {
   // A player with no title is idle, not "playing nothing": show the empty card.
   if (!track || !track.title) {
     // "Always ON", like the GNOME extension's setting: when the player closes the
@@ -178,7 +231,13 @@ function patch(key: string, change: Partial<MusicInfo>) {
   State.notify();
 }
 
-async function loadArt(key: string, url: string) {
+/**
+ * Loads the cover of `url` for the track `key`. An answer counts only while that is still the cover on screen: the
+ * laptop swaps the phone's cover file when a new one arrives (the old file is deleted), so a read of the old one can
+ * fail after the new one was loaded and, without this check, blank it.
+ */
+async function loadArt(key: string, url: string, retried = false) {
+  const current = () => State.music?.key === key && State.music.artUrl === url;
   if (!url) {
     patch(key, { art: null, rgb: null, accent: MUSIC_RED });
     setPillColor(MUSIC_RED);
@@ -186,11 +245,19 @@ async function loadArt(key: string, url: string) {
   }
   try {
     const art = await Bridge.musicArt(url);
+    if (!current()) return;
     const rgb = await averageColor(art);
+    if (!current()) return;
     const accent = rgb ? readableAccent(rgb) : MUSIC_RED;
     patch(key, { art, rgb, accent });
-    if (State.music?.key === key) setPillColor(accent);
+    setPillColor(accent);
   } catch {
+    if (!current()) return;
+    // A cover that has only just been written may not be readable yet: once more, a moment later.
+    if (!retried) {
+      window.setTimeout(() => void loadArt(key, url, true), 500);
+      return;
+    }
     // No art (a web URL while online fetching is off, a missing file): the card
     // keeps its note icon and the default colour.
     patch(key, { art: null, rgb: null, accent: MUSIC_RED });
@@ -216,7 +283,7 @@ async function loadLyrics(key: string) {
 // ── Colour ────────────────────────────────────────────────────────────────────
 
 /** Mean colour of the picture, like the GNOME extension's `getAverageColor`. */
-async function averageColor(dataUrl: string): Promise<[number, number, number] | null> {
+export async function averageColor(dataUrl: string): Promise<[number, number, number] | null> {
   const img = new Image();
   img.src = dataUrl;
   try {

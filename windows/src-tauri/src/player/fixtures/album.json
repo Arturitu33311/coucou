@@ -1,0 +1,22 @@
+{
+  "id": "6dVIqQ8qmQ5GBnJ9shOYGE", "name": "OK Computer", "album_type": "album", "release_date": "1997-05-21", "total_tracks": 12,
+  "uri": "spotify:album:6dVIqQ8qmQ5GBnJ9shOYGE",
+  "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+  "images": [
+    { "height": 640, "url": "https://i.scdn.co/image/ab67616d0000b273c8b4-640", "width": 640 },
+    { "height": 64, "url": "https://i.scdn.co/image/ab67616d00004851c8b4-64", "width": 64 }
+  ],
+  "tracks": {
+    "limit": 50, "offset": 0, "total": 2,
+    "items": [
+      {
+        "id": "6LgJvl0Xdtc73RJ1mmpotq", "name": "Airbag", "uri": "spotify:track:6LgJvl0Xdtc73RJ1mmpotq", "track_number": 1, "duration_ms": 284000,
+        "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ]
+      },
+      {
+        "id": "2EqlS6tkEnglzr7tkKAAYD", "name": "Paranoid Android", "uri": "spotify:track:2EqlS6tkEnglzr7tkKAAYD", "track_number": 2, "duration_ms": 387000,
+        "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ]
+      }
+    ]
+  }
+}

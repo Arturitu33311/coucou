@@ -15,7 +15,9 @@ class MochiPresenceTest {
     fun moods_the_server_sends_are_valid() {
         assertEquals("Happy", validMood("Happy"))
         assertEquals("Alert", validMood("Alert"))
+        assertEquals("Grumpy", validMood("Grumpy"))
         assertNull(validMood("Furious"))
+        assertNull(validMood("Working"))
         assertNull(validMood(null))
     }
 
@@ -54,4 +56,33 @@ class MochiPresenceTest {
         assertEquals("info", msgs[1].kind)
         assertEquals("urgente", msgs[1].text)
     }
+
+    @Test
+    fun the_heartbeat_answer_carries_her_background_mood() {
+        assertEquals("happy", MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":"happy"}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":null}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga","jinx_mood":"Happy"}""")))
+        assertNull(MochiPresence.readJinxMood(JSONObject("""{"active_device":"vga"}""")))
+    }
+
+    @Test
+    fun a_late_message_says_how_late_and_is_never_dropped() {
+        val m = PresenceMsg(1, "Arrancamos el día", null, "info", "notify", 1_000)
+        assertEquals(m, MochiPresence.withAge(m, 1_000 + 59 * 60))
+        assertEquals("🕓 5 h · Arrancamos el día", MochiPresence.withAge(m, 1_000 + 5 * 3600 + 20).text)
+        assertEquals("🕓 2 d · Arrancamos el día", MochiPresence.withAge(m, 1_000 + 49 * 3600).text)
+        assertEquals(m, MochiPresence.withAge(m, 500))
+    }
+
+    @Test
+    fun the_server_names_are_read_as_ours() {
+        assertEquals("laptop", Arbiter.fromServer("pc"))
+        assertEquals("s22", Arbiter.serverAnswer("s22"))
+        assertEquals("vga", Arbiter.serverAnswer("vga"))
+        assertEquals("laptop", Arbiter.serverAnswer("pc"))
+        assertNull(Arbiter.serverAnswer("tv"))
+        assertNull(Arbiter.serverAnswer(""))
+        assertNull(Arbiter.serverAnswer(null))
+    }
 }
+

@@ -13,9 +13,10 @@
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
 import type { ViewActions, ViewHost } from "./views";
-import { Bridge } from "../core/bridge";
+import { Bridge, emitToWindow } from "../core/bridge";
 import { State, type MusicInfo, type Settings } from "../core/state";
 import { liveBars, lyricIndex, musicPosition, musicTint, MUSIC_RED } from "../island/music";
+import { t } from "../i18n/i18n";
 
 export interface MusicHost extends ViewHost {
   tick(nowMs: number): void;
@@ -83,8 +84,11 @@ function marquee(cls: string): { el: HTMLElement; set(text: string): void } {
   };
 }
 
-function control(path: string, size: number, label: string, onClick: () => void): HTMLButtonElement {
-  const btn = h("button", { class: "m-ctl", title: label, "aria-label": label }, svg(path, size));
+// magnifier.glass, drawn as a line (the same as the player's search field)
+const MAGNIFIER = "M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 1 0 0-13zM15.4 15.4L20 20";
+
+function control(path: string, size: number, label: string, onClick: () => void, stroke?: number): HTMLButtonElement {
+  const btn = h("button", { class: "m-ctl", title: label, "aria-label": label }, svg(path, size, stroke ? { stroke } : {}));
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     onClick();
@@ -265,9 +269,9 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   const title = marquee("m-title");
   const artist = marquee("m-artist");
 
-  const prev = control(ICONS.backward, 12, "Previous", () => void Bridge.musicControl("previous"));
+  const prev = control(ICONS.backward, 12, t("Previous"), () => void Bridge.musicControl("previous"));
   const play = control(ICONS.pause, 13, "Play / pause", () => void Bridge.musicControl("playpause"));
-  const next = control(ICONS.forward, 12, "Next", () => void Bridge.musicControl("next"));
+  const next = control(ICONS.forward, 12, t("Next"), () => void Bridge.musicControl("next"));
   play.classList.add("main");
 
   const bar = seekBar((fraction) => {
@@ -280,6 +284,17 @@ function build(full: boolean, actions: ViewActions): { root: HTMLElement; card: 
   });
   const time = h("span", { class: "m-time" });
   const row = h("div", { class: "m-row" }, prev, play, next, bar.el, time);
+  // The way into the player (the full view only; the compact card stays as it is).
+  if (full) {
+    const search = control(MAGNIFIER, 13, t("Search songs and artists"), () => {
+      if (State.desktopPlayerShown) {
+        void emitToWindow("desktop-player", "desktop-player-search");
+      } else {
+        actions.setView("player");
+      }
+    }, 2);
+    row.append(search);
+  }
 
   const canvas = h("canvas", { class: "m-viz" });
   const viz = new Visualizer(canvas, full ? 56 : 22);

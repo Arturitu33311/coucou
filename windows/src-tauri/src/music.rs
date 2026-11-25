@@ -13,6 +13,9 @@
 // art from an http(s) URL the player gave us — happens only after the user turns
 // on "Fetch lyrics and album art online" in Settings (CLAUDE.md: network calls
 // only to services the user configured). Art that is a local file is always read.
+// The glass player's covers (`player_art`) are the exception: they come only from
+// the image servers of the services the user searches with the player (Spotify,
+// YouTube), never from any other host.
 //
 // Linux only: other platforms have no MPRIS, and get an empty pill.
 
@@ -50,6 +53,8 @@ pub struct Track {
     pub album: String,
     pub length_ms: i64,
     pub art_url: String,
+    /// The player's own address for what it plays (`xesam:url`): a page for a browser, empty for most apps.
+    pub url: String,
     /// Where the track was `position_at` (epoch ms). The island extrapolates from here.
     pub position_ms: i64,
     pub position_at: i64,
@@ -386,7 +391,54 @@ fn http() -> Result<reqwest::Client, String> {
 }
 
 async fn fetch_capped(url: &str) -> Result<Vec<u8>, String> {
-    let response = http()?.get(url).send().await.map_err(|e| e.to_string())?;
+    fetch_capped_with(http()?, url).await
+}
+
+/// Spotify's and YouTube Music's image servers: the only hosts the glass player's covers come from.
+const PLAYER_ART_HOSTS: [&str; 2] = ["i.scdn.co", "i.ytimg.com"];
+const PLAYER_ART_DOMAINS: [&str; 2] = [".googleusercontent.com", ".ggpht.com"];
+
+/// Whether `url` is a cover on one of the player's image servers (http(s), default port).
+pub fn player_art_allowed(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    if !matches!(u.scheme(), "https" | "http") || u.port().is_some() {
+        return false;
+    }
+    let Some(host) = u.host_str() else { return false };
+    let host = host.to_ascii_lowercase();
+    PLAYER_ART_HOSTS.contains(&host.as_str()) || PLAYER_ART_DOMAINS.iter().any(|d| host.ends_with(d))
+}
+
+/// A glass player cover as a `data:` URL. Unlike `music_art` it needs no "online" setting, but it
+/// fetches only from the player's services' image servers, redirects included.
+#[tauri::command]
+pub async fn player_art(url: String) -> Result<String, String> {
+    // Tray → Pause still means no network calls at all.
+    if PAUSED.load(Ordering::Relaxed) {
+        return Err("paused".into());
+    }
+    if !player_art_allowed(&url) {
+        return Err("not a player cover".into());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .timeout(Duration::from_secs(8))
+        .redirect(reqwest::redirect::Policy::custom(|a| {
+            if a.previous().len() < 5 && player_art_allowed(a.url().as_str()) {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        }))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = fetch_capped_with(client, &url).await?;
+    let mime = sniff_image(&bytes).ok_or("not an image")?;
+    Ok(format!("data:{mime};base64,{}", crate::claude::base64_for(&bytes)))
+}
+
+async fn fetch_capped_with(client: reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("art: HTTP {}", response.status().as_u16()));
     }
@@ -498,7 +550,7 @@ pub fn music_state() -> Option<Track> {
 // ── Linux: MPRIS ──────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
-mod mpris {
+pub mod mpris {
     use super::*;
     use std::sync::mpsc::{self, RecvTimeoutError, Sender};
     use std::sync::OnceLock;
@@ -645,21 +697,28 @@ mod mpris {
             }
             *last = track.clone();
         }
+        // The phone shows what plays here too (when it announced it can).
+        crate::phonenow::share_pc_track(track.as_ref());
         let _ = app.emit_to(WINDOW_LABEL, "music", track);
     }
 
     fn players(conn: &Connection) -> Vec<String> {
-        DBusProxy::new(conn)
+        let all: Vec<String> = DBusProxy::new(conn)
             .ok()
             .and_then(|p| p.list_names().ok())
-            .map(|names| {
-                names
-                    .into_iter()
-                    .map(|n| n.to_string())
-                    .filter(|n| n.starts_with(PREFIX))
-                    .collect()
-            })
-            .unwrap_or_default()
+            .map(|names| names.into_iter().map(|n| n.to_string()).filter(|n| n.starts_with(PREFIX)).collect())
+            .unwrap_or_default();
+        without_duplicate_mirror(all)
+    }
+
+    /// Coucou's own player for the phone's music (with its cover) replaces KDE Connect's mirror of the same music,
+    /// which has none: with both present the phone's track would be on the list twice.
+    pub fn without_duplicate_mirror(names: Vec<String>) -> Vec<String> {
+        if names.iter().any(|n| crate::audiolink_players::is_phone_player(n)) {
+            names.into_iter().filter(|n| !crate::audiolink_players::is_kdeconnect(n)).collect()
+        } else {
+            names
+        }
     }
 
     fn proxy<'a>(conn: &'a Connection, name: &'a str, interface: &'a str) -> Option<Proxy<'a>> {
@@ -714,6 +773,7 @@ mod mpris {
             album: meta.get("xesam:album").and_then(text).unwrap_or_default(),
             length_ms: meta.get("mpris:length").and_then(integer).unwrap_or(0) / 1000,
             art_url: meta.get("mpris:artUrl").and_then(text).unwrap_or_default(),
+            url: meta.get("xesam:url").and_then(text).unwrap_or_default(),
             position_ms: (position_us / 1000).max(0),
             position_at: now_ms(),
             can_seek: flag("CanSeek"),
@@ -724,8 +784,45 @@ mod mpris {
         Some(Read { name: name.to_string(), status, track })
     }
 
+    /// How long one player gets to answer. A player that hangs (a frozen app still owning its MPRIS name) makes every
+    /// D-Bus call wait 25 s; read one by one, it froze the island for minutes and hid the phone's music behind it.
+    const PLAYER_DEADLINE: Duration = Duration::from_millis(1500);
+
+    /// Every player's state, each read on its own thread; the ones that don't answer in time are left out.
+    fn read_all(conn: &Connection) -> Vec<Read> {
+        let names = players(conn);
+        let (tx, rx) = mpsc::channel::<(usize, Option<Read>)>();
+        for (i, name) in names.iter().enumerate() {
+            let (conn, tx, name) = (conn.clone(), tx.clone(), name.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send((i, read(&conn, &name)));
+            });
+        }
+        drop(tx);
+        let deadline = std::time::Instant::now() + PLAYER_DEADLINE;
+        let mut got: Vec<(usize, Read)> = Vec::new();
+        let mut answered = 0;
+        while answered < names.len() {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            match rx.recv_timeout(left) {
+                Ok((i, r)) => {
+                    answered += 1;
+                    if let Some(r) = r {
+                        got.push((i, r));
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if answered < names.len() {
+            log::line(format!("music: {} player(s) did not answer in {} ms, skipped", names.len() - answered, PLAYER_DEADLINE.as_millis()));
+        }
+        got.sort_by_key(|(i, _)| *i);
+        got.into_iter().map(|(_, r)| r).collect()
+    }
+
     fn snapshot(conn: &Connection) -> Option<Track> {
-        let mut reads: Vec<Read> = players(conn).iter().filter_map(|n| read(conn, n)).collect();
+        let mut reads = read_all(conn);
         let previous = ACTIVE.lock().unwrap().clone();
         let candidates: Vec<Candidate> = reads
             .iter()
@@ -739,6 +836,26 @@ mod mpris {
         let read = reads.swap_remove(chosen);
         *ACTIVE.lock().unwrap() = Some(read.name);
         Some(read.track)
+    }
+
+    /// A fresh look at the players, for callers that must not depend on the pill's watcher (which is off
+    /// when the pill is).
+    pub fn read_now() -> Option<Track> {
+        let conn = Connection::session().ok()?;
+        snapshot(&conn)
+    }
+
+    /// Pauses (or resumes) that player by its short name. Never a toggle: if the state raced, a toggle
+    /// would start the music instead of stopping it.
+    pub fn set_playing(short_name: &str, playing: bool) -> Result<(), String> {
+        let conn = Connection::session().map_err(|e| e.to_string())?;
+        let name = format!("{PREFIX}{short_name}");
+        let player = proxy(&conn, &name, PLAYER).ok_or("player is gone")?;
+        player
+            .call_method(if playing { "Play" } else { "Pause" }, &())
+            .map_err(|e| e.to_string())?;
+        wake();
+        Ok(())
     }
 
     /// PlayPause / Next / Previous, or a seek to an absolute position.
@@ -774,6 +891,18 @@ mod mpris {
     }
 }
 
+/// Jinx is "present" when she is the main pill or one of the declared ones. The music lives inside her
+/// then (her card, the minimised island's strip), so Music and Spotify are not drawn as pills of their own.
+pub fn jinx_present(main_pill: &str, active: &[String]) -> bool {
+    main_pill == "integration_jinx" || active.iter().any(|x| x == "integration_jinx")
+}
+
+/// Whether the MPRIS reader runs: Jinx carries the music, or the Music pill is declared.
+/// (Before, only the Music pill switched it on, so with Jinx alone `State.music` stayed null.)
+pub fn reader_wanted(main_pill: &str, active: &[String]) -> bool {
+    jinx_present(main_pill, active) || active.iter().any(|x| x == "integration_music")
+}
+
 /// Starts or stops watching the players, following the Music pill's switch.
 #[cfg(target_os = "linux")]
 pub fn sync_enabled(app: &AppHandle, on: bool) {
@@ -783,6 +912,31 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
 #[cfg(not(target_os = "linux"))]
 pub fn sync_enabled(_app: &AppHandle, on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
+}
+
+/// What is playing right now, read fresh (not what the pill last showed).
+pub fn read_now() -> Option<Track> {
+    #[cfg(target_os = "linux")]
+    {
+        mpris::read_now()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
+/// Pauses or resumes one player by its short name (`Track::player`).
+pub fn set_playing(player: &str, playing: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        mpris::set_playing(player, playing)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (player, playing);
+        Err("no media players on this platform".into())
+    }
 }
 
 #[tauri::command]
@@ -805,6 +959,50 @@ pub async fn music_control(action: String, value_ms: Option<i64>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn player_art_only_from_the_players_image_servers() {
+        for ok in [
+            "https://i.scdn.co/image/ab67616d00001e02",
+            "https://lh3.googleusercontent.com/abc=w120-h120",
+            "https://yt3.ggpht.com/xyz=s120",
+            "https://i.ytimg.com/vi/abc/hqdefault.jpg",
+            "http://i.ytimg.com/vi/abc/default.jpg",
+            "https://I.SCDN.CO/image/x",
+        ] {
+            assert!(player_art_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "https://example.com/a.jpg",
+            "https://i.scdn.co.evil.com/a.jpg",
+            "https://evilgoogleusercontent.com/a.jpg",
+            "https://googleusercontent.com.evil.net/a.jpg",
+            "https://i.scdn.co@evil.com/a.jpg",
+            "https://i.scdn.co:8443/a.jpg",
+            "ftp://i.scdn.co/a.jpg",
+            "file:///home/me/cover.jpg",
+            "i.scdn.co/a.jpg",
+            "",
+        ] {
+            assert!(!player_art_allowed(bad), "{bad}");
+        }
+    }
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn the_reader_turns_on_with_only_jinx() {
+        // main pill Jinx, nothing declared: this used to leave the reader off
+        assert!(reader_wanted("integration_jinx", &[]));
+        // Jinx declared next to another main pill
+        assert!(reader_wanted("integration_claude", &ids(&["integration_jinx"])));
+        // the Music pill alone still works
+        assert!(reader_wanted("integration_claude", &ids(&["integration_music"])));
+        // neither: stays off
+        assert!(!reader_wanted("integration_claude", &ids(&["integration_github"])));
+    }
 
     #[test]
     fn lrc_lines_are_timed_in_milliseconds_and_sorted() {
@@ -938,7 +1136,7 @@ mod tests {
     fn track(status: &str, pos: i64, at: i64) -> Track {
         Track {
             player: "p".into(), identity: "P".into(), status: status.into(), title: "T".into(),
-            artists: vec!["A".into()], album: "B".into(), length_ms: 200_000, art_url: String::new(),
+            artists: vec!["A".into()], album: "B".into(), length_ms: 200_000, art_url: String::new(), url: String::new(),
             position_ms: pos, position_at: at, can_seek: true, can_next: true, can_previous: true, volume: 0.5,
         }
     }

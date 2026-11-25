@@ -195,7 +195,11 @@ class IslandViewModel(
                     pin(key)
                     selectedIndex.value = index
                     val isDemo = key.startsWith("demo_")
-                    if (settings.value.autoExpandOnNotification || isDemo) {
+                    // The switch is for other apps' notifications. A card Coucou itself raised and asked to open (a
+                    // permission request or a question from any agent on the laptop, Jinx, a reminder, a handoff offer)
+                    // opens when it arrives whatever the switch says: whoever posts it decides.
+                    val ownCard = arranged[index].mode.isCoucou || key.startsWith("coucou_")
+                    if (settings.value.autoExpandOnNotification || isDemo || ownCard) {
                         expand()
                     }
                 }

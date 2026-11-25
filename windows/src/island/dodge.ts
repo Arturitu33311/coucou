@@ -71,6 +71,16 @@ export class Dodger {
   private nearSince: number | null = null;
   private engagedUntil = 0;
   private releaseAt: number | null = null;
+  /** The pointer rests on buttons but there is no place that clears them (said once per visit). */
+  private noRoomHere = false;
+  private noRoomSaid = false;
+
+  /** True once when the island ought to step aside and cannot, so it can be written in the log. */
+  takeNoRoom(): boolean {
+    if (!this.noRoomHere || this.noRoomSaid) return false;
+    this.noRoomSaid = true;
+    return true;
+  }
 
   /**
    * Milliseconds until something here changes by itself (the pointer has not moved, so
@@ -89,6 +99,8 @@ export class Dodger {
     this.nearSince = null;
     this.engagedUntil = 0;
     this.releaseAt = null;
+    this.noRoomHere = false;
+    this.noRoomSaid = false;
   }
 
   /**
@@ -115,6 +127,9 @@ export class Dodger {
           if (free !== null && free !== 0) {
             this.target = free;
             this.releaseAt = null;
+            this.noRoomHere = false;
+          } else if (free === null) {
+            this.noRoomHere = true;
           }
         }
       } else {

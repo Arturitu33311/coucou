@@ -143,7 +143,9 @@ fun AgentCollapsedGlyph(notification: IslandNotification?) {
         else -> {
             val kind = kindOf(notification)
             val mood = moodOf(kind)
-            MochiGlyph(24.dp, ClaudeOrange, mood, outfit = rememberMochiOutfit(mood))
+            // In the colour of whoever is working: Claude Code, Antigravity, OpenCode…
+            val tint = com.agupta07505.smartisland.coucou.agents.AgentKinds.byName(notification?.appName).color
+            MochiGlyph(24.dp, tint, mood, outfit = rememberMochiOutfit(mood))
         }
     }
 }
@@ -212,14 +214,18 @@ fun AgentExpanded(bottomPadding: Dp) {
     val shown = ui.sessions.filter { it.state != SessionState.Idle }.ifEmpty { ui.sessions }
     val rows = shown.take(3)
     val head = rows.firstOrNull()?.let { AgentActivity.of(it.tool, it.detail, it.state).kind }
+    // "Claude Code" when they are all Claude Code; "Agentes", with each one's name on its line, when they are mixed.
+    val title = com.agupta07505.smartisland.coucou.agents.AgentKinds.title(shown.map { it.agent })
+    val mixed = shown.map { it.agent }.toSet().size > 1
     Column(
         Modifier.fillMaxSize().padding(horizontal = 18.dp).padding(top = 6.dp, bottom = bottomPadding),
         verticalArrangement = Arrangement.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MochiGlyph(30.dp, ClaudeOrange, moodOf(head), outfit = rememberMochiOutfit(moodOf(head)))
+            val headKind = com.agupta07505.smartisland.coucou.agents.AgentKinds.of(rows.firstOrNull()?.agent ?: "")
+            MochiGlyph(30.dp, headKind.color, moodOf(head), outfit = rememberMochiOutfit(moodOf(head)))
             Spacer(Modifier.width(10.dp))
-            Text("Claude Code", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             val working = shown.count { it.state == SessionState.Working }
             val asking = shown.count { it.state == SessionState.NeedsYou }
             val summary = listOfNotNull(
@@ -242,8 +248,10 @@ fun AgentExpanded(bottomPadding: Dp) {
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val projectName = s.project.ifEmpty { stringResource(R.string.coucou_agent_session) }
                         Text(
-                            s.project.ifEmpty { stringResource(R.string.coucou_agent_session) }, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                            if (mixed) com.agupta07505.smartisland.coucou.agents.AgentKinds.of(s.agent).name + " · " + projectName else projectName,
+                            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
                         )
                         if (s.state != SessionState.Idle) {
@@ -288,6 +296,10 @@ object ApprovalReview {
     /** The laptop sends at most this many characters of a command and ends a longer one with "…". */
     private const val LAPTOP_LIMIT = 300
 
+    /** Taps on Allow in the first moments after a request drops are ignored: the island moves under the thumb. */
+    const val TAP_GUARD_MS = 600L
+    fun tooSoon(shownAt: Long, now: Long): Boolean = now - shownAt < TAP_GUARD_MS
+
     /** The laptop cut this command: its tail cannot be reviewed here, so it is not allowed from here. */
     fun shortenedByLaptop(detail: String): Boolean = detail.length >= LAPTOP_LIMIT - 10 && detail.endsWith("…")
 }
@@ -302,6 +314,8 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
     var armed by remember(notification?.key) { mutableStateOf(false) }
     val secure = remember { ConfirmActivity.available(context) }
     var message by remember(notification?.key) { mutableStateOf<String?>(null) }
+    val shownAt = remember(notification?.key) { System.currentTimeMillis() }
+    val jinx = p?.agent == "hermes"
 
     Column(
         Modifier.fillMaxSize().padding(horizontal = 18.dp).padding(top = 6.dp, bottom = bottomPadding),
@@ -343,7 +357,7 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
                 .padding(8.dp),
         )
         if (shortenedByLaptop) {
-            Text("Too long to check here: answer it in the terminal", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
+            Text(if (jinx) "Too long to check here: answer it in Telegram" else "Too long to check here: answer it in the terminal", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
         } else if (tooLongToFit && !read) {
             Text("Tap the command to read all of it before allowing", color = ReminderAmber, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp))
         }
@@ -351,15 +365,16 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
         Spacer(Modifier.size(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Pill("Deny", Modifier.weight(1f), Red) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answer(it.id, "deny"))) message = "No link to the laptop" else onCollapse() }
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.answer(it.id, "deny"))) message = "No link" else onCollapse() }
             }
-            Pill("Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.decline(it.id))) message = "No link to the laptop" else onCollapse() }
+            Pill(if (jinx) "Telegram" else "Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.decline(it.id))) message = "No link" else onCollapse() }
             }
             Pill(if (armed) "Tap to allow" else "Allow", Modifier.weight(1f), Green) {
                 val req = p ?: return@Pill
+                if (ApprovalReview.tooSoon(shownAt, System.currentTimeMillis())) return@Pill
                 if (shortenedByLaptop) {
-                    message = "Too long to check here: use Terminal"
+                    message = if (jinx) "Too long to check here: use Telegram" else "Too long to check here: use Terminal"
                     return@Pill
                 }
                 if (tooLongToFit && !read) {
@@ -367,11 +382,11 @@ fun ApprovalExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
                     return@Pill
                 }
                 val send = {
-                    if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answer(req.id, "allow"))) message = "No link to the laptop" else onCollapse()
+                    if (!CoucouRuntime.sendForRequest(req.id, RemoteProtocol.answer(req.id, "allow"))) message = "No link" else onCollapse()
                 }
                 when {
                     // The whole command (the laptop sends at most 300 characters), not a cut of it.
-                    secure -> ConfirmActivity.ask(context, "Allow on the laptop?", "${req.tool}: ${req.detail}") { ok -> if (ok) send() else message = "Not confirmed" }
+                    secure -> ConfirmActivity.ask(context, if (jinx) "Allow Jinx?" else "Allow on the laptop?", "${req.tool}: ${req.detail}") { ok -> if (ok) send() else message = "Not confirmed" }
                     armed -> send()
                     else -> armed = true
                 }
@@ -397,7 +412,7 @@ fun QuestionExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
     fun finish(all: Map<String, List<String>>) {
         val req = p ?: return
         val multi = questions.filter { it.multi }.map { it.question }.toSet()
-        if (!CoucouRuntime.sendToLaptop(RemoteProtocol.answerQuestion(req.id, all, multi))) message = "No link to the laptop" else onCollapse()
+        if (!CoucouRuntime.sendForRequest(req.id, RemoteProtocol.answerQuestion(req.id, all, multi))) message = "No link" else onCollapse()
     }
 
     fun next(chosen: List<String>) {
@@ -438,7 +453,7 @@ fun QuestionExpanded(notification: IslandNotification?, bottomPadding: Dp, onCol
         Spacer(Modifier.size(6.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Pill("Terminal", Modifier.weight(1f), Color.White.copy(alpha = 0.6f)) {
-                p?.let { if (!CoucouRuntime.sendToLaptop(RemoteProtocol.decline(it.id))) message = "No link to the laptop" else onCollapse() }
+                p?.let { if (!CoucouRuntime.sendForRequest(it.id, RemoteProtocol.decline(it.id))) message = "No link" else onCollapse() }
             }
             if (q?.multi == true) Pill("Send", Modifier.weight(1f), Green) { if (picked.isNotEmpty()) next(picked) else message = "Pick at least one" }
         }

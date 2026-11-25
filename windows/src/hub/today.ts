@@ -10,7 +10,7 @@ import { iconOf } from "../island/peripherals";
 import type { CalEvent } from "./calendar";
 import { pomodoroStatsNow, refreshStats } from "./pomodoro";
 import { ensureTasksLoaded, openTasks } from "./tasks";
-import { tile } from "./ui";
+import { tile } from "./hub-ui";
 import type { HubHost, HubTool } from "./types";
 
 interface Wx {
@@ -206,4 +206,4 @@ function build(): HubHost {
   };
 }
 
-export const todayTool: HubTool = { id: "today", label: "Today", build };
+export const todayTool: HubTool = { id: "today", group: "today", label: "Today", build };

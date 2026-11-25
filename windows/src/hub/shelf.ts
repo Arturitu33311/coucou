@@ -257,4 +257,4 @@ function build(ctx: HubContext): HubHost {
   };
 }
 
-export const shelfTool: HubTool = { id: "shelf", label: "Shelf", typing: true, build };
+export const shelfTool: HubTool = { id: "shelf", group: "files", label: "Shelf", typing: true, build };

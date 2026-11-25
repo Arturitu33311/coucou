@@ -45,6 +45,14 @@ data class PresenceMsg(
     val kind: String,
     val source: String,
     val ts: Long,
+    /** Buttons Jinx attached (Hecho / Mañana / Descartar); empty = none. */
+    val actions: List<NoticeAction> = emptyList(),
+    /** What the buttons act on, opaque to the phone ("pend:<id>"). */
+    val ref: String? = null,
+    /** The action another device already pressed, if any: the buttons are then not shown. */
+    val acted: String? = null,
+    /** The notice as Jinx wrote it for her voice, with ElevenLabs's audio tags; null when it had none. */
+    val speech: String? = null,
 )
 
 /** Moods the server may send. Anything else falls back to Listening. */
@@ -52,7 +60,8 @@ fun validMood(name: String?): String? {
     if (name == null) return null
     return name.takeIf {
         it in setOf("Idle", "Happy", "Sleepy", "Alert", "Listening",
-            "Celebrating", "Dancing", "Tired", "Surprised", "Glance")
+            "Celebrating", "Dancing", "Tired", "Surprised", "Glance") ||
+            com.agupta07505.smartisland.coucou.ui.MochiMood.entries.any { m -> m.emote != null && m.name == it }
     }
 }
 
@@ -113,18 +122,40 @@ object PresenceNet {
     }
 }
 
+/** Whether Jinx's chat tab is on screen (set by its screen); her replies then are not repeated on the island. */
+object JinxChatScreen {
+    @Volatile var visible = false
+}
+
 /** What the island shows of Jinx's inbox: one card with the latest text. */
 object IslandJinx {
     const val KEY = "coucou_jinx"
 
+    /** The buttons of the notice the card shows now (null: none). The card reads this when it opens. */
+    private val _buttons = MutableStateFlow<NoticeButtons?>(null)
+    val buttons: StateFlow<NoticeButtons?> = _buttons.asStateFlow()
+
+    /** The id of the last text that was put on the island as new. */
+    @Volatile private var announcedId = Long.MIN_VALUE
+
     fun publish(context: Context, msgs: List<PresenceMsg>, autoExpandAlert: Boolean): Set<Long> {
         val repo = SmartIslandRepositories.notificationRepository(context)
         if (msgs.isEmpty()) {
+            _buttons.value = null
             repo.removeNotification(KEY)
             return emptySet()
         }
         val last = msgs.last()
-        val mood = validMood(last.mood)
+        _buttons.value = NoticeActions.forCard(last)
+        // The sender's mood when it gave one, else what her text reads as (the PC's rules, JinxMood).
+        val mood = validMood(last.mood) ?: com.agupta07505.smartisland.coucou.assist.JinxMood.moodOfText(last.text)?.name
+        // The island expands a card only when it is new, and Jinx's is one card for all her texts: a text that
+        // has not been announced yet takes the card off first, so it arrives (and opens) like any new one.
+        // The same text on the next poll is an update and stays as it is.
+        if (last.id != announcedId) {
+            announcedId = last.id
+            repo.removeNotification(KEY)
+        }
         repo.postNotification(
             IslandNotification(
                 key = KEY,
@@ -136,12 +167,13 @@ object IslandJinx {
                 mode = IslandMode.JinxMsg,
                 category = "mochi:${mood ?: "Listening"}:${last.kind}",
             ),
-            autoExpand = autoExpandAlert && last.kind == "alert",
+            autoExpand = autoExpandAlert,
         )
         return msgs.map { it.id }.toSet()
     }
 
     fun clear(context: Context) {
+        _buttons.value = null
         SmartIslandRepositories.notificationRepository(context).removeNotification(KEY)
     }
 }
@@ -236,6 +268,23 @@ object MochiPresence {
         return ids
     }
 
+    /**
+     * A button on the card was pressed: tell the server (it queues it for the worker that applies it) and take the
+     * card away, marking it seen. Fire-and-forget like [ack]: with no connection the press is lost, and the notice
+     * comes back on the next poll because the server never saw it acted on.
+     */
+    fun pressAction(app: Context, msgId: Long, action: String) {
+        val base = PhoneSettings.presenceUrl(app)
+        val key = PhoneSettings.mochiKey(app)
+        if (key.isEmpty()) return
+        ioScope.launch {
+            PresenceNet.post(base, "/api/mochi/act", key,
+                JSONObject().put("id", msgId).put("action", action).put("by", DeviceActivity.myId).toString())
+        }
+        shownIds = emptySet()
+        IslandJinx.clear(app)
+    }
+
     fun ack(app: Context, ids: Set<Long>) {
         if (ids.isEmpty()) return
         val base = PhoneSettings.presenceUrl(app)
@@ -244,7 +293,7 @@ object MochiPresence {
         ioScope.launch {
             for (id in ids) {
                 PresenceNet.post(base, "/api/mochi/ack", key,
-                    JSONObject().put("id", id).put("by", "s21").toString())
+                    JSONObject().put("id", id).put("by", DeviceActivity.myId).toString())
             }
         }
     }
@@ -285,8 +334,11 @@ object MochiPresence {
             .put("idle_seconds", idleSeconds())
             .put("screen_on", true)
             .toString()
-        val active = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
-            ?.let { runCatching { JSONObject(it).optString("active_device", "?") }.getOrNull() }
+        val answer = PresenceNet.post(base, "/api/presence/heartbeat", key, beat)
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+        // The server calls the laptop "pc"; our ids say "laptop". Its "vga" (nobody in use) is an answer too.
+        val active = answer?.let { Arbiter.fromServer(it.optString("active_device", "?")) }
+        if (answer != null) JinxBackground.set(readJinxMood(answer))
         Log.d(TAG, "heartbeat -> ${active ?: "SIN RESPUESTA"}")
         // What the server says goes to the arbitration, which also hears the laptop and may overrule
         // it when the two of us do not both reach the server (see Arbiter).
@@ -303,10 +355,40 @@ object MochiPresence {
         // Only the device Mochi is on shows Jinx's texts, and it does not ack them while another one is.
         if (!DeviceActivity.active.value) return
         val nowS = System.currentTimeMillis() / 1000
-        val (stale, fresh) = inbox.partition { nowS - it.ts > 3600 }
-        ack(app, stale.map { it.id }.toSet())
-        shownIds = IslandJinx.publish(app, fresh, autoExpandAlert = true)
+        // A reply of Jinx's while her chat is on screen here is already read there: not on the island too.
+        val (seen, fresh) = inbox.partition { alreadyInChat(it, JinxChatScreen.visible) }
+        ack(app, seen.map { it.id }.toSet())
+        // Old messages are shown too, with how old they are. They used to be acked unseen after an hour, so a
+        // briefing that arrived while the phone was off was marked read the moment the screen came on, and lost.
+        shownIds = IslandJinx.publish(app, fresh.map { withAge(it, nowS) }, autoExpandAlert = true)
+        // Only if Alan asked for it (off by default): the newest notice is read aloud, within the quiet hours and budget.
+        com.agupta07505.smartisland.coucou.assist.ReadAloud.consider(app, fresh, nowS)
     }
+
+    /** A message that waited an hour or more says so ("🕓 5 h · …"), so a late briefing reads as late. Pure. */
+    fun withAge(m: PresenceMsg, nowS: Long): PresenceMsg {
+        val hours = (nowS - m.ts) / 3600
+        if (hours < 1) return m
+        val age = if (hours < 24) "$hours h" else "${hours / 24} d"
+        return m.copy(text = "🕓 $age · ${m.text}")
+    }
+
+    /** A Jinx reply (the gateway's `jinx-chat` source) shown in her open chat needs no island card. Pure. */
+    fun alreadyInChat(m: PresenceMsg, chatVisible: Boolean): Boolean = chatVisible && m.source == CHAT_SOURCE
+
+    const val CHAT_SOURCE = "jinx-chat"
+
+    /** Looks at the inbox now (a reply just came while her chat is not on screen), not at the next tick. */
+    fun pokeNow(app: Context) {
+        if (job?.isActive != true) return
+        ioScope.launch { runCatching { tick(app) } }
+    }
+
+    /** Jinx's background mood in a heartbeat answer (`jinx_mood`, one of Mochi's emotes), else null. Pure. */
+    fun readJinxMood(answer: JSONObject): String? =
+        com.agupta07505.smartisland.coucou.assist.JinxMood.validEmote(
+            if (answer.isNull("jinx_mood")) null else answer.optString("jinx_mood"),
+        )
 
     /** Pure parsing, so it can be unit-tested without Android. */
     fun parseInbox(body: String): List<PresenceMsg> {
@@ -323,6 +405,10 @@ object MochiPresence {
                 kind = o.optString("kind", "info").takeIf { it in setOf("info", "warn", "alert") } ?: "info",
                 source = o.optString("source", ""),
                 ts = o.optLong("ts", System.currentTimeMillis() / 1000),
+                actions = NoticeActions.parse(o.optJSONArray("actions")),
+                ref = o.optString("ref", "").takeIf { it.isNotEmpty() },
+                acted = o.optJSONObject("acted")?.optString("action", "")?.takeIf { it.isNotEmpty() },
+                speech = o.optString("speech", "").trim().takeIf { it.isNotEmpty() && it != "null" }?.take(700),
             )
         }
         return out

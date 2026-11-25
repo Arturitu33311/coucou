@@ -130,6 +130,12 @@ struct Stream {
 }
 
 fn streams(snap: &Snapshot, exe_of: ExeOf) -> Vec<Stream> {
+    streams_with(snap, exe_of, std::process::id())
+}
+
+/// `own_pid`: Coucou's own process. Its microphone use (Flow dictation, the Notetaker, « OK Coucou ») is not a
+/// "program recording you": the pid is the server's, so a program cannot say it is Coucou.
+fn streams_with(snap: &Snapshot, exe_of: ExeOf, own_pid: u32) -> Vec<Stream> {
     // Sources whose name ends in ".monitor" only listen to what a sink plays.
     let monitors: HashSet<String> = snap
         .sources
@@ -156,7 +162,8 @@ fn streams(snap: &Snapshot, exe_of: ExeOf) -> Vec<Stream> {
             let name_claim = b.prop("application.name").unwrap_or_default().to_lowercase();
             let bin_claim = b.prop("application.process.binary").unwrap_or_default().to_lowercase();
             let id_claim = b.prop("application.id").unwrap_or_default();
-            let exe = b.field("Client").and_then(|c| pids.get(&c).copied()).and_then(exe_of);
+            let pid = b.field("Client").and_then(|c| pids.get(&c).copied());
+            let exe = pid.and_then(exe_of);
             let runs = |what: &str| exe.as_deref().is_some_and(|e| e.contains(what));
             let claims = |what: &str| name_claim.contains(what) || bin_claim == what;
             Stream {
@@ -164,7 +171,7 @@ fn streams(snap: &Snapshot, exe_of: ExeOf) -> Vec<Stream> {
                 // Said to be Handy AND really Handy's process.
                 handy: claims("handy") && runs("handy"),
                 // Coucou's visualizer (it declares itself as pavucontrol): said so AND really cava.
-                ours: (claims("cava") || id_claim == "org.PulseAudio.pavucontrol") && runs("cava"),
+                ours: ((claims("cava") || id_claim == "org.PulseAudio.pavucontrol") && runs("cava")) || pid == Some(own_pid),
                 monitor: b.field("Source").is_some_and(|s| monitors.contains(&s)),
                 corked: b.field("Corked").is_some_and(|c| c.eq_ignore_ascii_case("yes")),
             }
@@ -335,6 +342,19 @@ mod tests {
         let twice = out(1, 10, 56, "no", CHROME_P) + &out(2, 10, 56, "no", CHROME_P);
         assert_eq!(mic_apps(&snap(&twice), &exe), vec!["Chromium input"], "each program once");
         assert!(mic_apps(&snap(""), &exe).is_empty());
+    }
+
+    #[test]
+    fn coucou_dictating_is_not_a_program_recording_you() {
+        // Client 9 (really "zoom") stands for Coucou's own process here.
+        let s = snap(&out(1, 9, 56, "no", ZOOM_P));
+        let mine = streams_with(&s, &exe, 102);
+        assert!(mine.iter().all(|x| x.ours), "its own streams are ours");
+        let other = streams_with(&s, &exe, 4242);
+        assert!(other.iter().all(|x| !x.ours), "a stranger's are not");
+        // And what a program says about itself changes nothing: it is the server's pid that counts.
+        let liar = "\t\tapplication.name = \"Coucou\"\n\t\tapplication.process.binary = \"coucou-island\"\n";
+        assert!(streams_with(&snap(&out(1, 11, 56, "no", liar)), &exe, 4242).iter().all(|x| !x.ours));
     }
 
     #[test]

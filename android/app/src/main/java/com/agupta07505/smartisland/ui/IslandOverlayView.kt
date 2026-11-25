@@ -53,6 +53,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -573,8 +574,14 @@ fun IslandOverlayView(
                         var isDragging = false
                         var pillGestureTriggered = false
 
+                        // The system's touch slop and hold delay (not fixed numbers): a still finger is a tap, and
+                        // only a move past the slop is a drag. See IslandGestureLogic for why.
+                        val touchSlopPx = viewConfiguration.touchSlop
+                        val holdThresholdMs = IslandGestureLogic.holdThresholdMs(
+                            viewConfiguration.longPressTimeoutMillis, HOLD_GESTURE_THRESHOLD_MS
+                        )
                         val holdJob = scope.launch {
-                            kotlinx.coroutines.delay(HOLD_GESTURE_THRESHOLD_MS)
+                            kotlinx.coroutines.delay(holdThresholdMs)
                             isHoldRegistered = true
                             triggerHapticVibration(context)
                         }
@@ -586,6 +593,10 @@ fun IslandOverlayView(
                             val change = event.changes.firstOrNull { it.id == pointerId } ?: break
 
                             if (change.changedToUp()) {
+                                // A button inside the open island (a reminder's Hecho/+10 min, an approval's
+                                // Allow…) already took this tap: it must not also open the card. (Children see
+                                // the release first, so a consumed one here was handled inside.)
+                                val handledInside = change.isConsumed
                                 change.consume()
                                 holdJob.cancel()
                                 val totalElapsedMs = System.currentTimeMillis() - pressTimeMs
@@ -595,7 +606,7 @@ fun IslandOverlayView(
                                     val swipeUpThreshold = -SWIPE_THRESHOLD_DP * displayMetrics.density
                                     val swipeDownThreshold = SWIPE_THRESHOLD_DP * displayMetrics.density
                                     if (isDragging && currentSettings.enableSwipeActions && dragOffset < swipeUpThreshold) {
-                                        val isHold = isHoldRegistered || totalElapsedMs >= HOLD_GESTURE_THRESHOLD_MS
+                                        val isHold = isHoldRegistered || totalElapsedMs >= holdThresholdMs
                                         val actionStr = if (isHold) currentSettings.swipeHoldUpAction else currentSettings.swipeUpAction
                                         val action = SwipeAction.fromId(actionStr, if (isHold) SwipeAction.DismissAll else SwipeAction.DismissCurrent)
                                         executeSwipeAction(
@@ -629,7 +640,7 @@ fun IslandOverlayView(
                                             currentIndex = currentSelectedIndex
                                         )
                                     } else if (!isDragging || abs(dragOffset) < 10f * displayMetrics.density) {
-                                        if (!isHoldRegistered) {
+                                        if (IslandGestureLogic.releaseIsTap(isHoldRegistered, isDragging, handledInside)) {
                                             if (currentNotification != null) {
                                                 currentOnOpenNotification(currentNotification)
                                             } else {
@@ -717,8 +728,8 @@ fun IslandOverlayView(
                                                 }
                                             }
                                         } else {
-                                            // Tap on collapsed pill: expands or reveals
-                                            if (!isHoldRegistered) {
+                                            // Tap on collapsed pill: expands or reveals (a still hold is a slow tap)
+                                            if (IslandGestureLogic.releaseIsTap(isHoldRegistered, isDragging, false)) {
                                                 if (settings.autoHidePill && isAutoHidden) {
                                                     isAutoHidden = false
                                                     userInteractionTimestamp = System.currentTimeMillis()
@@ -734,9 +745,16 @@ fun IslandOverlayView(
                                 val dragAmountY = change.positionChange().y
                                 val dragAmountX = change.positionChange().x
                                 if (abs(dragAmountY) > 0.5f || abs(dragAmountX) > 0.5f) {
-                                    isDragging = true
                                     dragAccumulatorY += dragAmountY
                                     dragAccumulatorX += dragAmountX
+                                    // A finger always wobbles a little. Until it has really moved (past the system's
+                                    // touch slop) this is still a tap: do NOT consume the move, or the buttons inside
+                                    // the open island (tasks' check, media controls) cancel their click because an
+                                    // ancestor consumed it. That is what made them need a perfectly still touch.
+                                    if (!isDragging && !IslandGestureLogic.crossedSlop(dragAccumulatorX, dragAccumulatorY, touchSlopPx)) {
+                                        continue
+                                    }
+                                    isDragging = true
                                     change.consume()
                                     if (abs(dragAccumulatorY) > 5f * displayMetrics.density || abs(dragAccumulatorX) > 5f * displayMetrics.density) {
                                         holdJob.cancel()
@@ -960,6 +978,7 @@ fun IslandOverlayView(
             // The unlock padlock: one classic opening over the main pill per unlock, then gone.
             // (Mochi says hello beside it from his bubble.) Keyed by unlock so every unlock replays.
             val unlockMs = com.agupta07505.smartisland.coucou.ui.rememberUnlockMs()
+            val glancePrefs = com.agupta07505.smartisland.coucou.ui.rememberGlancePrefs()
             var showUnlock by remember { mutableStateOf(false) }
             LaunchedEffect(unlockMs) {
                 if (unlockMs > 0) {
@@ -968,7 +987,8 @@ fun IslandOverlayView(
                     showUnlock = false
                 }
             }
-            if (showUnlock && !isHiding) {
+            // Glance owns the unlock effect whenever its switch is on (one effect per unlock, not padlock + pill).
+            if (showUnlock && !isHiding && glancePrefs.first == com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF) {
                 key(unlockMs) {
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -983,9 +1003,55 @@ fun IslandOverlayView(
             }
         }
 
+        // The Glance-style unlock pill (see GlanceUnlockPill): a real unlock, or a debug request, widens the pill over
+        // the main one. Collapsed island only; the expanded card is never covered.
+        val gContext = LocalContext.current
+        val (gMode, gStyle) = com.agupta07505.smartisland.coucou.ui.rememberGlancePrefs()
+        var gRequest by remember { mutableStateOf<com.agupta07505.smartisland.coucou.ui.GlanceBus.Request?>(null) }
+        var gLast by remember { mutableLongStateOf(0L) }
+        val gUnlockMs = com.agupta07505.smartisland.coucou.ui.rememberUnlockMs()
+        LaunchedEffect(gUnlockMs) {
+            if (gUnlockMs > 0 && com.agupta07505.smartisland.coucou.ui.GlanceUnlockLogic.shouldShow(
+                    gMode, !isHiding, gContext.getSystemService(android.app.KeyguardManager::class.java)?.isDeviceSecure == true,
+                    com.agupta07505.smartisland.coucou.ui.GlanceUnlockLogic.faceConfigured(gContext), gUnlockMs, gLast,
+                )
+            ) {
+                gLast = gUnlockMs
+                gRequest = com.agupta07505.smartisland.coucou.ui.GlanceBus.Request(gUnlockMs, com.agupta07505.smartisland.coucou.ui.GlanceKind.SUCCESS)
+            }
+        }
+        val gBus by com.agupta07505.smartisland.coucou.ui.GlanceBus.requests.collectAsState()
+        LaunchedEffect(gBus) {
+            val r = gBus ?: return@LaunchedEffect
+            // The bus remembers its last request; a stale one (island restarted) must not replay.
+            if (System.nanoTime() - r.id < 1_500_000_000L && gMode != com.agupta07505.smartisland.coucou.ui.GlanceMode.OFF) gRequest = r
+        }
+        val shown = gRequest
+        if (shown != null && !currentExpanded && !isHiding) {
+            key(shown.id) {
+                com.agupta07505.smartisland.coucou.ui.GlanceUnlockPill(
+                    kind = shown.kind,
+                    style = gStyle,
+                    baseWidth = safeWidth,
+                    height = safeHeight,
+                    shape = mainShape,
+                    color = pillBackgroundColor,
+                    onDone = { gRequest = null },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .graphicsLayer {
+                            translationX = animatedXOffset.toPx()
+                            translationY = yOffset.toPx()
+                        },
+                )
+            }
+        }
+
         // Mochi's home: always the secondary bubble. Tapping him opens his desk (tasks).
         // Collapsed it is his circle; expanded it grows into his mini-pill with the count.
-        if (mochiSecondary && secondaryAlpha > 0f) {
+        // While the unlock pill is up, his bubble steps aside (he is the pill's star, and the pill widens over his spot).
+        val bubbleHide by animateFloatAsState(if (shown != null) 0f else 1f, tween(140), label = "bubbleHide")
+        if (mochiSecondary && secondaryAlpha * bubbleHide > 0f) {
             Box(
                 modifier = Modifier
                     .absoluteOffset {
@@ -997,7 +1063,7 @@ fun IslandOverlayView(
                     .width(secondaryBubbleWidth)
                     .height(circleSize)
                     .graphicsLayer {
-                        alpha = secondaryAlpha
+                        alpha = secondaryAlpha * bubbleHide
                         scaleX = secondaryScale * switchScaleAnim.value
                         scaleY = secondaryScale * switchScaleAnim.value
                     }
@@ -1201,7 +1267,7 @@ internal fun defaultEstimatedHeightForMode(mode: IslandMode?): Dp {
         IslandMode.Reminder -> 125.dp
         IslandMode.Desk -> 280.dp
         IslandMode.Agent -> 165.dp
-        IslandMode.JinxMsg -> 140.dp
+        IslandMode.JinxMsg -> 156.dp
         IslandMode.Approval -> 175.dp
         IslandMode.Question -> 210.dp
         IslandMode.Empty, null -> 280.dp

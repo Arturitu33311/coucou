@@ -62,10 +62,23 @@ object PhoneSettings {
         get() = prefs(this).getBoolean("lyricsOn", false)
         set(v) = prefs(this).edit().putBoolean("lyricsOn", v).apply()
 
+    /**
+     * Send what is copied on this phone to the laptop, without pressing anything (off by default, experimental): it reads
+     * the system log for the clipboard's refusals, which needs READ_LOGS granted once over adb (see ClipWatcher).
+     */
+    var Context.clipToPc: Boolean
+        get() = prefs(this).getBoolean("clipToPc", false)
+        set(v) = prefs(this).edit().putBoolean("clipToPc", v).apply()
+
     /** What Mochi wears here: "auto" (the seasons, then what he is doing), "none" or an outfit id. */
     var Context.mochiOutfit: String
         get() = prefs(this).getString("mochiOutfit", "auto") ?: "auto"
         set(v) = prefs(this).edit().putString("mochiOutfit", v).apply()
+
+    /** Animated wallpapers in battery-saver: "auto" (Android's saver or a nearly flat battery), "always" or "never". See WallpaperPowerGate. */
+    var Context.wallpaperSaver: String
+        get() = prefs(this).getString("wallpaperSaver", "auto") ?: "auto"
+        set(v) = prefs(this).edit().putString("wallpaperSaver", v).apply()
 
     /** Keep Mochi in the island, with the tasks (on by default). */
     var Context.showDesk: Boolean
@@ -76,6 +89,11 @@ object PhoneSettings {
     var Context.followClaude: Boolean
         get() = prefs(this).getBoolean("followClaude", false)
         set(v) = prefs(this).edit().putBoolean("followClaude", v).apply()
+
+    /** Play the laptop's sound through the headphones kept on this phone (over the laptop profile, audio-only key). */
+    var Context.audioLink: Boolean
+        get() = prefs(this).getBoolean("audioLink", false)
+        set(v) = prefs(this).edit().putBoolean("audioLink", v).apply()
 
     /** Hear Jinx's texts on this phone through presence (text only, no voice). */
     var Context.followJinx: Boolean
@@ -89,6 +107,20 @@ object PhoneSettings {
 
     fun savePresenceUrl(c: Context, v: String) {
         prefs(c).edit().putString("presenceUrl", v.trim().trimEnd('/')).apply()
+    }
+
+    /** Where the quick Jinx's bridge lives (https through Tailscale Serve, port 8898; no trailing slash). */
+    const val G2_URL_DEFAULT = "https://server.tail3dac6b.ts.net:8898"
+
+    /** Read Jinx's notices aloud, with her voice (off until Alan turns it on). */
+    fun readAloud(c: Context): Boolean = prefs(c).getBoolean("readAloud", false)
+
+    fun setReadAloud(c: Context, on: Boolean) { prefs(c).edit().putBoolean("readAloud", on).apply() }
+
+    fun g2Url(c: Context): String = prefs(c).getString("g2Url", G2_URL_DEFAULT) ?: G2_URL_DEFAULT
+
+    fun saveG2Url(c: Context, v: String) {
+        prefs(c).edit().putString("g2Url", v.trim().trimEnd('/')).apply()
     }
 
     /** Key for the presence inbox (same as ~/.config/mochi-presence/key on the server). */

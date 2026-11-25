@@ -1,6 +1,7 @@
 package com.agupta07505.smartisland.coucou
 
 import com.agupta07505.smartisland.coucou.ui.MochiReactions
+import com.agupta07505.smartisland.coucou.ui.MochiMood as M
 import com.agupta07505.smartisland.model.IslandMode
 import com.agupta07505.smartisland.model.IslandNotification
 import org.junit.Assert.assertEquals
@@ -144,4 +145,12 @@ class MochiReactionTest {
         assertEquals(now + MochiReactions.GREET_MS, MochiReactions.latchGreeting(0L, now))
         assertEquals(now + 9_000, MochiReactions.latchGreeting(now + 9_000, now))
     }
+
+    @Test fun `when all is calm he wears Jinx's background mood, but night and reminders keep theirs`() {
+        assertEquals(M.Sad, MochiReactions.calmOrJinx(M.Idle, M.Sad))
+        assertEquals(M.Idle, MochiReactions.calmOrJinx(M.Idle, null))
+        assertEquals(M.Sleepy, MochiReactions.calmOrJinx(M.Sleepy, M.Happy))
+        assertEquals(M.Alert, MochiReactions.calmOrJinx(M.Alert, M.Happy))
+    }
 }
+

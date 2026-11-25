@@ -254,8 +254,10 @@ cd SmartIsland
 
 ### 3. Install on a connected device
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.agupta07505.smartisland/.MainActivity
+# Always through the script: it records Play Store as the installer. A plain `adb install` leaves none, and
+# banking apps (Nu) then refuse to open beside the island (docs/BANK-APPS.md).
+scripts/install-phone.sh            # or: scripts/install-phone.sh <ip:port> over wireless adb
+adb shell am start -n com.agupta07505.smartisland/.coucou.CoucouTasksActivity
 ```
 
 ---
@@ -287,3 +289,7 @@ Contributions are warmly welcomed! Please read [CONTRIBUTING.md](CONTRIBUTING.md
 Smart Island is licensed under the [GNU General Public License v3.0](LICENSE).  
 Copyright (C) 2026 **Animesh Gupta**.
 
+
+
+## Unlock animation
+Settings > Customizations > "Unlock animation": off / always / only if the phone has face unlock, and Mochi or ring-and-padlock style. Android cannot tell how the phone was opened, so it says "unlocked", never "recognised". Look and timings inspired by [Glance](https://github.com/jonnyoo/glance) (MIT), see NOTICE-glance.md. Debug builds only: `adb shell am broadcast -n com.agupta07505.smartisland/.coucou.DebugGlanceReceiver --es state scan|success|failure`.

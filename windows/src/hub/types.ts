@@ -20,9 +20,13 @@ export interface HubContext {
   actions: import("../views/views").ViewActions;
 }
 
+/** The Hub's tabs come in a few groups so the strip stays short: a row of groups, then the tools of one. */
+export type HubGroup = "today" | "focus" | "system" | "files";
+
 export interface HubTool {
   id: string;
   label: string;
+  group: HubGroup;
   /** Does this tool have a text field (and so need the island to take the keyboard)? */
   typing?: boolean;
   build(ctx: HubContext): HubHost;

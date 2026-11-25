@@ -1,0 +1,17 @@
+// Temporary (this sandbox only): Maven Central answers 429 here; swap it for Google's mirror of it.
+def mirror = 'https://maven-central.storage-download.googleapis.com/maven2/'
+def swap = { repos ->
+    repos.removeIf { it.name == 'MavenRepo' }
+    repos.maven { url mirror; name 'CentralMirror' }
+}
+beforeSettings { settings ->
+    settings.pluginManagement.repositories { maven { url mirror; name 'CentralMirror' } }
+}
+settingsEvaluated { settings ->
+    swap(settings.pluginManagement.repositories)
+    swap(settings.dependencyResolutionManagement.repositories)
+}
+allprojects {
+    buildscript.repositories.removeIf { it.name == 'MavenRepo' }
+    buildscript.repositories { maven { url mirror } }
+}

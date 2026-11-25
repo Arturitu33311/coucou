@@ -6,6 +6,7 @@ package com.agupta07505.smartisland.coucou.agents
 
 import android.content.Context
 import com.agupta07505.smartisland.coucou.CoucouTasks
+import com.agupta07505.smartisland.coucou.handoff.HandoffFlow
 import com.agupta07505.smartisland.coucou.phone.PhoneSettings
 import com.agupta07505.smartisland.coucou.phone.Ssh
 import com.agupta07505.smartisland.coucou.presence.DeviceActivity
@@ -42,7 +43,16 @@ data class AgentUi(
  * (coucou-hook --remote), and what it prints is one JSON line per thing Claude Code does. The
  * connection mends itself: it is watched with pings, and tried again with growing waits.
  */
-class AgentRemote(private val context: Context, private val scope: CoroutineScope) {
+class AgentRemote(
+    private val context: Context,
+    private val scope: CoroutineScope,
+    /** Which paired machine: the laptop (Claude Code) or the server (Jinx's own permission requests). */
+    private val profileName: String = PhoneSettings.LAPTOP,
+    /** What is asked of the forced command on the other side (ignored by the laptop's key, read by the server's). */
+    private val command: String = "coucou",
+    /** The laptop link also carries tasks, presence beats and handoffs; the server's carries requests only. */
+    private val full: Boolean = true,
+) {
     private val model = AgentModel()
     private val _ui = MutableStateFlow(AgentUi())
     val ui: StateFlow<AgentUi> = _ui.asStateFlow()
@@ -62,6 +72,26 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
 
     /** The task list changed here (or the link is new): tell the laptop at the next turn of the loop. */
     @Volatile private var tasksDirty = true
+
+    /** True while this link holds a request with that id (so an answer goes back on the link it came from). */
+    fun owns(id: String): Boolean = _ui.value.pending.any { it.id == id }
+
+    /** Ids this link has held lately: a late answer to one that is already settled must not be passed to the other link. */
+    private val seen = LinkedHashSet<String>()
+
+    fun knew(id: String): Boolean = synchronized(seen) { id in seen }
+
+    private fun remember(msg: RemoteMsg) {
+        val ids = when (msg) {
+            is RemoteMsg.Request -> listOf(msg.pending.id)
+            is RemoteMsg.Hello -> msg.pending.map { it.id }
+            else -> return
+        }
+        synchronized(seen) {
+            seen.addAll(ids)
+            while (seen.size > 64) seen.remove(seen.first())
+        }
+    }
 
     fun requestTaskSync() {
         tasksDirty = true
@@ -95,9 +125,9 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
     private suspend fun loop() {
         var wait = 2_000L
         while (currentCoroutineContext().isActive) {
-            val profile = PhoneSettings.profile(context, PhoneSettings.LAPTOP)
+            val profile = PhoneSettings.profile(context, profileName)
             if (!profile.paired) {
-                publish(AgentUi.Status.Off, "Pair the laptop in Coucou's phone settings")
+                publish(AgentUi.Status.Off, if (full) "Pair the laptop in Coucou's phone settings" else "Pair the server in Coucou's phone settings")
                 delay(5_000)
                 continue
             }
@@ -105,7 +135,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
             var ended = "connection closed"
             try {
                 Ssh.open(context, profile).use { conn ->
-                    conn.stream("coucou").use { stream ->
+                    conn.stream(command).use { stream ->
                         wait = 2_000L
                         lastHeard = System.currentTimeMillis()
                         ended = pump(stream)
@@ -117,7 +147,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
             // Nothing that was waiting can still be answered through a dead link, and a laptop we
             // cannot hear is not there: this phone shows Mochi on its own again.
             model.pending.clear()
-            DeviceActivity.onLinkDown(context)
+            if (full) DeviceActivity.onLinkDown(context)
             publish(if (ended == "laptop-closed") AgentUi.Status.LaptopClosed else AgentUi.Status.Reconnecting, if (ended == "laptop-closed") "Coucou is closed on the laptop" else ended)
             delay(wait)
             wait = (wait * 2).coerceAtMost(30_000L)
@@ -147,7 +177,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
             while (currentCoroutineContext().isActive) {
                 val now = System.currentTimeMillis()
                 // Each device keeps its own tasks; when the link is there they are merged, newest change wins.
-                if (tasksDirty || now - lastTasks > 120_000) {
+                if (full && (tasksDirty || now - lastTasks > 120_000)) {
                     tasksDirty = false
                     lastTasks = now
                     val line = RemoteProtocol.tasksSync(CoucouTasks.snapshotForLaptop(context))
@@ -167,7 +197,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
                 // Touched since the last beat (its idle fell): the laptop hears it now, so Mochi follows
                 // the person at once instead of at the next beat.
                 val touched = mine.idleS + 1 < lastIdle
-                if (now - lastBeat > BEAT_MS || music != lastMusic || news != lastNews || touched) {
+                if (full && (now - lastBeat > BEAT_MS || music != lastMusic || news != lastNews || touched)) {
                     // Only what is news: a touch or a change (the periodic beat is not worth a line).
                     if (touched || music != lastMusic || news != lastNews) {
                         android.util.Log.d("Presence", "beat -> idle=${mine.idleS} screen=${mine.screenOn} music=$music touched=$touched")
@@ -190,7 +220,7 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
                     continue
                 }
                 lastHeard = System.currentTimeMillis()
-                when (val msg = RemoteProtocol.parse(line, lastHeard)) {
+                when (val msg = RemoteProtocol.parse(line, lastHeard, DeviceActivity.myId)) {
                     null -> Unit
                     RemoteMsg.Offline -> return "laptop-closed"
                     RemoteMsg.Disabled -> return "The phone link is off on the laptop (Settings → Phone)"
@@ -199,7 +229,10 @@ class AgentRemote(private val context: Context, private val scope: CoroutineScop
                         DeviceActivity.onPeer(context, msg.beat, msg.music, msg.news, msg.limit)
                     }
                     is RemoteMsg.PeerGone -> DeviceActivity.onPeerGone(context, msg.device)
+                    is RemoteMsg.Handoff -> HandoffFlow.offered(context, msg.offer)
+                    is RemoteMsg.HandoffDone -> HandoffFlow.done(msg)
                     else -> {
+                        remember(msg)
                         model.apply(msg, lastHeard)
                         publish(AgentUi.Status.Connected)
                     }

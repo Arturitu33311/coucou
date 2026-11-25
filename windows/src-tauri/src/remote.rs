@@ -18,6 +18,13 @@
 // most twice the list limit, bookkeeping about the phone's own link with Jinx never taken). A phone
 // that is lost can therefore add or change reminders, which then follow the list to wherever it goes;
 // it still cannot make Coucou do anything else.
+//
+// A third thing goes out and can come back: the music handoff (handoff.rs). The laptop offers what plays
+// to the phone in use (`handoff`, addressed to one phone, with a title and an https address of a service
+// we know), and the phone may answer with one word, `handoff_accept`, for the offer that is waiting. It
+// is checked like a permission answer: that offer, that phone, once, before it expires, and only while
+// the person is still on that phone. Accepting makes the laptop pause that player and let go of the
+// Bluetooth headphones: nothing more, and nothing the phone chooses.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -59,6 +66,12 @@ pub fn sync_enabled(app: &AppHandle, on: bool) {
     let _ = app;
 }
 
+/// The phone↔laptop task merge over the link is the backup: with no server set, or while the server's list cannot
+/// be reached (the last pendientes round failed). Pure.
+pub fn direct_merge_wanted(server_host: &str, server_ok: bool) -> bool {
+    server_host.trim().is_empty() || !server_ok
+}
+
 fn on() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
@@ -95,11 +108,24 @@ pub fn detail_of(tool: &str, input: &Value) -> String {
     clip(&input.to_string(), MAX_DETAIL)
 }
 
+/// Which agent sent the event, as the island routes it (hooks.ts validateAgent): the relay's `coucou_agent`
+/// when it is a valid name (`^[a-z0-9-]{1,24}$`, not the reserved "claude"), else None (Claude Code).
+pub fn agent_of(payload: &Value) -> Option<String> {
+    let a = payload.get("coucou_agent").and_then(Value::as_str)?;
+    let ok = !a.is_empty() && a.len() <= 24 && a != "claude" && a.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
+    ok.then(|| a.to_string())
+}
+
 fn base(payload: &Value) -> Value {
-    json!({
+    let mut b = json!({
         "session": payload.get("session_id").and_then(Value::as_str).unwrap_or(""),
         "project": project_of(payload),
-    })
+    });
+    // Antigravity, OpenCode, Codex…: the phone shows each with its name and colour. Absent: Claude Code.
+    if let Some(agent) = agent_of(payload) {
+        b["agent"] = json!(agent);
+    }
+    b
 }
 
 fn merged(mut a: Value, extra: Value) -> Value {
@@ -208,6 +234,16 @@ fn tasks_line() -> Value {
     json!({ "t": "tasks", "tasks": tasks })
 }
 
+/// Is a phone listening on the link? (The handoff offers nothing to nobody.)
+pub fn has_listeners() -> bool {
+    on() && bus().receiver_count() > 0
+}
+
+/// A line for the phones (each ignores the ones addressed to another: the bus is a broadcast).
+pub fn publish_line(line: &Value) {
+    publish(line);
+}
+
 /// A hook event that waits for nobody.
 pub fn publish_event(payload: &Value) {
     if on() && bus().receiver_count() > 0 {
@@ -234,6 +270,8 @@ pub fn publish_resolved(id: &str, decision: Option<&str>) {
     let word = match decision {
         Some("allow") => "allow",
         Some("deny") => "deny",
+        // A denial that carries a note to the agent is still a denial; the note stays on this machine.
+        Some(d) if d.starts_with("deny:") => "deny",
         Some(_) => "answered",
         None => "none",
     };
@@ -259,8 +297,34 @@ pub enum Action {
     Peer { beat: crate::presence::Beat, music: bool, news: bool },
     /// The phone's whole task list, to be merged with this one (newest change wins, see tasks.rs).
     TasksSync { tasks: Value },
+    /// Text the person copied on the phone, already cleaned and bounded (clip_sync.rs), to put in this clipboard.
+    Clip { text: String },
+    /// The phone took the music offer that was waiting (handoff.rs checks it is that offer, for that phone).
+    HandoffAccept { id: String },
     Reject(String),
 }
+
+/// The arguments of the desktop note that says a text came from the phone. The text itself is NOT in it: a
+/// notification is kept in the notification history and shows on a shared or locked screen, so it says only how long
+/// the text was (what replaced the clipboard can be noticed without being shown). The note is marked transient so
+/// the shell does not keep it, and `--` ends the options so nothing after it can be read as one.
+#[cfg(target_os = "linux")]
+fn clip_note_args(text: &str) -> Vec<String> {
+    let body = format!("{} caracteres, ya están en el portapapeles", text.chars().count());
+    ["-a", "Coucou", "-t", "4000", "-i", "edit-paste", "-h", "boolean:transient:true", "--", "Copiado desde el celular", &body]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// A text arriving from the phone must never replace the clipboard unnoticed: a short desktop note says so.
+#[cfg(target_os = "linux")]
+fn note_clip_from_phone(text: &str) {
+    let _ = std::process::Command::new("notify-send").args(clip_note_args(text)).spawn();
+}
+
+#[cfg(not(target_os = "linux"))]
+fn note_clip_from_phone(_text: &str) {}
 
 /// Reads a line from the phone. Only a request that is waiting, of the right kind, can be answered.
 pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action {
@@ -273,10 +337,18 @@ pub fn parse_client_line(line: &str, pending: &HashMap<String, Value>) -> Action
             Some((beat, music, news)) => Action::Peer { beat, music, news },
             None => Action::Reject("not a phone beat".into()),
         },
+        Some("handoff_accept") => match v.get("id").and_then(Value::as_str) {
+            Some(id) if !id.is_empty() && id.len() <= 64 => Action::HandoffAccept { id: id.to_string() },
+            _ => Action::Reject("handoff_accept needs the offer's id".into()),
+        },
         Some("tasks_sync") => match v.get("tasks") {
             // Bounded here; each task is bounded again by tasks::sanitize_remote before it is merged.
             Some(t) if t.as_array().map_or(false, |a| a.len() <= MAX_SYNC_TASKS) => Action::TasksSync { tasks: t.clone() },
             _ => Action::Reject("tasks must be a list".into()),
+        },
+        Some("clip") => match v.get("text").and_then(Value::as_str).and_then(crate::clip_sync::clean) {
+            Some(text) => Action::Clip { text },
+            None => Action::Reject("no usable text".into()),
         },
         Some("answer") => match (kind, v.get("decision").and_then(Value::as_str)) {
             (Some("approval"), Some("allow")) => Action::Answer { id, decision: "allow" },
@@ -423,17 +495,38 @@ async fn client(app: AppHandle, stream: tokio::net::UnixStream) {
                 }
             }
             Action::TasksSync { tasks } => {
-                // Each device works alone; when they meet the newest change wins, then both have the same list.
-                match crate::tasks::merge_remote_json(&tasks.to_string()) {
-                    Ok(true) => {
-                        let _ = app.emit("tasks-changed", ());
-                        log::line("phone link: tasks merged");
+                // With a server, the phones and this laptop all meet in Jinx's list there (pendientes.rs): the
+                // direct merge is only the fallback for when there is none. Each device works alone; when they
+                // meet the newest change wins, then both have the same list.
+                if direct_merge_wanted(&crate::settings::load().server_host, crate::pendientes::server_ok()) {
+                    match crate::tasks::merge_remote_json(&tasks.to_string()) {
+                        Ok(true) => {
+                            let _ = app.emit("tasks-changed", ());
+                            log::line("phone link: tasks merged");
+                        }
+                        Ok(false) => {}
+                        Err(e) => log::line(format!("phone link: tasks not merged ({e})")),
                     }
-                    Ok(false) => {}
-                    Err(e) => log::line(format!("phone link: tasks not merged ({e})")),
                 }
                 tasks_line()
             }
+            Action::Clip { text } => {
+                // The same text twice in a row (or its echo, brought back by KDE Connect) is applied once.
+                if crate::clip_sync::should_apply(&text) {
+                    crate::clipboard::set_text_from_phone(&app, text.clone());
+                    log::line(format!("phone link: clipboard text from the phone ({})", crate::clip_sync::describe(&text)));
+                    note_clip_from_phone(&text);
+                }
+                json!({ "t": "ack", "ok": true })
+            }
+            Action::HandoffAccept { id } => match device.as_deref() {
+                // A link that has not said which phone it is cannot take an offer addressed to one.
+                None => json!({ "t": "ack", "ok": false, "why": "say which phone this is first" }),
+                Some(d) => match crate::handoff::accept(d, &id) {
+                    Ok(()) => json!({ "t": "ack", "request_id": id, "ok": true }),
+                    Err(why) => json!({ "t": "ack", "request_id": id, "ok": false, "why": why }),
+                },
+            },
             Action::Answer { id, decision } => {
                 log::line(format!("phone link: {decision} for id={id}"));
                 pipe::answer(&app, &id, decision);
@@ -507,6 +600,19 @@ mod tests {
     }
 
     #[test]
+    fn the_phone_hears_which_agent_sent_each_event() {
+        let e = event_line(&json!({"hook_event_name":"PreToolUse","session_id":"s","cwd":"/p","tool_name":"bash","coucou_agent":"opencode"}));
+        assert_eq!(e["agent"], "opencode");
+        assert!(event_line(&json!({"hook_event_name":"Stop","session_id":"s"})).get("agent").is_none());
+        for bad in ["claude", "Bad Name", "", "a/b", "abcdefghijklmnopqrstuvwxyz"] {
+            assert_eq!(agent_of(&json!({"coucou_agent": bad})), None, "{bad}");
+        }
+        // Exactly the island's rule: no case folding ("Antigravity" goes to Claude Code's pill there too).
+        assert_eq!(agent_of(&json!({"coucou_agent": "Antigravity"})), None);
+        assert_eq!(agent_of(&json!({"coucou_agent": "antigravity"})), Some("antigravity".into()));
+    }
+
+    #[test]
     fn an_event_carries_the_project_the_tool_and_never_the_prompt() {
         let e = event_line(&json!({
             "hook_event_name": "PreToolUse", "session_id": "s1", "cwd": "/home/alan/dev/coucou/",
@@ -518,6 +624,14 @@ mod tests {
         let n = event_line(&json!({ "hook_event_name": "Notification", "message": "Claude needs your permission" }));
         assert_eq!(n["message"], "Claude needs your permission");
         assert!(n.get("tool").is_none());
+    }
+
+    #[test]
+    fn the_direct_task_merge_is_only_the_backup_without_a_server() {
+        assert!(direct_merge_wanted("", true));
+        assert!(direct_merge_wanted("  ", true));
+        assert!(!direct_merge_wanted("server", true));
+        assert!(direct_merge_wanted("server", false), "the server failed: the phone link is the backup");
     }
 
     #[test]
@@ -559,6 +673,25 @@ mod tests {
         assert!(matches!(go(r#"{"op":"peer"}"#), Action::Reject(_)));
         // Its task list is taken in as a list, and only as a bounded one.
         assert!(matches!(go(r#"{"op":"tasks_sync","tasks":[{"id":"a","title":"x"}]}"#), Action::TasksSync { .. }));
+        // The note about a text from the phone never contains the text, and nothing in it can be read as an option.
+        #[cfg(target_os = "linux")]
+        {
+            let hostile = "--hint=string:x:y 482913";
+            let args = clip_note_args(hostile);
+            assert!(args.iter().all(|a| !a.contains("482913") && !a.contains("--hint=string")), "the text must not be in the note");
+            let dashes = args.iter().position(|a| a == "--").expect("options end with --");
+            assert!(args[..dashes].iter().all(|a| a.starts_with('-') || ["Coucou", "4000", "edit-paste", "boolean:transient:true"].contains(&a.as_str())));
+            assert_eq!(args[dashes + 1], "Copiado desde el celular");
+            assert!(args[dashes + 2].starts_with("24 caracteres"), "{}", args[dashes + 2]);
+        }
+        // Clipboard text from the phone: cleaned, bounded, and never an empty or hostile one.
+        assert_eq!(go(r#"{"op":"clip","text":"  482913 ","at":1}"#), Action::Clip { text: "482913".into() });
+        assert_eq!(go("{\"op\":\"clip\",\"text\":\"ho\\u0000la\"}"), Action::Clip { text: "hola".into() });
+        assert!(matches!(go(r#"{"op":"clip","text":"   "}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"clip"}"#), Action::Reject(_)));
+        assert!(matches!(go(r#"{"op":"clip","text":5}"#), Action::Reject(_)));
+        let huge = format!(r#"{{"op":"clip","text":"{}"}}"#, "x".repeat(4001));
+        assert!(matches!(go(&huge), Action::Reject(_)));
         assert!(matches!(go(r#"{"op":"tasks_sync","tasks":"x"}"#), Action::Reject(_)));
         assert!(matches!(go(r#"{"op":"tasks_sync"}"#), Action::Reject(_)));
         let too_many = format!(r#"{{"op":"tasks_sync","tasks":[{}]}}"#, vec!["{}"; MAX_SYNC_TASKS + 1].join(","));

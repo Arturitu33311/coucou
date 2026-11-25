@@ -1,0 +1,15 @@
+[Unit]
+Description=Jinx en las gafas Even G2 (puente HTTP en loopback)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/g2-bridge/g2_bridge.py
+# La voz: o un comando (JINX_G2_STT_CMD="whisper-cli -m %h/models/ggml-small.bin -l es -nt -f {wav}") o faster-whisper.
+# Environment=JINX_G2_STT_CMD=
+# Environment=JINX_G2_STT_MODEL=small
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

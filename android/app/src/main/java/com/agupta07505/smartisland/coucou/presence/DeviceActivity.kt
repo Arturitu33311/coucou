@@ -128,7 +128,7 @@ object DeviceActivity {
 
     /** The presence server answered (or did not) for this phone's heartbeat. */
     fun onServer(app: Context, ok: Boolean, activeDevice: String?) {
-        serverActive = if (ok) activeDevice else null
+        serverActive = if (ok) Arbiter.serverAnswer(activeDevice) else null
         serverAt = if (ok) System.currentTimeMillis() else 0L
         recompute(app)
     }

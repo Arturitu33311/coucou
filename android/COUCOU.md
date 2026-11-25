@@ -57,5 +57,7 @@ adding the file, not by editing code. The agent's *subject* (a path, a command) 
 
 ## Phones
 
-The build is installed on both phones with `adb install -r` (never uninstall: it would lose the Keystore key and
-the phone link): S21 and S22, over Tailscale wireless debugging. `scripts/install-phone.sh` is the older helper.
+The build is installed on both phones with `scripts/install-phone.sh <ip:port>` (never uninstall: it would lose the
+Keystore key and the phone link): S21 and S22, over Tailscale wireless debugging. **Never a plain `adb install`**:
+the script records Play Store as the installer, and without it banking apps (Nu) refuse to open beside the island
+(docs/BANK-APPS.md). Ajustes in the app warns when it was installed the wrong way.

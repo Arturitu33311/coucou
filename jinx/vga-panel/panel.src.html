@@ -214,6 +214,16 @@ function mochiFrame(){
   const t0 = performance.now();
   const now = Date.now(), nowD = new Date(), hour = nowD.getHours();
   const mine = MochiLogic.isMine(M.active);
+  // Mochi está en un solo sitio: si la presencia lo tiene en la PC o en un teléfono, aquí no se dibuja.
+  if(!mine){
+    if(M.lastMood !== "away"){
+      M.lastMood = "away"; M.gesture = "None"; M.nextAt = 0;
+      cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+    }
+    $("mochi-lbl").textContent = "está en " + MochiLogic.deviceLabel(M.active);
+    $("mochi-outfit").textContent = "";
+    return;
+  }
   const mood = MochiLogic.decideMood({ emotion: M.emotion, hour, mine, unread: M.unread, forced: M.forced, now });
   if(mood !== M.lastMood){ M.lastMood = mood; M.popAt = now; }
   // gestos ociosos: solo en calma y con la pantalla suya

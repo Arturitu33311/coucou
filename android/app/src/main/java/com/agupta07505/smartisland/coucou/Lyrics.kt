@@ -55,7 +55,8 @@ object Lyrics {
         failedAt = 0L
         lines = emptyList()
         val app = context.applicationContext
-        if (!app.lyricsOn || title.isBlank()) return
+        // battery saver: the wallpapers draw no lyrics then, so do not spend the network on them either
+        if (!app.lyricsOn || title.isBlank() || WallpaperPowerGate.saverNow(app)) return
         thread(name = "lyrics") {
             val found = runCatching { load(app, artist, title, album, durationMs / 1000) }
                 .onFailure {

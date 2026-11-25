@@ -78,4 +78,4 @@ function build(): HubHost {
   };
 }
 
-export const notesTool: HubTool = { id: "notes", label: "Notes", typing: true, build };
+export const notesTool: HubTool = { id: "notes", group: "focus", label: "Notes", typing: true, build };

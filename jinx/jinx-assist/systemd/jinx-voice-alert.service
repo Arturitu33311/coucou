@@ -1,0 +1,12 @@
+[Unit]
+Description=Jinx voice alerts (speaks Jinx's notices in her v4 voice when the headphones are on the audio relay)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/bin/jinx-voice-alert
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

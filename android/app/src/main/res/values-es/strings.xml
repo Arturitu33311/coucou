@@ -66,4 +66,35 @@
     <string name="coucou_phrase_morning">Buenos días ☀️</string>
     <string name="coucou_phrase_afternoon">¿Un cafecito? ☕</string>
     <string name="coucou_phrase_evening">Ya casi a descansar 🌙</string>
+    <!-- Relay de audio: el sonido de la laptop por los audífonos que se quedan en este celular -->
+    <string name="audiolink_channel">Audio de la laptop</string>
+    <string name="audiolink_pc_channel">Sonando en la laptop</string>
+    <string name="audiolink_notification_title">Audio de la laptop</string>
+    <string name="audiolink_notification_text">Listo para oír tu laptop por los audífonos</string>
+    <string name="audiolink_swap_channel">Cambio de audífonos</string>
+    <string name="audiolink_release_title">Suelta los audífonos</string>
+    <string name="audiolink_release_text">La laptop los quiere. Toca para abrir Bluetooth y desconectarlos de este celular.</string>
+    <string name="audiolink_connect_title">Conecta los audífonos</string>
+    <string name="audiolink_connect_text">La laptop los soltó. Toca para abrir Bluetooth y conectarlos a este celular.</string>
+    <string name="coucou_handoff_title">Continuar en el celular</string>
+    <string name="coucou_handoff_working">Pasándolo…</string>
+    <string name="coucou_handoff_nolink">Sin enlace con la laptop</string>
+    <string name="coucou_handoff_noanswer">La laptop no respondió</string>
+    <string name="coucou_handoff_failed">No se pasó: %1$s</string>
+    <string name="coucou_handoff_connect">Conecta %1$s a este celular</string>
+    <string name="coucou_handoff_ready">Abierto. Dale play cuando tengas los audífonos</string>
+
+    <!-- Animación de desbloqueo (píldora estilo Glance) -->
+    <string name="glance_card_title">Animación al desbloquear</string>
+    <string name="glance_mode_off">Apagada</string>
+    <string name="glance_mode_always">Siempre</string>
+    <string name="glance_mode_face">Solo si el teléfono tiene rostro configurado</string>
+    <string name="glance_style_mochi">Mochi</string>
+    <string name="glance_style_ring">Anillo y candado</string>
+    <string name="glance_card_note">Android no dice si el teléfono se abrió con PIN, huella o rostro, así que la píldora solo dice «desbloqueado». Requiere bloqueo de pantalla. Con esto apagado se usa el candado de siempre.</string>
+    <string name="coucou_wp_saver_title">Wallpapers en ahorro de batería: simplificar</string>
+    <string name="coucou_wp_saver_desc">Con el ahorro de batería de Android activo (o la batería casi vacía, 15 o menos sin cargar), los wallpapers de Coucou pasan a una imagen fija y sencilla, sin animación, inclinación, partículas ni letra, que solo se redibuja al cambiar la canción o el minuto. Vuelven a la normalidad al salir del modo.</string>
+    <string name="coucou_wp_saver_auto">Automático</string>
+    <string name="coucou_wp_saver_always">Siempre</string>
+    <string name="coucou_wp_saver_never">Nunca</string>
 </resources>

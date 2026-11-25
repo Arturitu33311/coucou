@@ -8,15 +8,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- A Wi-Fi lock (audio link): keeps the radio awake while the laptop's sound is being played here. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- optional: only for the mobile signal dots of the home wallpaper's status gauge (without it they show the Wi-Fi level) -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Only for the experimental "copy to the laptop without pressing" (coucou/clip/ClipWatcher): the system logs a line
+         when it refuses the clipboard to the app, and reading it needs this, which Android grants only over adb
+         (`adb shell pm grant com.agupta07505.smartisland android.permission.READ_LOGS`). Never requested at run time. -->
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:ignore="ProtectedPermissions" />
@@ -27,11 +35,18 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Coucou: the fingerprint (or screen lock) asked before a permission is allowed from the phone -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -42,7 +57,7 @@
         android:name=".SmartIslandApp"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="Coucou"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="true"
@@ -50,20 +65,17 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SmartIsland">
 
+        <!-- SmartIsland's own screen: now the "Isla" tab of the Coucou app (one launcher icon). Kept for
+             anything that still opens it directly: the accessibility settings link here, so it stays exported. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.SmartIsland">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@style/Theme.SmartIsland" />
 
         <activity
             android:name=".coucou.CoucouTasksActivity"
             android:exported="true"
-            android:label="Coucou tasks"
+            android:label="Coucou"
             android:theme="@style/Theme.SmartIsland">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -78,9 +90,15 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
+            android:name=".coucou.handoff.HandoffActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
             android:name=".coucou.phone.PhoneSetupActivity"
             android:exported="false"
-            android:label="Coucou phone link"
+            android:label="Coucou · Ajustes"
             android:theme="@style/Theme.SmartIsland" />
 
         <receiver
@@ -104,6 +122,12 @@
                 android:value="Floating Dynamic Island overlay"
                 tools:targetApi="upsidedowncake" />
         </service>
+
+        <!-- The laptop's sound through the headphones that stay on this phone (off until turned on). -->
+        <service
+            android:name=".coucou.audiolink.AudioLinkService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <service
             android:name=".coucou.CoverLiveWallpaperService"
@@ -147,7 +171,7 @@
         <service
             android:name=".service.SmartIslandNotificationListenerService"
             android:exported="true"
-            android:label="@string/app_name"
+            android:label="Coucou"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />
@@ -189,6 +213,14 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.SmartIsland" />
+
+        <activity
+            android:name=".coucou.assist.JinxSheetActivity"
+            android:exported="false"
+            android:label="Jinx"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Coucou.Sheet" />
 
         <receiver
             android:name=".receiver.AutostartReceiver"

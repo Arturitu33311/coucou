@@ -47,6 +47,8 @@ data class MochiScene(
     val working: Boolean = false,
     /** Jinx is saying something right now, in this mood: it is her state he shows. */
     val jinxMood: MochiMood? = null,
+    /** What Jinx feels between messages (her emotion state, from the server): his face when all is calm. */
+    val jinxBackground: MochiMood? = null,
     /** Claude Code just finished what it was doing: he is glad (a short happy moment). */
     val finished: Boolean = false,
     /** A tool of Claude Code just failed: flat eyes and a red dot for a moment (as on the laptop). */
@@ -117,10 +119,55 @@ object MochiReactions {
      * would double the reaction.
      */
     fun freshArrival(notifications: List<IslandNotification>, now: Long, windowMs: Long = FRESH_MS): Boolean =
-        notifications.any { n ->
-            n.mode != IslandMode.Desk && n.mode != IslandMode.Empty &&
-                !n.key.startsWith("coucou_") && n.timeMillis >= now - windowMs
+        notifications.any { n -> isNews(n) && n.timeMillis >= now - windowMs }
+
+    /** Anything but his own cards (desk, agent, approvals, questions) is something that can surprise him. */
+    fun isNews(n: IslandNotification): Boolean =
+        n.mode != IslandMode.Desk && n.mode != IslandMode.Empty && !n.key.startsWith("coucou_")
+
+    /**
+     * One notification, as he remembers it: its key, when it arrived and what it says. An update of the same card
+     * with new words is news again; the same card re-emitted by a list change is not.
+     */
+    fun newsId(n: IslandNotification): String = "${n.key}@${n.timeMillis}#${(n.title + "|" + n.text).hashCode()}"
+
+    /** What a look at the list found: the news to react to, and everything this face now knows it has seen. */
+    data class NewsScan(val news: List<String>, val seenAfter: Set<String>)
+
+    /**
+     * Looks at the list for something this face has not reacted to yet. Every list change re-runs this, so the rule is
+     * "react once per notification", not "react while it is recent" (that made him jump again at every unrelated
+     * change in the six seconds after an arrival).
+     *  - [seen]: what this face already reacted to (or knew when it appeared).
+     *  - [started]: this face has looked at the list before; until then only a recent arrival counts (an old card on
+     *    the island when he first appears is not news).
+     *  - [reactedEarlier]: another face of this process reacted to it a while ago, so for a face that has only just
+     *    appeared (the island opened, the card unfolded) it is not a second reaction.
+     */
+    fun scanNews(
+        notifications: List<IslandNotification>,
+        now: Long,
+        seen: Set<String>,
+        started: Boolean,
+        reactedEarlier: (String) -> Boolean = { false },
+        windowMs: Long = FRESH_MS,
+    ): NewsScan {
+        val news = mutableListOf<String>()
+        val after = LinkedHashSet(seen)
+        for (n in notifications) {
+            if (!isNews(n)) continue
+            val id = newsId(n)
+            if (id in after) continue
+            after += id
+            if (reactedEarlier(id)) continue
+            if (started || n.timeMillis >= now - windowMs) news += id
         }
+        while (after.size > 100) after.remove(after.first())
+        return NewsScan(news, after)
+    }
+
+    /** Priority of the faces: news (a pop of 2 s) must not be hidden by the 4 s hello of an unlock it probably caused. */
+    fun surpriseOverGreeting(scene: MochiScene): Boolean = scene.surprised
 
     /**
      * News latches the surprise open; silence lets it close. It never moves backwards, because the
@@ -147,6 +194,13 @@ object MochiReactions {
     fun latchCelebration(previousUntil: Long, previousOpen: Int, open: Int, now: Long): Long =
         if (previousOpen > 0 && open == 0) now + CELEBRATE_MS else previousUntil
 
+    /**
+     * His face when nothing moves him: Jinx's background mood, if she has one, in place of the plain calm face.
+     * Night naps and a coming reminder (the calm moods that mean something) keep theirs. Pure, tested.
+     */
+    fun calmOrJinx(calm: MochiMood, background: MochiMood?): MochiMood =
+        if (calm == MochiMood.Idle && background != null) background else calm
+
     /** Night (00:00–05:59 local): he naps through calm tasks, overdue ones still wake him. */
     fun isNight(nowMs: Long = System.currentTimeMillis()): Boolean {
         val hour = java.util.Calendar.getInstance().apply { timeInMillis = nowMs }.get(java.util.Calendar.HOUR_OF_DAY)
@@ -168,9 +222,11 @@ object MochiReactions {
         searching: Boolean = false,
         thinking: Boolean = false,
         jinxMood: MochiMood? = null,
+        jinxBackground: MochiMood? = null,
     ): MochiScene =
         MochiScene(
             jinxMood = jinxMood,
+            jinxBackground = jinxBackground,
             errored = errorUntil > now,
             searching = working && searching,
             thinking = working && thinking && !searching,
@@ -242,11 +298,20 @@ fun rememberMochiScene(): MochiScene {
     var greetedUntil by remember { mutableLongStateOf(0L) }
     var glanceUntil by remember { mutableLongStateOf(0L) }
 
-    // Latch on every list change (a newcomer extends the surprise and re-opens the stare)…
+    // React once per notification (a list change must not make him jump again for one already seen), and not
+    // twice because this face appeared while another already reacted (the island opened, the card unfolded).
+    val seen = remember { mutableSetOf<String>() }
+    var started by remember { mutableStateOf(false) }
     LaunchedEffect(notifications) {
         val now = System.currentTimeMillis()
-        surprisedUntil = MochiReactions.latchSurprise(surprisedUntil, notifications, now)
-        glanceUntil = MochiReactions.latchGlance(glanceUntil, notifications, now)
+        val scan = MochiReactions.scanNews(notifications, now, seen, started, { ReactionLedger.reactedEarlier(it, now) })
+        seen.clear(); seen.addAll(scan.seenAfter)
+        started = true
+        if (scan.news.isNotEmpty()) {
+            scan.news.forEach { ReactionLedger.note(it, now) }
+            surprisedUntil = maxOf(surprisedUntil, now + MochiReactions.SURPRISE_MS)
+            glanceUntil = maxOf(glanceUntil, now + MochiReactions.GLANCE_MS)
+        }
     }
     // …and close each once its time runs out, so the glyph goes back to calm without new input.
     LaunchedEffect(surprisedUntil) {
@@ -275,10 +340,18 @@ fun rememberMochiScene(): MochiScene {
     // (Claude Code's work is not shown on him: the Mochi of the island is Jinx's, and its own card on the
     // main pill says what Claude Code is doing. Only what Jinx herself says moves his face.)
     val peerMusic by DeviceActivity.peerMusic.collectAsState()
+    val background by com.agupta07505.smartisland.coucou.presence.JinxBackground.emote.collectAsState()
     // Every unlock re-opens the hello (same moment the padlock badge shows)…
     val unlockMs = rememberUnlockMs()
     LaunchedEffect(unlockMs) {
-        if (unlockMs > 0) greetedUntil = MochiReactions.latchGreeting(greetedUntil, unlockMs)
+        // The unlock pill (with Mochi inside it) says hello when it owns this unlock: not twice.
+        val ctx = app
+        val quiet = GlanceUnlockLogic.bubbleStaysQuiet(
+            GlanceSettings.mode(ctx), GlanceSettings.style(ctx),
+            ctx.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true,
+            GlanceUnlockLogic.faceConfigured(ctx),
+        )
+        if (unlockMs > 0 && !quiet) greetedUntil = MochiReactions.latchGreeting(greetedUntil, unlockMs)
     }
     // …and it too closes by itself.
     LaunchedEffect(greetedUntil) {
@@ -292,6 +365,7 @@ fun rememberMochiScene(): MochiScene {
         notifications, System.currentTimeMillis(), surprisedUntil, greetedUntil, glanceUntil, 0L,
         peerMusic = peerMusic,
         jinxMood = MochiReactions.jinxMood(notifications),
+        jinxBackground = com.agupta07505.smartisland.coucou.assist.JinxMood.moodOf(background),
     )
 }
 
@@ -315,4 +389,17 @@ fun rememberCelebration(open: Int): Boolean {
         }
     }
     return celebratedUntil > System.currentTimeMillis()
+}
+
+/** What the faces of this process have already reacted to, and when (so a face that appears later does not jump again). */
+object ReactionLedger {
+    private val first = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Another face reacted to [id] more than [graceMs] ago. (Two faces drawn at once both react: they are within the grace.) */
+    fun reactedEarlier(id: String, now: Long, graceMs: Long = 400L): Boolean = first[id]?.let { now - it > graceMs } == true
+
+    fun note(id: String, now: Long) {
+        first.putIfAbsent(id, now)
+        if (first.size > 200) first.entries.removeAll { now - it.value > 60_000L }
+    }
 }

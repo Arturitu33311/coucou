@@ -1,0 +1,28 @@
+{
+  "href": "https://api.spotify.com/v1/artists/4Z8W4fKeB5YxbusRsdQVPb/albums?offset=0&limit=10",
+  "limit": 10, "offset": 0, "total": 3,
+  "items": [
+    {
+      "id": "6dVIqQ8qmQ5GBnJ9shOYGE", "name": "OK Computer", "album_type": "album", "release_date": "1997-05-21", "total_tracks": 12,
+      "uri": "spotify:album:6dVIqQ8qmQ5GBnJ9shOYGE",
+      "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+      "images": [
+        { "height": 640, "url": "https://i.scdn.co/image/ab67616d0000b273c8b4-640", "width": 640 },
+        { "height": 300, "url": "https://i.scdn.co/image/ab67616d00001e02c8b4-300", "width": 300 },
+        { "height": 64, "url": "https://i.scdn.co/image/ab67616d00004851c8b4-64", "width": 64 }
+      ]
+    },
+    {
+      "id": "6ZG5lRT77aJ3btmArcykra", "name": "Kid A", "album_type": "album", "release_date": "2000-10-02", "total_tracks": 10,
+      "uri": "spotify:album:6ZG5lRT77aJ3btmArcykra",
+      "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+      "images": [ { "height": 300, "url": "https://i.scdn.co/image/ab67616d00001e02kida-300", "width": 300 } ]
+    },
+    {
+      "id": "2ix8vWvvSp2Yo7rKMiWpkg", "name": "Pablo Honey", "album_type": "album", "release_date": "1993-02-22", "total_tracks": 12,
+      "uri": "spotify:album:2ix8vWvvSp2Yo7rKMiWpkg",
+      "artists": [ { "id": "4Z8W4fKeB5YxbusRsdQVPb", "name": "Radiohead" } ],
+      "images": []
+    }
+  ]
+}

@@ -1,0 +1,795 @@
+/* The desktop player (desktop.html): the scene, the clock, the gauge, the edge light and the lyric line, laid out on
+   the approved mockup's 1920×1080 stage (.superpowers/mockup/project/Main.dc.html, v5) scaled to the screen.
+   `.lg` (liquid glass) and `.cover` (glass cover with its floor reflection) are the mockup's, verbatim, for every
+   panel of the page. The accent comes from main.ts as --accent / --accent-glow / --accent-soft. */
+
+:root {
+  --accent: #5eead4;
+  --accent-glow: rgba(94, 234, 212, 0.55);
+  --accent-soft: rgba(94, 234, 212, 0.22);
+  --scene-0: #0d1a24;
+  --scene-1: #13303a;
+  --scene-2: #1f5a55;
+  --scene-3: #2c7e72;
+  --scene-4: #0b1513;
+  --dp-ink: #f4f5f7;
+  --dp-ink-2: rgba(255, 255, 255, 0.72);
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0d12;
+  color: var(--dp-ink);
+  font-family: Inter, "Inter Tight", system-ui, "Cantarell", "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#dp {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* ── Scene ─────────────────────────────────────────────────────────────────── */
+
+.dp-scene {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--scene-0) 0%, var(--scene-1) 38%, var(--scene-2) 62%, var(--scene-3) 74%, var(--scene-4) 100%);
+}
+
+/* the current cover, enlarged and blurred; tinted by the wash over it */
+.dp-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.2);
+  filter: blur(70px) saturate(150%);
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+#dp.has-art .dp-art {
+  opacity: 0.6;
+}
+
+.dp-wash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  mix-blend-mode: multiply;
+  transition: opacity 0.9s ease;
+}
+#dp.has-art .dp-wash {
+  opacity: 0.55;
+}
+
+/* the floor darkens towards the bottom (mockup) */
+.dp-floor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28%;
+  background: linear-gradient(180deg, rgba(10, 8, 8, 0) 0%, rgba(10, 8, 8, 0.85) 100%);
+  pointer-events: none;
+}
+
+/* the fine light along the edges, in the cover's colour (mockup) */
+.dp-edge {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 38px 6px var(--accent-glow), inset 0 0 120px 10px var(--accent-soft);
+  pointer-events: none;
+  transition: box-shadow 1.2s ease;
+}
+
+/* ── Stage: the mockup's 1920×1080, scaled to the screen by main.ts ────────── */
+
+.dp-stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  transform-origin: 0 0;
+}
+
+.dp-halo {
+  position: absolute;
+  left: 520px;
+  top: 120px;
+  width: 880px;
+  height: 880px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--accent-soft) 0%, rgba(0, 0, 0, 0) 70%);
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+/* ── Clock (top left) ──────────────────────────────────────────────────────── */
+
+.dp-time {
+  position: absolute;
+  left: 150px;
+  top: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.dp-date {
+  font-size: 24px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  letter-spacing: 0.2px;
+  padding-left: 10px;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.25);
+}
+.dp-clock {
+  display: block;
+  margin-top: 2px;
+}
+
+/* ── Gauge (top right), a glass pill ───────────────────────────────────────── */
+
+/* `.lg.` so the glass rule further down (position: relative) cannot pull it back to the top left. */
+.lg.dp-gauge {
+  position: absolute;
+  top: 28px;
+  right: 36px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 18px 10px 12px;
+  border-radius: 999px;
+}
+.dp-gauge[hidden] {
+  display: none;
+}
+.dp-gauge-ring {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+.dp-gauge-ring svg {
+  display: block;
+}
+.dp-gauge-arc {
+  stroke: var(--accent);
+  transition: stroke-dashoffset 0.6s ease, stroke 0.6s ease;
+}
+.dp-gauge.low .dp-gauge-arc {
+  stroke: rgb(255, 99, 99);
+}
+.dp-gauge-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.dp-gauge.low .dp-gauge-num {
+  color: rgb(255, 130, 130);
+}
+.dp-gauge-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dp-gauge-state {
+  font-size: 13px;
+  font-weight: 600;
+}
+.dp-gauge-net {
+  font-size: 12px;
+  color: var(--dp-ink-2);
+}
+.dp-gauge.offline .dp-gauge-net {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Slots the touchable panels fill (next task) ───────────────────────────── */
+
+/* "Continue listening" scrolls in a tall viewport that reaches up over the clock (the reference): above it in
+   z-order, the clock stays put underneath. The padding puts the header where the mockup does (150, 380) and
+   leaves room for the turned cards' edges and shadows; the masks fade the cards at the top and the bottom. */
+#dp-recents {
+  position: absolute;
+  left: 110px;
+  top: 20px;
+  width: 410px;
+  height: 1020px;
+  box-sizing: border-box;
+  padding: 360px 40px 180px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  z-index: 2;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 110px, #000 58%, rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0, #000 110px, #000 58%, rgba(0, 0, 0, 0) 100%);
+}
+#dp-recents::-webkit-scrollbar {
+  display: none;
+}
+#dp-recents.dragging {
+  cursor: grabbing;
+}
+#dp-flow {
+  position: absolute;
+  left: 620px;
+  top: 330px;
+  width: 1040px;
+  height: 400px;
+}
+#dp-search {
+  position: absolute;
+  left: 760px;
+  top: 790px;
+  width: 760px;
+}
+#dp-bar {
+  position: absolute;
+  left: 760px;
+  top: 862px;
+  width: 760px;
+}
+
+/* ── The line being sung, under the player bar ─────────────────────────────── */
+
+.dp-lyric {
+  position: absolute;
+  left: 760px;
+  top: 948px;
+  width: 760px;
+  text-align: center;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.dp-lyric.on {
+  opacity: 1;
+}
+
+/* ── Liquid glass (the mockup's classes, verbatim) ─────────────────────────── */
+
+.lg {
+  position: relative;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.06) 38%, rgba(255, 255, 255, 0.03) 62%, rgba(255, 255, 255, 0.1) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.12), inset 1px 0 0 rgba(255, 255, 255, 0.18), 0 18px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(26px) saturate(170%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+}
+.lg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(120% 60% at 20% 0%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 55%);
+  pointer-events: none;
+}
+
+.cover {
+  position: relative;
+  overflow: visible;
+}
+.cover::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.08) 32%, rgba(255, 255, 255, 0) 50%, rgba(255, 255, 255, 0.12) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+/* the reflection on the floor: the same background, flipped and fading */
+.cover::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 45%;
+  margin-top: 6px;
+  border-radius: inherit;
+  background: inherit;
+  transform: scaleY(-1);
+  opacity: 0.22;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.9) 100%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.9) 100%);
+  pointer-events: none;
+}
+
+/* "Continue listening": rows turned towards the centre, never sunk (rotateY only, no translateZ). Each row
+   carries its own perspective() (tilt.ts): the scroller's overflow and masks would flatten a shared one. */
+.stack {
+  perspective: 900px;
+  perspective-origin: 120% 30%;
+}
+.tilt {
+  transform-origin: left center;
+}
+/* Where the engine draws no 3D (#dp.flat3d, tilt.ts) the cards are slanted instead; the far edge is shaded
+   so the turn still reads, and the cover flow's side covers sit a little darker. */
+#dp.flat3d .lg.tilt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 45%, rgba(0, 0, 0, 0.18) 100%);
+  pointer-events: none;
+}
+/* the "now" card's far corner rises: a little more room under the header */
+#dp.flat3d .dp-recents-header {
+  margin-bottom: 8px;
+}
+#dp.flat3d .dp-flow-cover.side {
+  filter: brightness(0.8);
+}
+
+/* ── Panel Styles (Task 5) ─────────────────────────────────────────────────── */
+
+.dp-visually-hidden {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+/* 1. Recents panel */
+.dp-recents-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* always some travel, even with one recent: the header can always go up over the clock */
+  min-height: calc(100% + 300px);
+}
+.dp-recents-header {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+}
+.dp-recents-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.dp-now-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 20px;
+}
+.dp-now-cover {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.dp-now-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-grow: 1;
+  gap: 2px;
+}
+.dp-now-title {
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-now-sub {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-now-play {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dp-recent-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dp-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.dp-recent-row:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.dp-recent-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.dp-recent-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-grow: 1;
+}
+.dp-recent-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-recent-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-recent-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/* 2. Cover flow */
+.dp-flow-container {
+  position: relative;
+  width: 1040px;
+  height: 400px;
+  perspective: 1400px;
+}
+/* the covers' parent carries the perspective (the container's would not reach them) */
+.dp-flow-stage {
+  position: absolute;
+  inset: 0;
+  perspective: 1400px;
+}
+.dp-flow-cover {
+  cursor: pointer;
+  border-radius: 18px;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.18);
+  transition: transform 0.4s ease, opacity 0.4s ease, left 0.4s ease, top 0.4s ease, width 0.4s ease, height 0.4s ease;
+}
+.dp-flow-caption {
+  position: absolute;
+  left: 380px;
+  width: 280px;
+  top: 318px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  z-index: 20;
+}
+.dp-flow-title {
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.dp-flow-sub {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 3. Search */
+.dp-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px 12px 18px;
+  border-radius: 999px;
+  box-sizing: border-box;
+}
+#dp-search-input {
+  flex-grow: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: #fff;
+  font: 16px Inter, system-ui, sans-serif;
+}
+#dp-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.48);
+}
+.dp-search-sources {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.dp-src-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: 600 12px Inter, system-ui, sans-serif;
+  color: #fff;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.dp-src-btn.active {
+  color: #101114;
+  background: #1ed760;
+}
+/* above the field: the results, then the feedback line right over it */
+.dp-search-over {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 50;
+  pointer-events: none;
+}
+.dp-search-over > * {
+  pointer-events: auto;
+}
+.dp-search-results {
+  max-height: 380px;
+  overflow-y: auto;
+  border-radius: 20px;
+  padding: 8px;
+  z-index: 50;
+  box-sizing: border-box;
+}
+.dp-res-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.dp-res-row:hover,
+.dp-res-row.selected {
+  background: rgba(255, 255, 255, 0.16);
+}
+.dp-res-cover {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.dp-res-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex-grow: 1;
+}
+.dp-res-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-res-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-res-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.dp-search-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+}
+.dp-search-head {
+  padding: 8px 12px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the feedback line (feedback.ts): what a play did, a source's error, Connect Spotify */
+.dp-feedback {
+  display: none;
+  align-self: center;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  padding: 8px 10px 8px 16px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  font-size: 13px;
+}
+.dp-feedback.on {
+  display: flex;
+}
+.dp-msg {
+  color: rgba(255, 255, 255, 0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-msg.err {
+  color: #ffb4b4;
+}
+.dp-search-login-btn {
+  border: 0;
+  border-radius: 999px;
+  background: #1ed760;
+  color: #101114;
+  padding: 6px 14px;
+  font: 600 12px Inter, sans-serif;
+  cursor: pointer;
+}
+
+/* 4. Player bar */
+.dp-player-bar {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 18px;
+  border-radius: 22px;
+}
+.dp-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dp-bar-btn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease;
+}
+.dp-bar-btn.off {
+  opacity: 0.45;
+}
+.dp-bar-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.dp-bar-play-btn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  color: #101114;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dp-bar-cover {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.dp-bar-middle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-grow: 1;
+  min-width: 0;
+}
+.dp-bar-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dp-bar-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-bar-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.dp-bar-track {
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  overflow: hidden;
+}
+.dp-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--accent);
+  transition: width 0.1s linear;
+}
+.dp-bar-sub {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-bar-actions {
+  display: flex;
+  gap: 4px;
+}
+.dp-btn-dj {
+  font: 700 13px Inter, sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-art,
+  .dp-wash,
+  .dp-edge,
+  .dp-gauge-arc,
+  .dp-lyric {
+    transition: none;
+  }
+}

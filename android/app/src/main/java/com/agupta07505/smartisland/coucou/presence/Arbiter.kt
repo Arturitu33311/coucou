@@ -7,7 +7,9 @@
  * The rules, in order:
  *  1. The server decides only when everyone we can see reaches it and agrees on the answer, and the
  *     answer is one of our devices. (The server only knows who sends it a heartbeat: if one of us
- *     does not, its "active" would hide the other for no reason.)
+ *     does not, its "active" would hide the other for no reason.) Its "vga" means nobody is in use:
+ *     Mochi goes to the panel and no device here shows him, unless one of us with its screen on was
+ *     touched within the server's own limit (its answer is up to a heartbeat old): then rule 2 among those.
  *  2. Otherwise the devices that can hear each other decide among themselves: the one with a screen
  *     on that was touched most recently. A device that was already the active one keeps it unless
  *     another leads by a clear margin, so a stray touch does not flip the island back and forth.
@@ -44,6 +46,18 @@ object Arbiter {
         }
     }
 
+    /** The server's failsafe display: when it names this one, Mochi is on the VGA panel and on no device here. */
+    const val VGA = "vga"
+
+    /** The server's own limit (mochi_presence.py IDLE_LIMIT): touched longer ago than this, a device is not in use. */
+    const val IDLE_LIMIT_S = 300L
+
+    /** The presence server's name for a device, in our ids: it calls the laptop "pc". */
+    fun fromServer(name: String?): String? = if (name == "pc") LAPTOP else name
+
+    /** A server answer we act on: one of ours, or the panel. Anything else is no answer. */
+    fun serverAnswer(name: String?): String? = fromServer(name)?.takeIf { it in KNOWN || it == VGA }
+
     /** A peer silent for longer than this is not there. */
     const val FRESH_MS = 15_000L
 
@@ -56,14 +70,18 @@ object Arbiter {
 
         // 1. The server, only when all of us can see it and agree.
         val named = me.serverActive
-        if (me.serverOk && named != null && named in KNOWN &&
-            fresh.all { it.beat.serverOk && it.beat.serverActive == named }
-        ) return named
+        val agreed = me.serverOk && named != null && fresh.all { it.beat.serverOk && it.beat.serverActive == named }
+        if (agreed && named in KNOWN) return named!!
 
         // 2. The ones that hear each other.
         data class Cand(val id: String, val idle: Long, val screen: Boolean)
-        val group = listOf(Cand(me.device, me.idleS, me.screenOn)) +
+        var group = listOf(Cand(me.device, me.idleS, me.screenOn)) +
             fresh.map { Cand(it.beat.device, it.beat.idleS + it.ageMs / 1000, it.beat.screenOn) }
+        if (agreed && named == VGA) {
+            // Nobody in use, says the server: the panel has him, unless one of us is in use right now.
+            group = group.filter { it.screen && it.idle < IDLE_LIMIT_S }
+            if (group.isEmpty()) return VGA
+        }
         val awake = group.filter { it.screen }.ifEmpty { group }
         val best = awake.minWith(compareBy<Cand> { it.idle }.thenBy { it.id })
         val held = awake.firstOrNull { it.id == previous }

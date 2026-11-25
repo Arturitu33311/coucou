@@ -1,12 +1,11 @@
-// The link between the Hub's tasks and Jinx's pendientes (her list, ~/.hermes/state/pendientes.json
-// on the server). What Alan tells Jinx shows up in the Tasks tab, and what he creates there is
-// handed to her list, so her briefings and nudges know about it; finishing it on either side
-// finishes it on the other.
+// The link between the Hub's tasks and Jinx's pendientes (her list on the server). What Alan tells Jinx
+// shows up in the Tasks tab, and what he creates there is handed to her list, so her briefings and nudges
+// know about it; finishing it on either side finishes it on the other.
 //
-// Coucou never edits her file. Reading is a plain `cat`; every change goes through her own
-// module (`pendientes_store`: its `add` and `resolve`), run on the server by a FIXED script. The
-// request travels inside that script as base64, so nothing the user typed is ever part of a
-// command line, and each request is checked before it is sent.
+// Same door as the phones: the server's adapter `coucou_pendientes.py` (list / add / resolve, one JSON
+// line in, one out), which goes through her own `pendientes_store`. Coucou never edits her file, and nothing
+// the user typed is ever part of a command line: the request travels on stdin, each one checked before it
+// is sent. (jinx/jinx-assist/server/coucou_pendientes.py, deployed by deploy-server.sh.)
 
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -18,24 +17,17 @@ use crate::tasks::{self, JinxRow, Task};
 
 static SYNC: Mutex<()> = Mutex::new(());
 
-/// Her pendientes file, relative to the server's home.
-const FILE: &str = ".hermes/state/pendientes.json";
+/// Whether the last round with the server's list worked (true until one fails): the phone↔laptop direct task merge
+/// (remote.rs) steps in only while it did not.
+static SERVER_OK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
-const SCRIPT: &str = r#"
-import base64, json, os, sys
-sys.path.insert(0, os.path.expanduser("~/.hermes/plugins/pendientes"))
-import pendientes_store as ps
-req = json.loads(base64.b64decode("__DATA__").decode("utf-8"))
-op = req["op"]
-if op == "add":
-    out = ps.add(req["titulo"], due=req.get("due"), categoria="personal", source="coucou",
-                 source_id=req["source_id"], nota=req.get("nota", ""))
-elif op == "resolve":
-    out = ps.resolve(req["id"], req["accion"])
-else:
-    out = {"error": "unknown op"}
-print(json.dumps(out, ensure_ascii=False))
-"#;
+pub fn server_ok() -> bool {
+    SERVER_OK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// What runs on the server: the adapter, with Hermes' python (what the phones' forced command runs too).
+/// The remote shell expands `$HOME`.
+const ADAPTER: &str = "$HOME/.hermes/hermes-agent/venv/bin/python $HOME/.hermes/scripts/coucou_pendientes.py";
 
 // ── Reading her list ───────────────────────────────────────────────────────────
 
@@ -75,6 +67,7 @@ fn plain_date(s: &str) -> bool {
 fn validate(req: &Value) -> Result<(), String> {
     let text_ok = |v: &Value, max: usize| v.as_str().is_some_and(|s| !s.trim().is_empty() && s.chars().count() <= max && !s.contains('\0'));
     match req["op"].as_str() {
+        Some("list") => Ok(()),
         Some("add") => {
             let id_ok = req["source_id"].as_str().is_some_and(|s| !s.is_empty() && s.len() <= 40 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
             let due_ok = req["due"].is_null() || req["due"].as_str().is_some_and(plain_date);
@@ -98,30 +91,17 @@ fn validate(req: &Value) -> Result<(), String> {
     }
 }
 
-fn base64(bytes: &[u8]) -> String {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for c in bytes.chunks(3) {
-        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
-        out.push(T[(n >> 18) as usize & 63] as char);
-        out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if c.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
-    }
-    out
-}
-
-/// The script that carries `req` (validated by the caller).
-fn script_for(req: &Value) -> String {
-    SCRIPT.replace("__DATA__", &base64(req.to_string().as_bytes()))
-}
-
-/// Runs one change on the server, over the shared ssh connection. Returns what her store answered.
+/// Runs one request on the adapter, over the shared ssh connection. Returns what it answered.
 pub fn request(host: &str, req: &Value) -> Result<Value, String> {
-    run(host, "PYTHONUTF8=1 python3 -", req)
+    run(host, ADAPTER, req)
 }
 
-/// `remote` is the fixed command that runs the script read from stdin.
+/// Her pendientes, all the rows the adapter lists (open ones, and the closed of the last month).
+pub fn list(host: &str) -> Result<Vec<JinxRow>, String> {
+    request(host, &json!({ "op": "list" })).map(|v| parse_rows(&v.to_string()))
+}
+
+/// `remote` is the fixed command; the request is the single JSON line on its stdin.
 fn run(host: &str, remote: &str, req: &Value) -> Result<Value, String> {
     if !crate::sysmon::safe_word(host) {
         return Err("The server's name is not valid".into());
@@ -140,7 +120,8 @@ fn run(host: &str, remote: &str, req: &Value) -> Result<Value, String> {
     {
         use std::io::Write;
         let mut stdin = child.stdin.take().ok_or("no stdin")?;
-        stdin.write_all(script_for(req).as_bytes()).map_err(|e| e.to_string())?;
+        stdin.write_all(req.to_string().as_bytes()).map_err(|e| e.to_string())?;
+        stdin.write_all(b"\n").map_err(|e| e.to_string())?;
     }
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -149,10 +130,10 @@ fn run(host: &str, remote: &str, req: &Value) -> Result<Value, String> {
     let text = String::from_utf8_lossy(&out.stdout);
     let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
     let v: Value = serde_json::from_str(last).map_err(|_| "Jinx's answer was not understood".to_string())?;
-    match v["error"].as_str() {
-        Some(e) => Err(e.to_string()),
-        None => Ok(v),
+    if v["ok"].as_bool() == Some(false) {
+        return Err(v["error"].as_str().unwrap_or("Jinx refused").to_string());
     }
+    Ok(v)
 }
 
 /// Closes (or dismisses) one of her pendientes.
@@ -193,10 +174,16 @@ pub fn sync(host: &str) -> SyncResult {
     let Ok(_guard) = SYNC.try_lock() else {
         return SyncResult { tasks: tasks::load(), jinx: Vec::new(), error: Some("busy".into()) };
     };
-    let read = || crate::sysmon::remote_cat(host, FILE).map(|t| parse_rows(&t));
+    let read = || list(host);
     let rows = match read() {
-        Ok(r) => r,
-        Err(e) => return SyncResult { tasks: tasks::load(), jinx: Vec::new(), error: Some(e) },
+        Ok(r) => {
+            SERVER_OK.store(true, std::sync::atomic::Ordering::Relaxed);
+            r
+        }
+        Err(e) => {
+            SERVER_OK.store(false, std::sync::atomic::Ordering::Relaxed);
+            return SyncResult { tasks: tasks::load(), jinx: Vec::new(), error: Some(e) };
+        }
     };
     let mut plan = tasks::Plan::default();
     let mut error = None;
@@ -262,16 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn base64_matches_the_standard_alphabet_and_padding() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64("llamar a mamá ✓".as_bytes()), "bGxhbWFyIGEgbWFtw6Eg4pyT");
-    }
-
-    #[test]
     fn only_well_formed_requests_are_sent() {
         let add = |t: Value, due: Value, sid: &str| json!({ "op": "add", "titulo": t, "due": due, "nota": "Coucou", "source_id": sid });
         assert!(validate(&add(json!("llamar a mamá"), json!("2026-10-06"), "6ac5209e-0")).is_ok());
@@ -288,38 +265,21 @@ mod tests {
     }
 
     #[test]
-    fn what_was_typed_never_reaches_the_script_as_code() {
-        // A title full of quotes and newlines travels only inside the base64 text.
-        let req = json!({ "op": "add", "titulo": "\"\"\"; import os; os.system('x') #\n'''", "due": null, "nota": "n", "source_id": "t1" });
-        let script = script_for(&req);
-        assert!(!script.contains("os.system"), "the request is encoded");
-        assert!(!script.contains("__DATA__"));
-        let data = script.split("b64decode(\"").nth(1).unwrap().split('"').next().unwrap();
-        assert!(data.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)));
+    fn what_was_typed_travels_as_one_json_line_never_in_a_command() {
+        let req = json!({ "op": "add", "titulo": "x\"; rm -rf ~ #\nsegunda", "due": null, "nota": "n", "source_id": "t1" });
+        let line = req.to_string();
+        assert!(!line.contains('\n'), "one line: the newline in the title is escaped");
+        assert!(validate(&req).is_ok());
+        assert!(!ADAPTER.contains("rm -rf") && !ADAPTER.contains('\''), "the command is fixed");
+        assert!(validate(&json!({ "op": "list" })).is_ok());
     }
 
-    /// Her REAL store code on the server, but with its data in a throw-away folder (HERMES_HOME), so
-    /// her list is never touched. By hand: `cargo test --lib real_store_roundtrip -- --ignored --nocapture`.
     #[test]
-    #[ignore]
-    fn real_store_roundtrip() {
-        let host = "server";
-        let remote = "mkdir -p /tmp/coucou-pend-test/state && HERMES_HOME=/tmp/coucou-pend-test PYTHONUTF8=1 python3 -";
-        let add = json!({ "op": "add", "titulo": "llamar a mamá \"hoy\" ✓", "due": "2026-10-06", "nota": "Coucou · 17:30", "source_id": "t-rt-1" });
-        let a = run(host, remote, &add).expect("add");
-        println!("add: {a}");
-        assert_eq!(a["status"], "creado");
-        let id = a["id"].as_str().unwrap().to_string();
-        // Asking again is an upsert on the task's id, not a second pendiente.
-        let again = run(host, remote, &add).expect("add again");
-        assert_eq!(again["id"], a["id"]);
-        assert_eq!(again["status"], "actualizado");
-        let done = run(host, remote, &json!({ "op": "resolve", "id": id, "accion": "hecho" })).expect("resolve");
-        println!("resolve: {done}");
-        assert_eq!(done["status"], "hecho");
-        let missing = run(host, remote, &json!({ "op": "resolve", "id": "deadbeef", "accion": "hecho" })).expect("resolve missing");
-        assert_eq!(missing["status"], "no_encontrado");
-        let _ = Command::new("ssh").args([host, "cat /tmp/coucou-pend-test/state/pendientes.json | head -30; rm -rf /tmp/coucou-pend-test"]).status();
+    fn the_adapter_answers_ok_false_with_an_error() {
+        let refused: Value = serde_json::from_str(r#"{"ok":false,"error":"título no válido"}"#).unwrap();
+        assert_eq!(refused["ok"].as_bool(), Some(false));
+        let rows = parse_rows(r#"{"ok":true,"items":[{"id":"a1","titulo":"x","status":"pendiente"}]}"#);
+        assert_eq!(rows.len(), 1);
     }
 
     #[test]
