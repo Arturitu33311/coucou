@@ -14,6 +14,7 @@ import type { PlayerItem, PlayerSource, SourceError } from "../core/player";
 import { DEBOUNCE_MS, nextIndex, QueryGate } from "../views/player";
 import { t } from "../i18n/i18n";
 import type { Feedback } from "./feedback";
+import { staggerDelay } from "./motion";
 
 export { DEBOUNCE_MS, nextIndex, QueryGate };
 
@@ -227,9 +228,15 @@ export function buildSearch(container: HTMLElement, feedback: Feedback): SearchV
     return e;
   }
 
+  let freshRows = true;
+
   function row(item: PlayerItem, index: number): HTMLElement {
     const r = document.createElement("div");
     r.className = "dp-res-row";
+    if (freshRows) {
+      r.classList.add("dp-res-in");
+      r.style.animationDelay = `${staggerDelay(index)}ms`;
+    }
     r.setAttribute("role", "option");
     const cover = document.createElement("div");
     cover.className = "cover dp-res-cover";
@@ -264,6 +271,8 @@ export function buildSearch(container: HTMLElement, feedback: Feedback): SearchV
 
   /** The panel from the state: a heading for an album, the rows, or why there are none. */
   function render() {
+    // the rows stagger in when the list opens or replaces a message, not on each refinement of the same list
+    freshRows = !resultsPanel.querySelector(".dp-res-row");
     resultsPanel.replaceChildren();
     if (album) resultsPanel.append(line("dp-search-head", `${album.title} · ${t("Album")}`));
     if (items.length > 0) {

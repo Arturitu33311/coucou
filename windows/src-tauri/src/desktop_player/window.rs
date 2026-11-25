@@ -66,6 +66,8 @@ pub fn show(app: &AppHandle) {
     {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || linux::show(&handle));
+        // after it on the main thread: the video window shows, then the player is raised over it
+        crate::desktop_player::video::follow_desktop(app, true);
     }
     #[cfg(not(target_os = "linux"))]
     let _ = app;
@@ -78,6 +80,7 @@ pub fn hide(app: &AppHandle) {
     {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || linux::hide(&handle));
+        crate::desktop_player::video::follow_desktop(app, false);
     }
     #[cfg(not(target_os = "linux"))]
     let _ = app;

@@ -14,6 +14,8 @@
 // and both stop while the page is hidden.
 
 import "./desktop.css";
+import "./immersive.css";
+import "./kinetic.css";
 import { Bridge, onEvent } from "../core/bridge";
 import type { LyricLine, MusicInfo, MusicTrack, Settings, SysInfo } from "../core/state";
 import { averageColor, lyricIndex, musicPosition } from "../island/music";
@@ -26,9 +28,12 @@ import { AlbumSource, buildFlow, fetchArtistAlbums, flowArtist, type FlowView } 
 import { buildSearch, QueryGate, type SearchView } from "./search";
 import { buildPlayerBar, type PlayerBarView } from "./bar";
 import { Feedback } from "./feedback";
-import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel } from "./logic";
+import { lyricShown, playedMatch, playerSource, progressTimerWanted, rereadWanted, SongLists, sourceLabel, videoKeyOf } from "./logic";
 import type { PlayerItem } from "../core/player";
 import { has3d } from "./tilt";
+import { buildImmersive, type ImmersiveView } from "./immersive";
+import { buildKinetic } from "./kinetic";
+import { initMotion } from "./motion";
 
 /** The mockup's stage; everything is laid out on it and it is scaled to the screen. */
 const STAGE_W = 1920;
@@ -47,11 +52,16 @@ function div(cls: string, id = ""): HTMLDivElement {
 }
 
 const root = document.getElementById("dp")!;
+const motion = initMotion(root);
 const scene = div("dp-scene");
-const art = document.createElement("img");
+// The cover behind everything, blurred once per song into a small canvas the browser enlarges smoothly
+// (bakeArt). A CSS blur(70px) was re-run over the whole screen on every repaint above it, with no
+// compositing to keep the result: scrolling the column cost a whole core.
+const art = document.createElement("canvas");
 art.className = "dp-art";
-art.alt = "";
-art.decoding = "async";
+const artImg = new Image();
+artImg.decoding = "async";
+artImg.addEventListener("load", () => bakeArt(artImg, art));
 const wash = div("dp-wash");
 const floor = div("dp-floor");
 const stage = div("dp-stage");
@@ -70,6 +80,8 @@ time.append(date, clockCanvas);
 const gauge = buildGauge();
 const lyric = div("dp-lyric");
 lyric.setAttribute("aria-live", "off");
+/** The same lyrics in full screen, word by word (kinetic.ts). */
+const kinetic = buildKinetic();
 
 // the slots the next panels fill, at the mockup's places
 const slots = ["dp-recents", "dp-flow", "dp-search", "dp-bar"].map((id) => div("", id));
@@ -79,6 +91,7 @@ let recentsView: RecentsView | null = null;
 let flowView: FlowView | null = null;
 let searchView: SearchView | null = null;
 let barView: PlayerBarView | null = null;
+let immersiveView: ImmersiveView | null = null;
 const albumSource = new AlbumSource(fetchArtistAlbums);
 /** Whether the line being sung is shown (the bar's lyrics button). */
 let lyricsOn = true;
@@ -94,12 +107,20 @@ function buildPanels() {
   // the front cover's album lists its songs in the results
   flowView = buildFlow(slots[1], albumSource, (album) => searchView?.showAlbum(album), flat);
   searchView = buildSearch(slots[2], feedback);
-  barView = buildPlayerBar(slots[3], feedback, () => {
+  barView = buildPlayerBar(slots[3], () => {
     lyricsOn = !lyricsOn;
     barView?.setLyrics(lyricsOn);
     paintLyric();
   });
   barView.setLyrics(lyricsOn);
+  // full screen (immersive.ts): its button joins the bar's actions
+  immersiveView = buildImmersive({
+    root,
+    isPlaying: () => track?.status === "Playing",
+    hasTrack: () => !!track,
+    log: (m) => void Bridge.log(m),
+  });
+  barView.root.querySelector(".dp-bar-actions")?.prepend(immersiveView.button);
 }
 
 function relabelPanels() {
@@ -107,9 +128,10 @@ function relabelPanels() {
   flowView?.relabel();
   searchView?.relabel();
   barView?.relabel();
+  immersiveView?.relabel();
 }
 
-stage.append(halo, time, gauge.root, ...slots, lyric);
+stage.append(halo, time, gauge.root, ...slots, lyric, kinetic.root);
 root.append(scene, art, wash, floor, stage, edge);
 
 const clock = new Clock(clockCanvas, CLOCK_GLYPH_H);
@@ -160,6 +182,8 @@ function updatePanels() {
   barView?.setTrack(track, artData, source);
   recentsView?.setTrack(track, artData, source);
   syncProgress();
+  syncVideoPlay();
+  immersiveView?.sync();
   // the play state, a seek or the cover arriving: the lists stay as they are
   if (songLists.changed(trackKey)) void refreshLists();
 }
@@ -202,9 +226,85 @@ function showWantedArt(key: string) {
   }
 }
 
+// ── Background video ──────────────────────────────────────────────────────────
+
+const videoGate = new QueryGate();
+let videoPaused: boolean | null = null;
+/** The song the video was asked for: title and artists only (a player switch or a late length is the same song). */
+let videoKey = "";
+/** While a video shows and the song plays, the video is lined up with it this often. */
+const VIDEO_SYNC_MS = 4000;
+let videoSyncTimer: number | null = null;
+
+/** Asks for the song's music video (once per song); the page's own scene stays until it plays. */
+async function syncVideo(t: MusicTrack | null) {
+  const key = videoKeyOf(t);
+  if (key === videoKey) return;
+  videoKey = key;
+  const seq = videoGate.next();
+  videoPaused = null;
+  setVideo(false);
+  if (!t) {
+    void Bridge.desktopVideo("", [], 0, 0, false);
+    return;
+  }
+  const playing = t.status === "Playing";
+  const shown = await Bridge.desktopVideo(t.title, t.artists, t.lengthMs / 1000, musicPosition(t as MusicInfo) / 1000, playing);
+  if (!videoGate.isCurrent(seq)) return;
+  setVideo(!!shown);
+  syncVideoPlay();
+  syncVideoPosition();
+}
+
+/** Lines the video up with where the song is now. */
+function syncVideoPosition() {
+  if (!track || !root.classList.contains("has-video")) return;
+  void Bridge.desktopVideoSync(musicPosition(track as MusicInfo) / 1000);
+}
+
+/** The periodic line-up runs while a video shows, the song plays and the page is seen. */
+function syncVideoTimer() {
+  const want = root.classList.contains("has-video") && track?.status === "Playing" && !document.hidden;
+  if (want && videoSyncTimer == null) {
+    videoSyncTimer = window.setInterval(syncVideoPosition, VIDEO_SYNC_MS);
+  } else if (!want && videoSyncTimer != null) {
+    window.clearInterval(videoSyncTimer);
+    videoSyncTimer = null;
+  }
+}
+
+function setVideo(on: boolean) {
+  root.classList.toggle("has-video", on);
+  document.documentElement.classList.toggle("has-video", on);
+}
+
+/** The video plays while the song plays and the page is seen; a seek or a resume lines it up again. */
+function syncVideoPlay() {
+  syncVideoTimer();
+  if (!root.classList.contains("has-video")) return;
+  const paused = !(track?.status === "Playing" && !document.hidden);
+  const at = track ? musicPosition(track as MusicInfo) : 0;
+  // a seek moves the song away from its own clock: the video follows at once
+  const now = Date.now();
+  const last = lastVideoAt;
+  const expected = last ? last.pos + (last.playing ? now - last.when : 0) : at;
+  const jumped = track != null && last != null && Math.abs(at - expected) > 1500;
+  lastVideoAt = track ? { pos: at, when: now, playing: track.status === "Playing" } : null;
+  if (jumped) syncVideoPosition();
+  if (paused === videoPaused) return;
+  videoPaused = paused;
+  void Bridge.desktopVideoPause(paused).then(() => {
+    if (!paused) syncVideoPosition();
+  });
+}
+
+/** Where the song was at the last check, to tell a seek from time passing. */
+let lastVideoAt: { pos: number; when: number; playing: boolean } | null = null;
+
 function applyTrack(t: MusicTrack | null) {
   // a player with no title is idle: the hour's scene again
   if (!t || !t.title) {
+    if (track) void syncVideo(null);
     track = null;
     trackKey = "";
     artUrl = "";
@@ -227,6 +327,7 @@ function applyTrack(t: MusicTrack | null) {
     // from the last read; the next one (once per song) may find it
     played = playedMatch(t.player, t.title, recents);
     void loadLyrics(key);
+    void syncVideo(t);
   }
   if (newSong || t.artUrl !== artUrl) {
     artUrl = t.artUrl;
@@ -288,8 +389,79 @@ async function loadLyrics(key: string) {
 function showArt(data: string | null) {
   artData = data;
   root.classList.toggle("has-art", !!data);
-  if (data) art.src = data;
-  else art.removeAttribute("src");
+  if (data) artImg.src = data;
+}
+
+/** Side of the shrunk cover, and the size of the baked scene (16:9) the browser enlarges to the screen. */
+const ART_SMALL = 32;
+const ART_W = 160;
+const ART_H = 90;
+
+/**
+ * The scene's cover: shrunk to a few pixels, saturated by half again (the old CSS saturate(150%)),
+ * enlarged 1.2x to cover the 16:9 scene as the CSS scale did, then box-blurred three times. Runs once
+ * per cover on 14 400 pixels; the screen-sized result is the browser's smooth enlargement of it.
+ */
+function bakeArt(img: HTMLImageElement, out: HTMLCanvasElement) {
+  const small = document.createElement("canvas");
+  small.width = ART_SMALL;
+  small.height = ART_SMALL;
+  const sc = small.getContext("2d");
+  if (!sc) return;
+  sc.drawImage(img, 0, 0, ART_SMALL, ART_SMALL);
+  out.width = ART_W;
+  out.height = ART_H;
+  const ctx = out.getContext("2d");
+  if (!ctx) return;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  const side = ART_W * 1.2;
+  ctx.drawImage(small, (ART_W - side) / 2, (ART_H - side) / 2, side, side);
+  const px = ctx.getImageData(0, 0, ART_W, ART_H);
+  saturateAndBlur(px.data, ART_W, ART_H);
+  ctx.putImageData(px, 0, 0);
+}
+
+function saturateAndBlur(d: Uint8ClampedArray, w: number, h: number) {
+  for (let i = 0; i < d.length; i += 4) {
+    const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    for (let c = 0; c < 3; c++) d[i + c] = l + (d[i + c] - l) * 1.5;
+  }
+  const tmp = new Float32Array(w * h * 3);
+  for (let pass = 0; pass < 3; pass++) {
+    boxBlur(d, tmp, w, h, 6, true);
+    boxBlur(d, tmp, w, h, 6, false);
+  }
+}
+
+/** One box-blur pass of radius `r` along rows (`horizontal`) or columns, edges clamped. */
+function boxBlur(d: Uint8ClampedArray, tmp: Float32Array, w: number, h: number, r: number, horizontal: boolean) {
+  const lines = horizontal ? h : w;
+  const len = horizontal ? w : h;
+  const at = (line: number, k: number) => (horizontal ? line * w + k : k * w + line) * 4;
+  for (let line = 0; line < lines; line++) {
+    for (let k = 0; k < len; k++) {
+      let r0 = 0, g0 = 0, b0 = 0;
+      for (let o = -r; o <= r; o++) {
+        const i = at(line, Math.min(len - 1, Math.max(0, k + o)));
+        r0 += d[i];
+        g0 += d[i + 1];
+        b0 += d[i + 2];
+      }
+      const n = 2 * r + 1;
+      const t = (line * len + k) * 3;
+      tmp[t] = r0 / n;
+      tmp[t + 1] = g0 / n;
+      tmp[t + 2] = b0 / n;
+    }
+    for (let k = 0; k < len; k++) {
+      const i = at(line, k);
+      const t = (line * len + k) * 3;
+      d[i] = tmp[t];
+      d[i + 1] = tmp[t + 1];
+      d[i + 2] = tmp[t + 2];
+    }
+  }
 }
 
 // ── Scene, edge light and clock ───────────────────────────────────────────────
@@ -354,11 +526,15 @@ function paintLyric() {
   const t = track;
   const lines = lyrics;
   let text = "";
+  let nextText = "";
+  let lineMs = 4000;
   if (t && lines) {
     const pos = musicPosition(t as MusicInfo);
     const idx = lyricIndex(lines, pos);
     text = idx >= 0 ? lines[idx].text.trim() : "";
     const next = lines[idx + 1];
+    nextText = next ? next.text.trim() : "";
+    if (next) lineMs = next.t - Math.max(pos, idx >= 0 ? lines[idx].t : 0);
     if (t.status === "Playing" && !document.hidden && next) {
       lyricTimer = window.setTimeout(() => {
         lyricTimer = null;
@@ -371,6 +547,9 @@ function paintLyric() {
     if (text) lyric.textContent = text;
   }
   lyric.classList.toggle("on", lyricShown(text, lyricsOn));
+  kinetic.show(text, nextText, lineMs);
+  kinetic.setOn(lyricShown(text, lyricsOn));
+  kinetic.setPlaying(t?.status === "Playing" && !document.hidden);
 }
 
 // ── Gauge ─────────────────────────────────────────────────────────────────────
@@ -399,6 +578,7 @@ function syncProgress() {
 
 function wake() {
   syncProgress();
+  syncVideoPlay();
   if (document.hidden) {
     if (minuteTimer != null) window.clearTimeout(minuteTimer);
     if (lyricTimer != null) window.clearTimeout(lyricTimer);
@@ -437,12 +617,27 @@ async function main() {
     searchView?.focusSearch();
   });
 
+  // the video stream stopped on its own: the page's scene again, never a black window
+  void onEvent("desktop-video-gone", () => {
+    setVideo(false);
+    syncVideoTimer();
+  });
+  // the dropped stream was resolved again and plays where the song is
+  void onEvent("desktop-video-back", () => {
+    if (!track) return;
+    setVideo(true);
+    videoPaused = null;
+    syncVideoPlay();
+    syncVideoPosition();
+  });
+
   const boot = await Bridge.boot();
   setLanguage(resolveLanguage(boot?.settings.language, systemLanguages()));
   musicOnline = !!boot?.settings.musicOnline;
   // in the user's language from the start (the labels are relabelled on each change)
   buildPanels();
   updatePanels();
+  motion.enter();
 
   void onEvent<Settings>("settings-changed", (s) => {
     setLanguage(resolveLanguage(s.language, systemLanguages()));

@@ -53,6 +53,18 @@ def main(op, arg):
         a = yt.get_album(arg)
         for s in a.get("tracks") or []:
             out.append(song(s, a.get("thumbnails")))
+    elif op == "video":
+        # The music video for "artist title": the first video result (official videos come first).
+        for r in yt.search(arg, filter="videos", limit=5):
+            if r.get("videoId"):
+                out.append(item("track", r.get("videoId"), r.get("title"), names(r.get("artists")), r.get("thumbnails")))
+                break
+    elif op == "radio":
+        # The songs YouTube Music plays after this one (its "up next" radio), without the song itself.
+        wp = yt.get_watch_playlist(videoId=arg, limit=25)
+        for s in wp.get("tracks") or []:
+            if s.get("videoId") != arg:
+                out.append(song(s, s.get("thumbnail")))
     else:
         raise ValueError("unknown op: " + op)
     print(json.dumps([i for i in out if i], ensure_ascii=False))

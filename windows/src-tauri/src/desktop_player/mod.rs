@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+pub mod video;
 pub mod visibility;
 pub mod window;
 

@@ -88,3 +88,9 @@ export class SongLists {
     return true;
   }
 }
+
+/** The song a background video is asked for: its title and artists only, so a player switch or a length
+ *  that arrives late does not ask (and restart) the same video again. "" = no song. */
+export function videoKeyOf(t: { title: string; artists: string[] } | null): string {
+  return t && t.title.trim() ? [t.title.trim().toLowerCase(), t.artists.join(",").toLowerCase()].join("\u001f") : "";
+}

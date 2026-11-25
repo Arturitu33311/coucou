@@ -312,36 +312,27 @@ test("recentsLoadOncePerShowWithoutPolling", async () => {
   }
 });
 
-test("djRowOnlyWithSpotifyAndEnterStartsIt", async () => {
+test("djIsNeverOfferedAndDownGoesToTheRecents", async () => {
+  // Spotify's DJ can't be started through its public API: it is never shown, on any source.
   const saved = State.settings.playerSource;
   try {
     const { actions } = fakeActions();
-    State.settings.playerSource = "ytmusic";
-    const yt = buildPlayerView(actions, { userAgent: LINUX_UA });
-    yt.sync();
-    assert.equal(yt.el.find(".pl-dj")[0]?.style.display, "none");
-    // Choosing Spotify in the selector brings it back.
-    yt.el.find(".pl-src").find((b) => b.getAttribute("data-src") === "spotify").fire("click");
-    assert.notEqual(yt.el.find(".pl-dj")[0].style.display, "none");
-
+    for (const [src, ua] of [["spotify", LINUX_UA], ["both", LINUX_UA], ["ytmusic", LINUX_UA], ["spotify", WINDOWS_UA]]) {
+      State.settings.playerSource = src;
+      const v = buildPlayerView(actions, { userAgent: ua });
+      v.sync();
+      assert.equal(v.el.find(".pl-dj")[0]?.style.display, "none", `${src} on ${ua === LINUX_UA ? "Linux" : "Windows"}`);
+    }
+    // From the empty field: Down and Enter never start the DJ.
     State.settings.playerSource = "both";
     const host = buildPlayerView(actions, { userAgent: LINUX_UA });
     host.sync();
-    assert.notEqual(host.el.find(".pl-dj")[0].style.display, "none");
-    assert.ok(host.el.textContent.includes("DJ"));
-    // Windows is Spotify only: the DJ is there.
-    const win = buildPlayerView(actions, { userAgent: WINDOWS_UA });
-    win.sync();
-    assert.notEqual(win.el.find(".pl-dj")[0].style.display, "none");
-
-    // From the empty field: Down lands on the DJ, Enter starts it.
     const input = host.el.querySelector(".pl-input");
     const before = sent("player_dj").length;
     press(input, "ArrowDown", input);
-    assert.ok(host.el.find(".pl-dj")[0].classList.contains("sel"));
     press(input, "Enter", input);
     await flush();
-    assert.equal(sent("player_dj").length, before + 1);
+    assert.equal(sent("player_dj").length, before);
   } finally {
     State.settings.playerSource = saved;
   }

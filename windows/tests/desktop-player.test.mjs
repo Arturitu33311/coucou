@@ -127,7 +127,8 @@ test("recentRowsTiltWithoutDepth", () => {
   assert.equal(s.opacity, 1);
   // no 3D: the 2D likeness, still no depth
   const f = recentRowStyle(true);
-  assert.match(f.transform, /^scaleX\(0\.927\) skewY\(-3\.96deg\)$/);
+  // mirrored slant: the far (right) edge drops, so the cards point at the centre
+  assert.match(f.transform, /^scaleX\(0\.927\) skewY\(3\.96deg\)$/);
   assert.ok(!f.transform.includes("rotateY") && !f.transform.includes("translateZ"));
 });
 
@@ -506,5 +507,18 @@ test("rereadWanted: once per song, only for an unmatched song with no cover of i
   assert.equal(rereadWanted(null, true, true), false, "already read again for this song");
   assert.equal(rereadWanted(item({}), false, true), false, "matched");
   assert.equal(rereadWanted(null, false, false), false, "a player with its own cover (Spotify's app)");
+});
+
+// ── Background video ──────────────────────────────────────────────────────────
+
+const { videoKeyOf } = await import("../src/desktop-player/logic.ts");
+
+test("videoKeyOf: one video per song, whatever player or length reports it", () => {
+  const a = { title: "Houdini", artists: ["Dua Lipa"], player: "sonora", lengthMs: 0 };
+  const b = { title: "Houdini ", artists: ["Dua Lipa"], player: "kdeconnect", lengthMs: 186000 };
+  assert.equal(videoKeyOf(a), videoKeyOf(b));
+  assert.notEqual(videoKeyOf(a), videoKeyOf({ title: "Illusion", artists: ["Dua Lipa"] }));
+  assert.equal(videoKeyOf(null), "");
+  assert.equal(videoKeyOf({ title: "  ", artists: [] }), "");
 });
 

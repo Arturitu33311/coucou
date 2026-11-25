@@ -66,6 +66,7 @@ mod tests {
             title: format!("t-{id}"),
             subtitle: "s".into(),
             art_url: "https://x/a.jpg".into(),
+            context: None,
         }
     }
 

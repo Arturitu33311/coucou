@@ -61,6 +61,9 @@ object WatchersLogic {
 
     private val MIRRORS = setOf("org.kde.kdeconnect_tp", "com.agupta07505.smartisland")
 
+    /** A session whose sound comes out of another device (a cast, Spotify Connect): not sound made on this phone. */
+    fun isRemote(playbackType: Int?): Boolean = playbackType == MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE
+
     /** Media is playing when some session is in `STATE_PLAYING`: not paused, not buffering, not stopped. */
     fun mediaPlaying(sessionStates: List<Int>): Boolean = sessionStates.any { it == PlaybackState.STATE_PLAYING }
 }
@@ -175,9 +178,12 @@ class Watchers(private val context: Context, private val signals: PhoneSignals) 
     }
 
     private fun reportMedia() {
-        val states = controllers.keys.mapNotNull { it.playbackState?.state }
+        // A remote session plays somewhere else: Spotify Connect shows the laptop's Spotify here as "playing on
+        // ALAN-LAP". Counting it made the relay pause the laptop's own music the moment it started.
+        val local = controllers.keys.filterNot { WatchersLogic.isRemote(it.playbackInfo?.playbackType) }
+        val states = local.mapNotNull { it.playbackState?.state }
         val playing = WatchersLogic.mediaPlaying(states)
-        Log.d(TAG, "phone media playing=$playing from ${controllers.keys.map { "${it.packageName}:${it.playbackState?.state}" }}")
+        Log.d(TAG, "phone media playing=$playing from ${controllers.keys.map { "${it.packageName}:${it.playbackState?.state}:${it.playbackInfo?.playbackType}" }}")
         signals.onPhoneMedia(playing)
         reportNow()
     }

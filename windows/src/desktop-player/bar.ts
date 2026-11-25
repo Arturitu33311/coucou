@@ -1,13 +1,13 @@
 // Player bar at the bottom (#dp-bar).
 // Shows media controls (prev/play/next), mini cover, track title & source,
-// progress bar with time, and DJ / lyrics buttons. The lyrics button shows or
-// hides the line being sung (main.ts); the DJ reports through the feedback line.
+// progress bar with time, and the lyrics button. The lyrics button shows or
+// hides the line being sung (main.ts).
 
 import { Bridge } from "../core/bridge";
 import type { MusicInfo, MusicTrack } from "../core/state";
 import { musicPosition } from "../island/music";
 import { t } from "../i18n/i18n";
-import type { Feedback } from "./feedback";
+import { replay, songChanged, trackKey } from "./motion";
 
 export interface PlayerBarView {
   root: HTMLElement;
@@ -27,7 +27,7 @@ export function formatTime(ms: number): string {
   return `${m}:${s < 10 ? "0" : ""}${s}`;
 }
 
-export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyrics: () => void): PlayerBarView {
+export function buildPlayerBar(container: HTMLElement, onLyrics: () => void): PlayerBarView {
   container.className = "lg dp-player-bar";
   container.innerHTML = `
     <div class="dp-bar-controls">
@@ -38,8 +38,11 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
         </svg>
       </button>
       <button type="button" class="dp-bar-play-btn">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg class="ic-play" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M7 4l13 8-13 8z"></path>
+        </svg>
+        <svg class="ic-pause" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect>
         </svg>
       </button>
       <button type="button" class="dp-bar-btn dp-btn-next">
@@ -56,7 +59,7 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
         <span class="dp-bar-time">0:00 / 0:00</span>
       </div>
       <div class="dp-bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-        <div class="dp-bar-fill" style="width: 0%;"></div>
+        <div class="dp-bar-fill" style="transform: scaleX(0);"></div>
       </div>
       <span class="dp-bar-sub">Coucou</span>
     </div>
@@ -66,14 +69,12 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
           <path d="M4 6h16M4 12h10M4 18h13"></path>
         </svg>
       </button>
-      <button type="button" class="dp-bar-btn dp-btn-dj" aria-label="DJ">DJ</button>
     </div>
   `;
 
   const prevBtn = container.querySelector<HTMLButtonElement>(".dp-btn-prev")!;
   const playBtn = container.querySelector<HTMLButtonElement>(".dp-bar-play-btn")!;
   const nextBtn = container.querySelector<HTMLButtonElement>(".dp-btn-next")!;
-  const djBtn = container.querySelector<HTMLButtonElement>(".dp-btn-dj")!;
   const lyricsBtn = container.querySelector<HTMLButtonElement>(".dp-btn-lyrics")!;
   const coverEl = container.querySelector<HTMLElement>(".dp-bar-cover")!;
   const titleEl = container.querySelector<HTMLElement>(".dp-bar-title")!;
@@ -85,11 +86,11 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
   let currentTrack: MusicTrack | null = null;
   let currentArt: string | null = null;
   let currentSource: string | undefined;
+  let shownKey = "";
 
   prevBtn.addEventListener("click", () => void Bridge.musicControl("previous"));
   playBtn.addEventListener("click", () => void Bridge.musicControl("playpause"));
   nextBtn.addEventListener("click", () => void Bridge.musicControl("next"));
-  djBtn.addEventListener("click", () => void feedback.start(() => Bridge.playerDj(), t("Couldn't start the DJ"), "spotify"));
   lyricsBtn.addEventListener("click", () => onLyrics());
 
   trackEl.addEventListener("click", (e) => {
@@ -103,14 +104,15 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
   function updateProgress() {
     if (!currentTrack || currentTrack.lengthMs <= 0) {
       timeEl.textContent = "0:00 / 0:00";
-      fillEl.style.width = "0%";
+      fillEl.style.transform = "scaleX(0)";
       return;
     }
     const pos = musicPosition(currentTrack as MusicInfo);
     const len = currentTrack.lengthMs;
     const pct = Math.max(0, Math.min(100, (pos / len) * 100));
     timeEl.textContent = `${formatTime(pos)} / ${formatTime(len)}`;
-    fillEl.style.width = `${pct}%`;
+    // transform, not width: a small element's transform costs no layout
+    fillEl.style.transform = `scaleX(${(pct / 100).toFixed(4)})`;
     trackEl.setAttribute("aria-valuenow", String(Math.round(pct)));
   }
 
@@ -121,9 +123,8 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
 
     const isPlaying = tInfo?.status === "Playing";
     playBtn.setAttribute("aria-label", isPlaying ? t("Pause") : t("Play"));
-    playBtn.innerHTML = isPlaying
-      ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>'
-      : '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4l13 8-13 8z"></path></svg>';
+    // both icons stay in the button: the state class cross-fades and turns them (desktop.css)
+    playBtn.classList.toggle("playing", isPlaying);
 
     if (tInfo && tInfo.title) {
       titleEl.textContent = tInfo.title;
@@ -146,6 +147,15 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
       coverEl.style.background = "linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05))";
     }
 
+    // a new song: the title, the artist line and the cover fade in (once; never on the first song)
+    const key = trackKey(tInfo);
+    if (songChanged(shownKey, key)) {
+      replay(titleEl, "dp-swap");
+      replay(subEl, "dp-swap");
+      replay(coverEl, "dp-swap");
+    }
+    shownKey = key;
+
     updateProgress();
   }
 
@@ -154,7 +164,6 @@ export function buildPlayerBar(container: HTMLElement, feedback: Feedback, onLyr
     nextBtn.setAttribute("aria-label", t("Next"));
     lyricsBtn.setAttribute("aria-label", t("Lyrics"));
     lyricsBtn.title = t("Lyrics");
-    djBtn.title = t("Music picked for you by Spotify's DJ");
     setTrack(currentTrack, currentArt, currentSource);
   }
   relabel();

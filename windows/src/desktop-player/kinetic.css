@@ -1,0 +1,132 @@
+/* Full-screen lyrics (kinetic.ts). Hidden until #dp is immersive; there they replace the one-line lyric.
+   WebKit paints this page on the CPU (no compositing): every animated frame repaints what moves. So only
+   single words move, briefly (opacity, a short translate, colour); nothing loops, no shadow or blur
+   animates, and the whole line never scales (a full-width "breathe" made it stutter live). */
+
+.dp-kinetic {
+  position: absolute;
+  left: 120px;
+  right: 120px;
+  top: 0;
+  bottom: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+#dp.immersive .dp-kinetic {
+  display: flex;
+}
+#dp.immersive .dp-kinetic.on {
+  opacity: 1;
+}
+#dp.immersive .dp-lyric {
+  opacity: 0 !important;
+}
+
+.k-stage {
+  position: relative;
+  width: 100%;
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.k-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  font-size: 68px;
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  color: rgba(255, 255, 255, 0.45);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+/* the old line leaves before the new one's words come in (kinetic.ts waits OUT_MS): no overlap */
+.k-line.out {
+  animation: k-out 0.3s ease-in forwards;
+}
+
+.k-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(18px);
+  animation:
+    k-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) var(--enter) forwards,
+    k-lit 0.32s ease-out var(--lit) forwards;
+}
+
+.k-next {
+  margin-top: 26px;
+  max-width: 1400px;
+  font-size: 30px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.36);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+}
+.k-next.in {
+  animation: k-next-in 0.5s ease-out 0.4s forwards;
+}
+
+.dp-kinetic.paused .k-line,
+.dp-kinetic.paused .k-word,
+.dp-kinetic.paused .k-next {
+  animation-play-state: paused;
+}
+
+@keyframes k-in {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* the word being sung turns white with a small lift; the album colour is a thin underline-like glow
+   painted once (no animated shadow) */
+@keyframes k-lit {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    color: #fff;
+    transform: translateY(-5px);
+  }
+  100% {
+    color: #fff;
+    transform: translateY(0);
+  }
+}
+@keyframes k-out {
+  to {
+    opacity: 0;
+    transform: translateY(-36px);
+  }
+}
+@keyframes k-next-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-line.out,
+  .k-word,
+  .k-next.in {
+    animation: none;
+  }
+  .k-word,
+  .k-next {
+    opacity: 1;
+    transform: none;
+    color: #fff;
+  }
+  .k-line.out {
+    opacity: 0;
+  }
+}

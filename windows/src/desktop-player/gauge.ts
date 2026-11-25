@@ -6,6 +6,7 @@
 
 import type { SysInfo } from "../core/state";
 import { t } from "../i18n/i18n";
+import { replay } from "./motion";
 
 /** The ring's length: a circle of radius 18 (2πr), its `stroke-dasharray`. */
 export const RING = 2 * Math.PI * 18;
@@ -89,12 +90,20 @@ export function buildGauge(): { root: HTMLElement; set: (sys: SysInfo | null) =>
     root,
     set(sys) {
       const g = gaugeLabel(sys);
+      const wasHidden = root.hidden;
       root.hidden = !g;
       if (!g) return;
+      if (wasHidden) {
+        // first shown: the ring starts empty and fills to its value (the arc's transition)
+        arc.setAttribute("stroke-dashoffset", RING.toFixed(2));
+        void root.getBoundingClientRect();
+      }
       arc.setAttribute("stroke-dashoffset", g.offset.toFixed(2));
       root.classList.toggle("low", g.low);
       root.classList.toggle("offline", !sys?.online);
       num.textContent = g.pct;
+      // charging, plugged in, on battery: the line changes with a small fade
+      if (state.textContent && state.textContent !== g.state) replay(state, "dp-swap");
       state.textContent = g.state;
       net.textContent = g.net;
     },

@@ -50,6 +50,26 @@ pub fn foreign_desktop_above(stacking: &[Win]) -> bool {
     stacking[mine + 1..].iter().any(|w| w.desktop_type && !w.ours)
 }
 
+/// The background video's window (0 = not made yet), set by video.rs.
+static VIDEO_XID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn set_video_xid(xid: u32) {
+    VIDEO_XID.store(xid, Ordering::Relaxed);
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn video_xid() -> u32 {
+    VIDEO_XID.load(Ordering::Relaxed)
+}
+
+/// Our process's windows count as ours, except the video window: it belongs under the player, so
+/// for stacking it is like a wallpaper app's, and coming above the player raises the player back.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn counts_as_ours(same_pid: bool, id: u32, video: u32) -> bool {
+    same_pid && (video == 0 || id != video)
+}
+
 /// Raise only when a foreign desktop window has just come above ours: once per
 /// time it happens, so a wallpaper app that raises itself back cannot make a loop,
 /// and a raise that does nothing (no xdotool) is not retried on every event.
@@ -93,6 +113,14 @@ pub fn foreign_action(stacking: &[Win], shown: bool, was_hidamari: bool, was_abo
     } else {
         Action::None
     }
+}
+
+/// What "something was above" is remembered as: only what an iteration really judged with the player on
+/// screen. Live, the video window came above while the player was being shown (not judged yet); remembering
+/// it as already above swallowed the raise, and the video covered the player until another restack (8 s).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn next_above(judged: bool, is_above: bool) -> bool {
+    judged && is_above
 }
 
 /// Whether Hidamari counts as handled after this event: only an actual
@@ -193,7 +221,7 @@ mod linux {
         let hidden = cards(c, id, a.wm_state, AtomEnum::ATOM, 64).contains(&a.hidden);
         let types = cards(c, id, a.wtype, AtomEnum::ATOM, 16);
         let normal = types.is_empty() || types.iter().any(|t| *t == a.t_normal || *t == a.t_dialog);
-        let ours = cards(c, id, a.pid, AtomEnum::CARDINAL, 1).first() == Some(&me);
+        let ours = counts_as_ours(cards(c, id, a.pid, AtomEnum::CARDINAL, 1).first() == Some(&me), id, video_xid());
         let desktop_type = types.contains(&a.t_desktop);
         let hidamari = desktop_type && !ours && wm_class(c, a, id).map_or(false, |s| is_hidamari(&s));
         Win { id, desktop, hidden, normal, ours, desktop_type, hidamari }
@@ -257,19 +285,22 @@ mod linux {
             let now_above = foreign_desktop_above(&wins);
             let present = wins.iter().any(|w| w.hidamari);
             let mut taken = Action::None;
+            let mut judged = false;
             if now != last {
                 last = now;
                 publish(app, now);
             } else if now {
                 // One snapshot of "shown" per iteration: the action and the state both derive from it.
-                taken = foreign_action(&wins, window::is_shown(), hidamari, above);
+                let shown = window::is_shown();
+                judged = shown;
+                taken = foreign_action(&wins, shown, hidamari, above);
                 match taken {
                     Action::Raise => window::raise(app),
                     Action::StopHidamari => stop_hidamari(),
                     Action::None => {}
                 }
             }
-            above = now_above;
+            above = next_above(judged, now_above);
             hidamari = next_hidamari(present, hidamari, taken);
         }
     }
@@ -392,6 +423,29 @@ mod tests {
         assert!(!should_raise(true, true));
         assert!(!should_raise(true, false));
         assert!(!should_raise(false, false));
+    }
+
+    #[test]
+    fn a_video_that_came_above_while_the_player_was_being_shown_is_still_raised_over() {
+        let (player, video) = (desk(7, true), desk(9, counts_as_ours(true, 9, 9)));
+        // the iteration that showed the desktop: nothing judged, the video already listed above
+        let above = next_above(false, foreign_desktop_above(&[player.clone(), video.clone()]));
+        assert!(!above, "not remembered as already above");
+        // the next restack, the player now on screen: the raise happens
+        assert_eq!(foreign_action(&[player, video], true, false, above), Action::Raise);
+    }
+
+    #[test]
+    fn the_video_window_is_not_ours_for_stacking() {
+        assert!(counts_as_ours(true, 7, 0), "no video window yet: same pid is ours");
+        assert!(counts_as_ours(true, 7, 9), "the player, with a video window elsewhere");
+        assert!(!counts_as_ours(true, 9, 9), "the video window itself");
+        assert!(!counts_as_ours(false, 9, 9));
+        // The video window (ours by pid, but not for stacking) above the player: the player is raised.
+        let video = desk(9, counts_as_ours(true, 9, 9));
+        assert!(foreign_desktop_above(&[desk(7, true), video.clone()]));
+        assert!(!foreign_desktop_above(&[video.clone(), desk(7, true)]), "video under the player: fine");
+        assert_eq!(foreign_action(&[desk(7, true), video], true, false, false), Action::Raise);
     }
 
     fn hida(id: u32) -> Win {
