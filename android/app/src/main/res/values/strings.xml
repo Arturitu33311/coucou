@@ -704,4 +704,25 @@
     <string name="coucou_wp_saver_auto">Automatic</string>
     <string name="coucou_wp_saver_always">Always</string>
     <string name="coucou_wp_saver_never">Never</string>
+    <!-- Coucou Notas -->
+    <string name="card_notas_title">Notes</string>
+    <string name="notas_status_recording">Recording</string>
+    <string name="notas_channel">Class recording</string>
+    <string name="notas_notif_recording">Recording class</string>
+    <string name="notas_notif_uploading">Uploading recording</string>
+    <string name="notas_notif_pending">%1$d pending to upload</string>
+    <string name="notas_stop">Stop</string>
+    <string name="notas_mark">Mark</string>
+    <string name="notas_record">Record</string>
+    <string name="notas_subject">Subject</string>
+    <string name="notas_detected">Detected: %1$s until %2$s</string>
+    <string name="notas_no_class">No class right now. Pick a subject.</string>
+    <string name="notas_offline">Notes server unreachable (check Tailscale).</string>
+    <string name="notas_second_mic">Second microphone</string>
+    <string name="notas_second_mic_hint">Records a second track from the camcorder mic, if the phone allows it</string>
+    <string name="notas_second_mic_failed">This phone does not allow two microphones at once: recording track 1 only.</string>
+    <string name="notas_perm_denied">Microphone permission is needed to record. Allow it in the system settings and try again.</string>
+    <string name="notas_rec_failed">The recorder could not start.</string>
+    <string name="notas_upload_pending">%1$d segments waiting to upload</string>
+    <string name="notas_upload_ok">Everything uploaded</string>
 </resources>
