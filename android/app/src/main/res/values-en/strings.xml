@@ -705,7 +705,7 @@
     <string name="notas_notif_pending">%1$d pending to upload</string>
     <string name="notas_stop">Stop</string>
     <string name="notas_mark">Mark</string>
-    <string name="notas_record">Record</string>
+    <string name="notas_record">Record now</string>
     <string name="notas_subject">Subject</string>
     <string name="notas_detected">Detected: %1$s until %2$s</string>
     <string name="notas_no_class">No class right now. Pick a subject.</string>
@@ -717,4 +717,10 @@
     <string name="notas_rec_failed">The recorder could not start.</string>
     <string name="notas_upload_pending">%1$d segments waiting to upload</string>
     <string name="notas_upload_ok">Everything uploaded</string>
+    <string name="notas_tile_label">Class notes</string>
+    <string name="notas_tile_idle">Tap to record</string>
+    <string name="notas_tile_recording">Recording</string>
+    <string name="notas_tile_starting">Starting recording…</string>
+    <string name="notas_tile_no_class">No class now. Open Notes to pick a subject.</string>
+    <string name="notas_tile_need_permission">Allow the microphone in Coucou to record from here.</string>
 </resources>

@@ -109,10 +109,16 @@ class NotasService : Service() {
     private fun start(intent: Intent) {
         if (recording) return
         val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        if (!granted) { NotasBus.update { it.copy(error = getString(R.string.notas_perm_denied)) }; stopSelf(); return }
+        if (!granted) {
+            NotasBus.update { it.copy(error = getString(R.string.notas_perm_denied)) }
+            NotasTileService.refresh(this)
+            stopSelf()
+            return
+        }
         val materia = intent.getStringExtra(EXTRA_MATERIA).orEmpty()
         val titulo = intent.getStringExtra(EXTRA_TITULO).orEmpty()
         val segundo = intent.getBooleanExtra(EXTRA_SEGUNDO, false)
+        if (materia.isNotBlank()) NotasArranque.recordar(this, materia)
         inicio = SystemClock.elapsedRealtime()
         marks = 0
         idx = 0
@@ -129,6 +135,7 @@ class NotasService : Service() {
         watchNetwork()
         recording = true
         NotasBus.update { NotasEstado(grabando = true, inicio = inicio, pendientes = NotasCola.get(this).pendingCount()) }
+        NotasTileService.refresh(this)
         handler.post { openSegment(segundo) }
         kick()
         handler.postDelayed(object : Runnable {
@@ -217,6 +224,7 @@ class NotasService : Service() {
             File(it, UploadQueue.ACTIVA).delete()
         }
         NotasBus.update { it.copy(grabando = false, segundoMicActivo = false) }
+        NotasTileService.refresh(this)
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         finishing = true
@@ -296,6 +304,7 @@ class NotasService : Service() {
         work.quitSafely()
         up.quitSafely()
         NotasBus.update { it.copy(grabando = false) }
+        NotasTileService.refresh(this)
         super.onDestroy()
     }
 

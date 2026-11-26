@@ -130,6 +130,20 @@ fun NotasSection() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                // The first thing on the card: one tap starts (or stops) the class, no scrolling.
+                Button(
+                    onClick = { if (estado.grabando) NotasService.send(context, NotasService.ACTION_STOP) else onGrabar() },
+                    enabled = estado.grabando || materia.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(64.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = if (estado.grabando) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    else ButtonDefaults.buttonColors(),
+                ) {
+                    Text(
+                        stringResource(if (estado.grabando) R.string.notas_stop else R.string.notas_record),
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
                 Text(stringResource(R.string.notas_subject), style = MaterialTheme.typography.labelLarge)
                 // one chip per subject; no free typing while recording
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -164,20 +178,6 @@ fun NotasSection() {
                 style = MaterialTheme.typography.displayMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.fillMaxWidth(),
-            )
-        }
-
-        Button(
-            onClick = { if (estado.grabando) NotasService.send(context, NotasService.ACTION_STOP) else onGrabar() },
-            enabled = estado.grabando || materia.isNotBlank(),
-            modifier = Modifier.fillMaxWidth().height(72.dp),
-            shape = RoundedCornerShape(20.dp),
-            colors = if (estado.grabando) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            else ButtonDefaults.buttonColors(),
-        ) {
-            Text(
-                stringResource(if (estado.grabando) R.string.notas_stop else R.string.notas_record),
-                style = MaterialTheme.typography.titleLarge,
             )
         }
 
